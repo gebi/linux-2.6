@@ -1,5 +1,5 @@
 #
-# Mouse driver configuration
+# Touchscreen driver configuration
 #
 menuconfig INPUT_TOUCHSCREEN
 	bool "Touchscreens"
@@ -44,9 +44,9 @@ config TOUCHSCREEN_BITSY
 config TOUCHSCREEN_CORGI
 	tristate "SharpSL (Corgi and Spitz series) touchscreen driver"
 	depends on PXA_SHARPSL
-	default y	
+	default y
 	help
-	  Say Y here to enable the driver for the touchscreen on the 
+	  Say Y here to enable the driver for the touchscreen on the
 	  Sharp SL-C7xx and SL-Cxx00 series of PDAs.
 
 	  If unsure, say N.
@@ -163,5 +163,58 @@ config TOUCHSCREEN_UCB1400
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called ucb1400_ts.
+
+config TOUCHSCREEN_WM97XX
+	tristate "Support for WM97xx AC97 touchscreen controllers"
+	depends SND_AC97_BUS
+
+choice
+	prompt "WM97xx codec type"
+
+config TOUCHSCREEN_WM9705
+	bool "WM9705 Touchscreen interface support"
+	depends on TOUCHSCREEN_WM97XX
+	help
+	  Say Y here if you have the wm9705 touchscreen.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called wm9705.
+
+config TOUCHSCREEN_WM9712
+	bool "WM9712 Touchscreen interface support"
+	depends on TOUCHSCREEN_WM97XX
+	help
+	  Say Y here if you have the wm9712 touchscreen.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called wm9712.
+
+config TOUCHSCREEN_WM9713
+	bool "WM9713 Touchscreen interface support"
+	depends on TOUCHSCREEN_WM97XX
+	help
+	  Say Y here if you have the wm9713 touchscreen.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called wm9713.
+
+endchoice
+
+config TOUCHSCREEN_WM97XX_PXA
+	tristate "WM97xx PXA accelerated touch"
+	depends on TOUCHSCREEN_WM97XX && ARCH_PXA
+	help
+	  Say Y here for continuous mode touch on the PXA
+
+	  If unsure, say N
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called pxa-wm97xx
 
 endif
