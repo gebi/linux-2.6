@@ -138,7 +138,6 @@ extern void toshiba_rbtx4927_irq_setup(void);
 char *prom_getcmdline(void);
 
 #ifdef CONFIG_PCI
-#define CONFIG_TX4927BUG_WORKAROUND
 #undef TX4927_SUPPORT_COMMAND_IO
 #undef  TX4927_SUPPORT_PCI_66
 int tx4927_cpu_clock = 100000000;	/* 100MHz */
@@ -669,15 +668,7 @@ void tx4927_pci_setup(void)
 
 	/* PCI->GB mappings (MEM 16MB) -not used */
 	tx4927_pcicptr->p2gm1plbase = 0xffffffff;
-#ifdef CONFIG_TX4927BUG_WORKAROUND
-	/*
-	 * TX4927-PCIC-BUG: P2GM1PUBASE must be 0
-	 * if P2GM0PUBASE was 0.
-	 */
-	tx4927_pcicptr->p2gm1pubase = 0;
-#else
 	tx4927_pcicptr->p2gm1pubase = 0xffffffff;
-#endif
 	tx4927_pcicptr->p2gmgbase[1] = 0;
 
 	/* PCI->GB mappings (MEM 1MB) -not used */
@@ -910,16 +901,6 @@ void __init toshiba_rbtx4927_setup(void)
 	if (tx4927_ccfg_toeon)
 		tx4927_ccfgptr->ccfg |= TX4927_CCFG_TOE;
 
-	/* SDRAMC fixup */
-#ifdef CONFIG_TX4927BUG_WORKAROUND
-	/*
-	 * TX4927-BUG: INF 01-01-18/ BUG 01-01-22
-	 * G-bus timeout error detection is incorrect
-	 */
-	if (tx4927_ccfg_toeon)
-		tx4927_sdramcptr->tr |= 0x02000000;	/* RCD:3tck */
-#endif
-
 	tx4927_pci_setup();
 	if (tx4927_using_backplane == 1)
 		printk("backplane board IS installed\n");
@@ -1039,7 +1020,7 @@ void __init toshiba_rbtx4927_timer_setup(struct irqaction *irq)
 
 static int __init toshiba_rbtx4927_rtc_init(void)
 {
-	struct resource res = {
+	static struct resource __initdata res = {
 		.start	= 0x1c010000,
 		.end	= 0x1c010000 + 0x800 - 1,
 		.flags	= IORESOURCE_MEM,

@@ -28,7 +28,7 @@
 #include <linux/ata.h>
 
 #define DRV_NAME	"pata_artop"
-#define DRV_VERSION	"0.4.2"
+#define DRV_VERSION	"0.4.3"
 
 /*
  *	The ARTOP has 33 Mhz and "over clocked" timing tables. Until we
@@ -97,9 +97,9 @@ static int artop6260_pre_reset(struct ata_port *ap, unsigned long deadline)
  *	artop6260_cable_detect	-	identify cable type
  *	@ap: Port
  *
- *	Identify the cable type for the ARTOp interface in question
+ *	Identify the cable type for the ARTOP interface in question
  */
- 
+
 static int artop6260_cable_detect(struct ata_port *ap)
 {
 	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
@@ -416,7 +416,7 @@ static int artop_init_one (struct pci_dev *pdev, const struct pci_device_id *id)
 	static int printed_version;
 	static const struct ata_port_info info_6210 = {
 		.sht		= &artop_sht,
-		.flags		= ATA_FLAG_SLAVE_POSS | ATA_FLAG_SRST,
+		.flags		= ATA_FLAG_SLAVE_POSS,
 		.pio_mask	= 0x1f,	/* pio0-4 */
 		.mwdma_mask	= 0x07, /* mwdma0-2 */
 		.udma_mask 	= ATA_UDMA2,
@@ -424,7 +424,7 @@ static int artop_init_one (struct pci_dev *pdev, const struct pci_device_id *id)
 	};
 	static const struct ata_port_info info_626x = {
 		.sht		= &artop_sht,
-		.flags		= ATA_FLAG_SLAVE_POSS | ATA_FLAG_SRST,
+		.flags		= ATA_FLAG_SLAVE_POSS,
 		.pio_mask	= 0x1f,	/* pio0-4 */
 		.mwdma_mask	= 0x07, /* mwdma0-2 */
 		.udma_mask 	= ATA_UDMA4,
@@ -432,7 +432,7 @@ static int artop_init_one (struct pci_dev *pdev, const struct pci_device_id *id)
 	};
 	static const struct ata_port_info info_626x_fast = {
 		.sht		= &artop_sht,
-		.flags		= ATA_FLAG_SLAVE_POSS | ATA_FLAG_SRST,
+		.flags		= ATA_FLAG_SLAVE_POSS,
 		.pio_mask	= 0x1f,	/* pio0-4 */
 		.mwdma_mask	= 0x07, /* mwdma0-2 */
 		.udma_mask 	= ATA_UDMA5,

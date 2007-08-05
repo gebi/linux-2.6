@@ -52,28 +52,9 @@
 
 DEFINE_SNMP_STAT(struct udp_mib, udp_stats_in6) __read_mostly;
 
-static int ipv6_rcv_saddr_any(const struct sock *sk)
-{
-	struct ipv6_pinfo *np = inet6_sk(sk);
-
-	return ipv6_addr_any(&np->rcv_saddr);
-}
-
-static unsigned int ipv6_hash_port_and_rcv_saddr(__u16 port,
-						 const struct sock *sk)
-{
-	return port;
-}
-
-const struct udp_get_port_ops udp_ipv6_ops = {
-	.saddr_cmp = ipv6_rcv_saddr_equal,
-	.saddr_any = ipv6_rcv_saddr_any,
-	.hash_port_and_rcv_saddr = ipv6_hash_port_and_rcv_saddr,
-};
-
 static inline int udp_v6_get_port(struct sock *sk, unsigned short snum)
 {
-	return udp_get_port(sk, snum, &udp_ipv6_ops);
+	return udp_get_port(sk, snum, ipv6_rcv_saddr_equal);
 }
 
 static struct sock *__udp6_lib_lookup(struct in6_addr *saddr, __be16 sport,
@@ -767,8 +748,12 @@ do_udp_sendmsg:
 	if (final_p)
 		ipv6_addr_copy(&fl.fl6_dst, final_p);
 
-	if ((err = xfrm_lookup(&dst, &fl, sk, 1)) < 0)
-		goto out;
+	if ((err = __xfrm_lookup(&dst, &fl, sk, 1)) < 0) {
+		if (err == -EREMOTE)
+			err = ip6_dst_blackhole(sk, &dst, &fl);
+		if (err < 0)
+			goto out;
+	}
 
 	if (hlimit < 0) {
 		if (ipv6_addr_is_multicast(&fl.fl6_dst))

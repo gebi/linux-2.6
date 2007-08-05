@@ -60,6 +60,7 @@
 #include <linux/delay.h>
 #include <scsi/scsi_host.h>
 #include <linux/libata.h>
+#include <linux/dmi.h>
 
 #define DRV_NAME "pata_via"
 #define DRV_VERSION "0.3.1"
@@ -122,6 +123,31 @@ static const struct via_isa_bridge {
 	{ NULL }
 };
 
+
+/*
+ *	Cable special cases
+ */
+
+static struct dmi_system_id cable_dmi_table[] = {
+	{
+		.ident = "Acer Ferrari 3400",
+		.matches = {
+			DMI_MATCH(DMI_BOARD_VENDOR, "Acer,Inc."),
+			DMI_MATCH(DMI_BOARD_NAME, "Ferrari 3400"),
+		},
+	},
+	{ }
+};
+
+static int via_cable_override(struct pci_dev *pdev)
+{
+	/* Systems by DMI */
+	if (dmi_check_system(cable_dmi_table))
+		return 1;
+	return 0;
+}
+
+
 /**
  *	via_cable_detect	-	cable detection
  *	@ap: ATA port
@@ -138,6 +164,9 @@ static int via_cable_detect(struct ata_port *ap) {
 	const struct via_isa_bridge *config = ap->host->private_data;
 	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
 	u32 ata66;
+
+	if (via_cable_override(pdev))
+		return ATA_CBL_PATA40_SHORT;
 
 	/* Early chips are 40 wire */
 	if ((config->flags & VIA_UDMA) < VIA_UDMA_66)
@@ -423,7 +452,7 @@ static int via_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	/* Early VIA without UDMA support */
 	static const struct ata_port_info via_mwdma_info = {
 		.sht = &via_sht,
-		.flags = ATA_FLAG_SLAVE_POSS | ATA_FLAG_SETXFER_POLLING,
+		.flags = ATA_FLAG_SLAVE_POSS,
 		.pio_mask = 0x1f,
 		.mwdma_mask = 0x07,
 		.port_ops = &via_port_ops
@@ -431,7 +460,7 @@ static int via_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	/* Ditto with IRQ masking required */
 	static const struct ata_port_info via_mwdma_info_borked = {
 		.sht = &via_sht,
-		.flags = ATA_FLAG_SLAVE_POSS | ATA_FLAG_SETXFER_POLLING,
+		.flags = ATA_FLAG_SLAVE_POSS,
 		.pio_mask = 0x1f,
 		.mwdma_mask = 0x07,
 		.port_ops = &via_port_ops_noirq,
@@ -439,37 +468,37 @@ static int via_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	/* VIA UDMA 33 devices (and borked 66) */
 	static const struct ata_port_info via_udma33_info = {
 		.sht = &via_sht,
-		.flags = ATA_FLAG_SLAVE_POSS | ATA_FLAG_SETXFER_POLLING,
+		.flags = ATA_FLAG_SLAVE_POSS,
 		.pio_mask = 0x1f,
 		.mwdma_mask = 0x07,
-		.udma_mask = 0x7,
+		.udma_mask = ATA_UDMA2,
 		.port_ops = &via_port_ops
 	};
 	/* VIA UDMA 66 devices */
 	static const struct ata_port_info via_udma66_info = {
 		.sht = &via_sht,
-		.flags = ATA_FLAG_SLAVE_POSS | ATA_FLAG_SETXFER_POLLING,
+		.flags = ATA_FLAG_SLAVE_POSS,
 		.pio_mask = 0x1f,
 		.mwdma_mask = 0x07,
-		.udma_mask = 0x1f,
+		.udma_mask = ATA_UDMA4,
 		.port_ops = &via_port_ops
 	};
 	/* VIA UDMA 100 devices */
 	static const struct ata_port_info via_udma100_info = {
 		.sht = &via_sht,
-		.flags = ATA_FLAG_SLAVE_POSS | ATA_FLAG_SETXFER_POLLING,
+		.flags = ATA_FLAG_SLAVE_POSS,
 		.pio_mask = 0x1f,
 		.mwdma_mask = 0x07,
-		.udma_mask = 0x3f,
+		.udma_mask = ATA_UDMA5,
 		.port_ops = &via_port_ops
 	};
 	/* UDMA133 with bad AST (All current 133) */
 	static const struct ata_port_info via_udma133_info = {
 		.sht = &via_sht,
-		.flags = ATA_FLAG_SLAVE_POSS | ATA_FLAG_SETXFER_POLLING,
+		.flags = ATA_FLAG_SLAVE_POSS,
 		.pio_mask = 0x1f,
 		.mwdma_mask = 0x07,
-		.udma_mask = 0x7f,	/* FIXME: should check north bridge */
+		.udma_mask = ATA_UDMA6,	/* FIXME: should check north bridge */
 		.port_ops = &via_port_ops
 	};
 	struct ata_port_info type;
@@ -477,7 +506,6 @@ static int via_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	struct pci_dev *isa = NULL;
 	const struct via_isa_bridge *config;
 	static int printed_version;
-	u8 t;
 	u8 enable;
 	u32 timing;
 
@@ -491,9 +519,8 @@ static int via_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 			!!(config->flags & VIA_BAD_ID),
 			config->id, NULL))) {
 
-			pci_read_config_byte(isa, PCI_REVISION_ID, &t);
-			if (t >= config->rev_min &&
-			    t <= config->rev_max)
+			if (isa->revision >= config->rev_min &&
+			    isa->revision <= config->rev_max)
 				break;
 			pci_dev_put(isa);
 		}
@@ -592,10 +619,11 @@ static int via_reinit_one(struct pci_dev *pdev)
 #endif
 
 static const struct pci_device_id via[] = {
-	{ PCI_VDEVICE(VIA, PCI_DEVICE_ID_VIA_82C576_1), },
-	{ PCI_VDEVICE(VIA, PCI_DEVICE_ID_VIA_82C586_1), },
-	{ PCI_VDEVICE(VIA, PCI_DEVICE_ID_VIA_6410), },
-	{ PCI_VDEVICE(VIA, PCI_DEVICE_ID_VIA_SATA_EIDE), },
+	{ PCI_VDEVICE(VIA, 0x0571), },
+	{ PCI_VDEVICE(VIA, 0x0581), },
+	{ PCI_VDEVICE(VIA, 0x1571), },
+	{ PCI_VDEVICE(VIA, 0x3164), },
+	{ PCI_VDEVICE(VIA, 0x5324), },
 
 	{ },
 };

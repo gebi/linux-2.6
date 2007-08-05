@@ -154,7 +154,6 @@ struct {
 };
 
 static void release_progmem(void *ptr);
-/* static __attribute_used__ void dump_vpe(struct vpe * v); */
 extern void save_gp_address(unsigned int secbase, unsigned int rel);
 
 /* get the vpe associated with this minor */
@@ -1024,7 +1023,7 @@ static int vpe_elfload(struct vpe * v)
 	return 0;
 }
 
-__attribute_used__ void dump_vpe(struct vpe * v)
+void __used dump_vpe(struct vpe * v)
 {
 	struct tc *t;
 
@@ -1436,10 +1435,6 @@ static int __init vpe_module_init(void)
 			write_vpe_c0_vpecontrol(read_vpe_c0_vpecontrol() & ~VPECONTROL_TE);
 
 			if (i != 0) {
-				write_vpe_c0_status((read_c0_status() &
-						     ~(ST0_IM | ST0_IE | ST0_KSU))
-						    | ST0_CU0);
-
 				/*
 				 * Set config to be the same as vpe0,
 				 * particularly kseg0 coherency alg

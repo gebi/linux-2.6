@@ -31,6 +31,7 @@
 #include <linux/mempolicy.h>
 #include <linux/taskstats_kern.h>
 #include <linux/delayacct.h>
+#include <linux/freezer.h>
 #include <linux/cpuset.h>
 #include <linux/syscalls.h>
 #include <linux/signal.h>
@@ -44,6 +45,7 @@
 #include <linux/resource.h>
 #include <linux/blkdev.h>
 #include <linux/task_io_accounting_ops.h>
+#include <linux/freezer.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -122,9 +124,9 @@ static void __exit_signal(struct task_struct *tsk)
 		sig->maj_flt += tsk->maj_flt;
 		sig->nvcsw += tsk->nvcsw;
 		sig->nivcsw += tsk->nivcsw;
-		sig->sched_time += tsk->sched_time;
 		sig->inblock += task_io_get_inblock(tsk);
 		sig->oublock += task_io_get_oublock(tsk);
+		sig->sum_sched_runtime += tsk->se.sum_exec_runtime;
 		sig = NULL; /* Marker for below. */
 	}
 
@@ -182,7 +184,6 @@ repeat:
 		zap_leader = (leader->exit_signal == -1);
 	}
 
-	sched_exit(p);
 	write_unlock_irq(&tasklist_lock);
 	proc_flush_task(p);
 	release_thread(p);
@@ -291,7 +292,7 @@ static void reparent_to_kthreadd(void)
 	/* Set the exit signal to SIGCHLD so we signal init on exit */
 	current->exit_signal = SIGCHLD;
 
-	if (!has_rt_policy(current) && (task_nice(current) < 0))
+	if (task_nice(current) < 0)
 		set_user_nice(current, 0);
 	/* cpus_allowed? */
 	/* rt_priority? */
@@ -388,6 +389,11 @@ void daemonize(const char *name, ...)
 	 * they would be locked into memory.
 	 */
 	exit_mm(current);
+	/*
+	 * We don't want to have TIF_FREEZE set if the system-wide hibernation
+	 * or suspend transition begins right now.
+	 */
+	current->flags |= PF_NOFREEZE;
 
 	set_special_pids(1, 1);
 	proc_clear_tty(current);
@@ -589,6 +595,8 @@ static void exit_mm(struct task_struct * tsk)
 	tsk->mm = NULL;
 	up_read(&mm->mmap_sem);
 	enter_lazy_tlb(mm, current);
+	/* We don't want this task to be frozen prematurely */
+	clear_freeze_flag(tsk);
 	task_unlock(tsk);
 	mmput(mm);
 }
@@ -762,11 +770,8 @@ static void exit_notify(struct task_struct *tsk)
 		read_lock(&tasklist_lock);
 		spin_lock_irq(&tsk->sighand->siglock);
 		for (t = next_thread(tsk); t != tsk; t = next_thread(t))
-			if (!signal_pending(t) && !(t->flags & PF_EXITING)) {
-				recalc_sigpending_tsk(t);
-				if (signal_pending(t))
-					signal_wake_up(t, 0);
-			}
+			if (!signal_pending(t) && !(t->flags & PF_EXITING))
+				recalc_sigpending_and_wake(t);
 		spin_unlock_irq(&tsk->sighand->siglock);
 		read_unlock(&tasklist_lock);
 	}
@@ -862,6 +867,34 @@ static void exit_notify(struct task_struct *tsk)
 		release_task(tsk);
 }
 
+#ifdef CONFIG_DEBUG_STACK_USAGE
+static void check_stack_usage(void)
+{
+	static DEFINE_SPINLOCK(low_water_lock);
+	static int lowest_to_date = THREAD_SIZE;
+	unsigned long *n = end_of_stack(current);
+	unsigned long free;
+
+	while (*n == 0)
+		n++;
+	free = (unsigned long)n - (unsigned long)end_of_stack(current);
+
+	if (free >= lowest_to_date)
+		return;
+
+	spin_lock(&low_water_lock);
+	if (free < lowest_to_date) {
+		printk(KERN_WARNING "%s used greatest stack depth: %lu bytes "
+				"left\n",
+				current->comm, free);
+		lowest_to_date = free;
+	}
+	spin_unlock(&low_water_lock);
+}
+#else
+static inline void check_stack_usage(void) {}
+#endif
+
 fastcall NORET_TYPE void do_exit(long code)
 {
 	struct task_struct *tsk = current;
@@ -895,13 +928,29 @@ fastcall NORET_TYPE void do_exit(long code)
 	if (unlikely(tsk->flags & PF_EXITING)) {
 		printk(KERN_ALERT
 			"Fixing recursive fault but reboot is needed!\n");
+		/*
+		 * We can do this unlocked here. The futex code uses
+		 * this flag just to verify whether the pi state
+		 * cleanup has been done or not. In the worst case it
+		 * loops once more. We pretend that the cleanup was
+		 * done as there is no way to return. Either the
+		 * OWNER_DIED bit is set by now or we push the blocked
+		 * task into the wait for ever nirwana as well.
+		 */
+		tsk->flags |= PF_EXITPIDONE;
 		if (tsk->io_context)
 			exit_io_context();
 		set_current_state(TASK_UNINTERRUPTIBLE);
 		schedule();
 	}
 
+	/*
+	 * tsk->flags are checked in the futex code to protect against
+	 * an exiting task cleaning up the robust pi futexes.
+	 */
+	spin_lock_irq(&tsk->pi_lock);
 	tsk->flags |= PF_EXITING;
+	spin_unlock_irq(&tsk->pi_lock);
 
 	if (unlikely(in_atomic()))
 		printk(KERN_INFO "note: %s[%d] exited with preempt_count %d\n",
@@ -915,7 +964,7 @@ fastcall NORET_TYPE void do_exit(long code)
 	}
 	group_dead = atomic_dec_and_test(&tsk->signal->live);
 	if (group_dead) {
- 		hrtimer_cancel(&tsk->signal->real_timer);
+		hrtimer_cancel(&tsk->signal->real_timer);
 		exit_itimers(tsk->signal);
 	}
 	acct_collect(code, group_dead);
@@ -925,6 +974,8 @@ fastcall NORET_TYPE void do_exit(long code)
 	if (unlikely(tsk->compat_robust_list))
 		compat_exit_robust_list(tsk);
 #endif
+	if (group_dead)
+		tty_audit_exit();
 	if (unlikely(tsk->audit_context))
 		audit_free(tsk);
 
@@ -937,6 +988,7 @@ fastcall NORET_TYPE void do_exit(long code)
 	exit_sem(tsk);
 	__exit_files(tsk);
 	__exit_fs(tsk);
+	check_stack_usage();
 	exit_thread();
 	cpuset_exit(tsk);
 	exit_keys(tsk);
@@ -968,6 +1020,12 @@ fastcall NORET_TYPE void do_exit(long code)
 	 * Make sure we are holding no locks:
 	 */
 	debug_check_no_locks_held(tsk);
+	/*
+	 * We can do this unlocked here. The futex code uses this flag
+	 * just to verify whether the pi state cleanup has been done
+	 * or not. In the worst case it loops once more.
+	 */
+	tsk->flags |= PF_EXITPIDONE;
 
 	if (tsk->io_context)
 		exit_io_context();

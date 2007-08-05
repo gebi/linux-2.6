@@ -30,6 +30,7 @@
 #include <linux/sched.h>
 #include <linux/cpumask.h>
 #include <linux/cpu.h>
+#include <linux/err.h>
 
 #include <asm/atomic.h>
 #include <asm/cpu.h>
@@ -51,24 +52,14 @@ int __cpu_logical_map[NR_CPUS];		/* Map logical to physical */
 EXPORT_SYMBOL(phys_cpu_present_map);
 EXPORT_SYMBOL(cpu_online_map);
 
-/* This happens early in bootup, can't really do it better */
-static void smp_tune_scheduling (void)
-{
-	struct cache_desc *cd = &current_cpu_data.scache;
-	unsigned long cachesize = cd->linesz * cd->sets * cd->ways;
-
-	if (cachesize > max_cache_size)
-		max_cache_size = cachesize;
-}
-
 extern void __init calibrate_delay(void);
-extern ATTRIB_NORET void cpu_idle(void);
+extern void cpu_idle(void);
 
 /*
  * First C code run on the secondary CPUs after being started up by
  * the master.
  */
-asmlinkage void start_secondary(void)
+asmlinkage __cpuinit void start_secondary(void)
 {
 	unsigned int cpu;
 
@@ -228,7 +219,6 @@ void __init smp_prepare_cpus(unsigned int max_cpus)
 {
 	init_new_context(current, &init_mm);
 	current_thread_info()->cpu = 0;
-	smp_tune_scheduling();
 	plat_prepare_cpus(max_cpus);
 #ifndef CONFIG_HOTPLUG_CPU
 	cpu_present_map = cpu_possible_map;
