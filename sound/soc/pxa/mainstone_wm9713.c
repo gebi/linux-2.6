@@ -31,6 +31,7 @@
 #include <asm/arch/pxa-regs.h>
 #include <asm/arch/mainstone.h>
 #include <asm/arch/audio.h>
+#include <asm/arch/hardware.h>
 
 #include "../codecs/wm9713.h"
 #include "pxa2xx-pcm.h"
