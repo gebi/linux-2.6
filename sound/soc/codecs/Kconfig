@@ -79,3 +79,7 @@ config SND_SOC_WM9713
 	depends on SND_SOC
 
 
+config SND_SOC_WM8991
+	tristate
+	depends on SND_SOC
+

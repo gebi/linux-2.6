@@ -12,7 +12,9 @@ snd-soc-neo1973-wm8753-objs := neo1973_wm8753.o
 snd-soc-smdk2440-objs := smdk2440.o
 snd-soc-smdk2440-wm8956-objs := smdk2440-wm8956.o
 snd-soc-smdk2443-wm9710-objs := smdk2443_wm9710.o
-
+snd-soc-smdk2440-wm8991-objs := smdk2440_wm8991.o
+ 
+obj-$(CONFIG_SND_S3C24XX_SOC_SMDK2440_WM8991) += snd-soc-smdk2440-wm8991.o
 obj-$(CONFIG_SND_S3C24XX_SOC_NEO1973_WM8753) += snd-soc-neo1973-wm8753.o
 obj-$(CONFIG_SND_S3C24XX_SOC_SMDK2440) += snd-soc-smdk2440.o
 obj-$(CONFIG_SND_S3C24XX_SOC_SMDK2440_WM8956) += snd-soc-smdk2440-wm8956.o
