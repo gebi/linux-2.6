@@ -11,6 +11,9 @@ config SND_BF5XX_SOC
 config SND_BF5XX_AC97
 	tristate
 	select SND_AC97_CODEC
+	
+config SND_BF5XX_SOC_I2S
+	tristate
 
 config SND_BF5XX_SOC_AC97
 	tristate
