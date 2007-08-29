@@ -21,6 +21,7 @@
 #include <sound/driver.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
+#include <sound/pcm_params.h>
 #include <sound/initval.h>
 #include <sound/soc.h>
 
@@ -36,6 +37,7 @@
 
 #ifdef  BF53X_I2S_DEBUG
 #define i2s_printd(format, arg...) printk("sport-i2s: " format, ## arg)
+#endif
 
 /*
  * This is setup by the audio & dai ops and written to sport during prepare ()
@@ -139,10 +141,12 @@ static int bf5xx_i2s_set_rx_dai_fmt(struct snd_soc_cpu_dai *cpu_dai,
 static int bf5xx_i2s_set_dai_fmt(struct snd_soc_cpu_dai *cpu_dai,
 		unsigned int fmt)
 {
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
-		return bf5xx_i2s_set_tx_dai_fmt(cpu_dai, fmt);
-	else
+	int ret;
+	
+	ret = bf5xx_i2s_set_tx_dai_fmt(cpu_dai, fmt);
+	if (ret == 0)
 		return bf5xx_i2s_set_rx_dai_fmt(cpu_dai, fmt);
+	return ret;
 }
 
 static int bf5xx_i2s_tx_hw_params(struct snd_pcm_substream *substream,
@@ -202,7 +206,7 @@ static int bf5xx_i2s_hw_params(struct snd_pcm_substream *substream,
 		return bf5xx_i2s_rx_hw_params(substream, params);
 }
 
-static int bf5xx_i2s_hw_tx_prepare(struct snd_pcm_substream *substream)
+static int bf5xx_i2s_tx_prepare(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_cpu_dai *cpu_dai = rtd->dai->cpu_dai;
@@ -217,7 +221,7 @@ static int bf5xx_i2s_hw_tx_prepare(struct snd_pcm_substream *substream)
 		bf5xx_i2s[cpu_dai->id].tfsdiv);
 }
 
-static int bf5xx_i2s_hw_rx_prepare(struct snd_pcm_substream *substream)
+static int bf5xx_i2s_rx_prepare(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_cpu_dai *cpu_dai = rtd->dai->cpu_dai;
@@ -232,12 +236,12 @@ static int bf5xx_i2s_hw_rx_prepare(struct snd_pcm_substream *substream)
 		bf5xx_i2s[cpu_dai->id].rfsdiv);
 }
 
-static int bf5xx_i2s_hw_prepare(struct snd_pcm_substream *substream)
+static int bf5xx_i2s_prepare(struct snd_pcm_substream *substream)
 {
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
-		return bf5xx_i2s_hw_tx_prepare(substream);
+		return bf5xx_i2s_tx_prepare(substream);
 	else
-		return bf5xx_i2s_hw_rx_prepare(substream);
+		return bf5xx_i2s_rx_prepare(substream);
 }
 
 static int bf5xx_i2s_tx_trigger(struct snd_pcm_substream *substream, int cmd)
@@ -307,15 +311,17 @@ static void bf5xx_i2s_shutdown(struct snd_pcm_substream *substream)
 	i2s_printd("%s\n", __func__);
 }
 
-static void bf5xx_i2s_startup(struct snd_pcm_substream *substream)
+static int bf5xx_i2s_startup(struct snd_pcm_substream *substream)
 {
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_cpu_dai *cpu_dai = rtd->dai->cpu_dai;
 	struct sport_device *sport = 
 		(struct sport_device*)cpu_dai->private_data;
 	
 	i2s_printd("%s : sport %d\n", __func__, cpu_dai->id);
 	
 	if (sport == NULL) {
-		printk(KERN_ERR "%s : invalid sport device\n")
+		printk(KERN_ERR "%s : invalid sport device\n", __func__);
 		return -EINVAL;
 	} else
 		return 0;
@@ -328,7 +334,7 @@ static int bf5xx_i2s_suspend(struct platform_device *dev,
 	struct sport_device *sport = 
 		(struct sport_device*)dai->private_data;
 		
-	i2s_printd("%s : sport %d\n", __func__, cpu_dai->id);
+	i2s_printd("%s : sport %d\n", __func__, dai->id);
 	if (!dai->active)
 		return 0;
 
@@ -376,7 +382,7 @@ static int bf5xx_i2s_resume(struct platform_device *pdev,
 		SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000 | \
 		SNDRV_PCM_RATE_96000)
 		
-#define BF5XX_I2S_FORMATS (SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S24_LE\
+#define BF5XX_I2S_FORMATS (SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S24_LE |\
 	SNDRV_PCM_FMTBIT_S32_LE)
 
 struct snd_soc_cpu_dai bf5xx_i2s_dai[NUM_SPORT_I2S] = {
@@ -400,10 +406,10 @@ struct snd_soc_cpu_dai bf5xx_i2s_dai[NUM_SPORT_I2S] = {
 		.startup = bf5xx_i2s_startup,
 		.shutdown = bf5xx_i2s_shutdown,
 		.trigger = bf5xx_i2s_trigger,
-		.hw_params = bf5xx_i2s_hw_params,},
+		.hw_params = bf5xx_i2s_hw_params,
+		.prepare = bf5xx_i2s_prepare,},
 	.dai_ops = {
 		.set_fmt = bf5xx_i2s_set_dai_fmt,
-		.set_sysclk = bf5xx_i2s_set_dai_sysclk,
 	},
 },
 {
@@ -426,10 +432,10 @@ struct snd_soc_cpu_dai bf5xx_i2s_dai[NUM_SPORT_I2S] = {
 		.startup = bf5xx_i2s_startup,
 		.shutdown = bf5xx_i2s_shutdown,
 		.trigger = bf5xx_i2s_trigger,
-		.hw_params = bf5xx_i2s_hw_params,},
+		.hw_params = bf5xx_i2s_hw_params,
+		.prepare = bf5xx_i2s_prepare,},
 	.dai_ops = {
 		.set_fmt = bf5xx_i2s_set_dai_fmt,
-		.set_sysclk = bf5xx_i2s_set_dai_sysclk,
 	},
 },
 {
@@ -452,10 +458,10 @@ struct snd_soc_cpu_dai bf5xx_i2s_dai[NUM_SPORT_I2S] = {
 		.startup = bf5xx_i2s_startup,
 		.shutdown = bf5xx_i2s_shutdown,
 		.trigger = bf5xx_i2s_trigger,
-		.hw_params = bf5xx_i2s_hw_params,},
+		.hw_params = bf5xx_i2s_hw_params,
+		.prepare = bf5xx_i2s_prepare,},
 	.dai_ops = {
 		.set_fmt = bf5xx_i2s_set_dai_fmt,
-		.set_sysclk = bf5xx_i2s_set_dai_sysclk,
 	},
 },
 {
@@ -478,10 +484,10 @@ struct snd_soc_cpu_dai bf5xx_i2s_dai[NUM_SPORT_I2S] = {
 		.startup = bf5xx_i2s_startup,
 		.shutdown = bf5xx_i2s_shutdown,
 		.trigger = bf5xx_i2s_trigger,
-		.hw_params = bf5xx_i2s_hw_params,},
+		.hw_params = bf5xx_i2s_hw_params,
+		.prepare = bf5xx_i2s_prepare,},
 	.dai_ops = {
 		.set_fmt = bf5xx_i2s_set_dai_fmt,
-		.set_sysclk = bf5xx_i2s_set_dai_sysclk,
 	},
 },};
 
