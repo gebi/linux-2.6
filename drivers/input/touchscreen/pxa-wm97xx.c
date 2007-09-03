@@ -40,7 +40,8 @@
 #include <asm/io.h>
 #include <asm/arch/pxa-regs.h>
 
-#define VERSION		"0.13"
+#define VERSION			"0.13"
+#define WM97XX_ACC_MAX_TRIES	5
 
 struct continuous {
 	u16 id;    /* codec id */
@@ -68,7 +69,6 @@ static const struct continuous cinfo[] = {
 
 /* continuous speed index */
 static int sp_idx = 0;
-static u16 last = 0, tries = 0;
 
 /*
  * Pen sampling frequency (Hz) in continuous mode.
@@ -130,50 +130,100 @@ static void wm97xx_acc_pen_up(struct wm97xx* wm)
 }
 #endif
 
+#define ADCSEL_2_STR(adc)						\
+	(adc & WM97XX_ADCSEL_MASK) == WM97XX_ADCSEL_X ? "x" :		\
+	(adc & WM97XX_ADCSEL_MASK) == WM97XX_ADCSEL_Y ? "y" :		\
+	(adc & WM97XX_ADCSEL_MASK) == WM97XX_ADCSEL_PRES ? "p" : "?"	\
+
+static int
+wm97xx_acc_read_sample(struct wm97xx* wm, int adcsel, u16 *sample_ptr)
+{
+	static int tries, last;
+	u16 sample;
+
+	do {
+		sample = MODR;
+
+		/* sample valid */
+		if (sample != last &&
+		    (sample & WM97XX_ADCSEL_MASK) == adcsel) {
+			*sample_ptr = last = sample;
+			tries = 0;
+			return RC_VALID;
+		}
+
+		/* something is wrong */
+		if (tries >= WM97XX_ACC_MAX_TRIES)
+			goto pen_up;
+
+		/* fifo empty */
+		if (sample == last) {
+			tries++;
+			if (!wm->pen_is_down)
+				goto pen_up;
+			else
+				return RC_AGAIN;
+		}
+
+		/* wrong adc */
+		/* just try again */
+	} while (1);
+
+ pen_up:
+	if (wm->pen_is_down)
+		dev_dbg(wm->dev, "adcsel 0x%04x (%s), sample 0x%04x (%s), last 0x%04x (%s), tries %d, %s\n",
+			adcsel, ADCSEL_2_STR(adcsel),
+			sample, ADCSEL_2_STR(sample),
+			last, ADCSEL_2_STR(last),
+			tries,
+			sample == last ? "fifo_empty" :
+			(sample & WM97XX_ADCSEL_MASK) != adcsel ? "wrong adc" : "?");
+
+	tries = 0;
+	return RC_PENUP;
+}
+
+
 static int wm97xx_acc_pen_down(struct wm97xx* wm)
 {
 	u16 x, y, p = 0x100 | WM97XX_ADCSEL_PRES;
-	int reads = 0;
+	int rc, reads = 0;
 
 	/* data is never immediately available after pen down irq */
 	set_current_state(TASK_INTERRUPTIBLE);
 	schedule_timeout(1);
 
-	if (tries > 5){
-		tries = 0;
-		return RC_PENUP;
-	}
-
-	x = MODR;
-	if (x == last) {
-		tries++;
-		return RC_AGAIN;
-	}
-	last = x;
 	do {
-		if (reads)
-			x= MODR;
-		y= MODR;
-		if (pressure)
-			p = MODR;
+		rc = wm97xx_acc_read_sample(wm, WM97XX_ADCSEL_X, &x);
+		if (rc != RC_VALID)
+			goto out;
 
-		/* are samples valid */
-		if ((x & 0x7000) != WM97XX_ADCSEL_X ||
-			(y & 0x7000) != WM97XX_ADCSEL_Y ||
-			(p & 0x7000) != WM97XX_ADCSEL_PRES)
-			goto up;
+		rc = wm97xx_acc_read_sample(wm, WM97XX_ADCSEL_Y, &y);
+		if (rc != RC_VALID)
+			goto out;
 
-		/* coordinate is good */
-		tries = 0;
-		//printk("x %x y %x p %x\n", x,y,p);
-		input_report_abs (wm->input_dev, ABS_X, x & 0xfff);
-		input_report_abs (wm->input_dev, ABS_Y, y & 0xfff);
-		input_report_abs (wm->input_dev, ABS_PRESSURE, p & 0xfff);
-		input_sync (wm->input_dev);
+		if (pressure) {
+			rc = wm97xx_acc_read_sample(wm, WM97XX_ADCSEL_PRES, &p);
+			if (rc != RC_VALID)
+				goto out;
+		}
+#if 0
+		dev_dbg(wm->dev, "x: 0x%x, y: 0x%x, p: 0x%x\n",
+			x & 0xfff,
+			y & 0xfff,
+			p & 0xfff);
+#endif
+		input_report_abs(wm->input_dev, ABS_X, x & 0xfff);
+		input_report_abs(wm->input_dev, ABS_Y, y & 0xfff);
+		input_report_abs(wm->input_dev, ABS_PRESSURE, p & 0xfff);
+		input_sync(wm->input_dev);
 		reads++;
 	} while (reads < cinfo[sp_idx].reads);
-up:
+
 	return RC_PENDOWN | RC_AGAIN;
+
+ out:
+	return rc;
 }
 
 static int wm97xx_acc_startup(struct wm97xx* wm)
