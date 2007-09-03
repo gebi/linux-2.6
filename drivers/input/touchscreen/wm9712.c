@@ -329,8 +329,8 @@ static int wm9712_poll_coord (struct wm97xx* wm, struct wm97xx_data *data)
 	int timeout = 5 * delay;
 
 	if (!wm->pen_probably_down) {
-		u16 data = wm97xx_reg_read(wm, AC97_WM97XX_DIGITISER_RD);
-		if (!(data & WM97XX_PEN_DOWN))
+		u16 data_rd = wm97xx_reg_read(wm, AC97_WM97XX_DIGITISER_RD);
+		if (!(data_rd & WM97XX_PEN_DOWN))
 			return RC_PENUP;
 		wm->pen_probably_down = 1;
 	}

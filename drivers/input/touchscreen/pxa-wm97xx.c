@@ -108,7 +108,7 @@ MODULE_PARM_DESC(ac97_touch_slot, "Touch screen data slot AC97 number");
 
 /* flush AC97 slot 5 FIFO on pxa machines */
 #ifdef CONFIG_PXA27x
-void wm97xx_acc_pen_up(struct wm97xx* wm)
+static void wm97xx_acc_pen_up(struct wm97xx* wm)
 {
 	set_current_state(TASK_INTERRUPTIBLE);
 	schedule_timeout(1);
@@ -117,7 +117,7 @@ void wm97xx_acc_pen_up(struct wm97xx* wm)
 		MODR;
 }
 #else
-void wm97xx_acc_pen_up(struct wm97xx* wm)
+static void wm97xx_acc_pen_up(struct wm97xx* wm)
 {
 	int count = 16;
 	set_current_state(TASK_INTERRUPTIBLE);
@@ -130,7 +130,7 @@ void wm97xx_acc_pen_up(struct wm97xx* wm)
 }
 #endif
 
-int wm97xx_acc_pen_down(struct wm97xx* wm)
+static int wm97xx_acc_pen_down(struct wm97xx* wm)
 {
 	u16 x, y, p = 0x100 | WM97XX_ADCSEL_PRES;
 	int reads = 0;
@@ -176,7 +176,7 @@ up:
 	return RC_PENDOWN | RC_AGAIN;
 }
 
-int wm97xx_acc_startup(struct wm97xx* wm)
+static int wm97xx_acc_startup(struct wm97xx* wm)
 {
 	int idx = 0;
 
@@ -224,7 +224,7 @@ int wm97xx_acc_startup(struct wm97xx* wm)
 	return 0;
 }
 
-void wm97xx_acc_shutdown(struct wm97xx* wm)
+static void wm97xx_acc_shutdown(struct wm97xx* wm)
 {
 	/* codec specific deconfig */
 	if (pen_int) {
@@ -249,13 +249,13 @@ static struct wm97xx_mach_ops pxa_mach_ops = {
 	.acc_shutdown = wm97xx_acc_shutdown,
 };
 
-int pxa_wm97xx_probe(struct device *dev)
+static int pxa_wm97xx_probe(struct device *dev)
 {
 	struct wm97xx *wm = dev->driver_data;
 	return wm97xx_register_mach_ops(wm, &pxa_mach_ops);
 }
 
-int pxa_wm97xx_remove(struct device *dev)
+static int pxa_wm97xx_remove(struct device *dev)
 {
 	struct wm97xx *wm = dev->driver_data;
 	wm97xx_unregister_mach_ops (wm);
