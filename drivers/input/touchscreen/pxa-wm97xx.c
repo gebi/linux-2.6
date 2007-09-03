@@ -83,7 +83,7 @@ MODULE_PARM_DESC(cont_rate, "Sampling rate in continuous mode (Hz)");
  * This driver can either poll or use an interrupt to indicate a pen down
  * event. If the irq request fails then it will fall back to polling mode.
  */
-static int pen_int = 1;
+static int pen_int = 0;
 module_param(pen_int, int, 0);
 MODULE_PARM_DESC(pen_int, "Pen down detection (1 = interrupt, 0 = polling)");
 
