@@ -28,7 +28,7 @@
 #include <asm/hardware.h>
 
 #include <asm/arch/regs-gpio.h>
-#include <asm/arch/regs-spi.h>
+#include <asm/plat-s3c24xx/regs-spi.h>
 #include <asm/arch/spi.h>
 
 struct s3c24xx_spi {
@@ -41,7 +41,7 @@ struct s3c24xx_spi {
 	int			 len;
 	int			 count;
 
-	int			(*set_cs)(struct s3c2410_spi_info *spi,
+	void			(*set_cs)(struct s3c2410_spi_info *spi,
 					  int cs, int pol);
 
 	/* data buffers */
@@ -77,7 +77,7 @@ static void s3c24xx_spi_chipsel(struct spi_device *spi, int value)
 
 	switch (value) {
 	case BITBANG_CS_INACTIVE:
-		hw->pdata->set_cs(hw->pdata, spi->chip_select, cspol^1);
+		hw->set_cs(hw->pdata, spi->chip_select, cspol^1);
 		break;
 
 	case BITBANG_CS_ACTIVE:
@@ -98,7 +98,7 @@ static void s3c24xx_spi_chipsel(struct spi_device *spi, int value)
 		/* write new configration */
 
 		writeb(spcon, hw->regs + S3C2410_SPCON);
-		hw->pdata->set_cs(hw->pdata, spi->chip_select, cspol);
+		hw->set_cs(hw->pdata, spi->chip_select, cspol);
 
 		break;
 	}
@@ -146,6 +146,9 @@ static int s3c24xx_spi_setupxfer(struct spi_device *spi,
 	return 0;
 }
 
+/* the spi->mode bits understood by this driver: */
+#define MODEBITS (SPI_CPOL | SPI_CPHA | SPI_CS_HIGH)
+
 static int s3c24xx_spi_setup(struct spi_device *spi)
 {
 	int ret;
@@ -153,8 +156,11 @@ static int s3c24xx_spi_setup(struct spi_device *spi)
 	if (!spi->bits_per_word)
 		spi->bits_per_word = 8;
 
-	if ((spi->mode & SPI_LSB_FIRST) != 0)
+	if (spi->mode & ~MODEBITS) {
+		dev_dbg(&spi->dev, "setup: unsupported mode bits %x\n",
+			spi->mode & ~MODEBITS);
 		return -EINVAL;
+	}
 
 	ret = s3c24xx_spi_setupxfer(spi, NULL);
 	if (ret < 0) {
@@ -342,8 +348,6 @@ static int s3c24xx_spi_probe(struct platform_device *pdev)
 		goto err_register;
 	}
 
-	dev_dbg(hw->dev, "shutdown=%d\n", hw->bitbang.shutdown);
-
 	/* register all the devices associated */
 
 	bi = &hw->pdata->board_info[0];
@@ -423,6 +427,7 @@ static int s3c24xx_spi_resume(struct platform_device *pdev)
 #define s3c24xx_spi_resume  NULL
 #endif
 
+MODULE_ALIAS("s3c2410_spi");			/* for platform bus hotplug */
 static struct platform_driver s3c24xx_spidrv = {
 	.probe		= s3c24xx_spi_probe,
 	.remove		= s3c24xx_spi_remove,

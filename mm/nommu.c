@@ -45,6 +45,7 @@ int heap_stack_gap = 0;
 
 EXPORT_SYMBOL(mem_map);
 EXPORT_SYMBOL(__vm_enough_memory);
+EXPORT_SYMBOL(num_physpages);
 
 /* list of shareable VMAs */
 struct rb_root nommu_vma_tree = RB_ROOT;
@@ -52,12 +53,6 @@ DECLARE_RWSEM(nommu_vma_sem);
 
 struct vm_operations_struct generic_file_vm_ops = {
 };
-
-EXPORT_SYMBOL(vfree);
-EXPORT_SYMBOL(vmalloc_to_page);
-EXPORT_SYMBOL(vmalloc_32);
-EXPORT_SYMBOL(vmap);
-EXPORT_SYMBOL(vunmap);
 
 /*
  * Handle all mappings that got truncated by a "truncate()"
@@ -167,7 +162,6 @@ int get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 finish_or_fault:
 	return i ? : -EFAULT;
 }
-
 EXPORT_SYMBOL(get_user_pages);
 
 DEFINE_RWLOCK(vmlist_lock);
@@ -177,6 +171,7 @@ void vfree(void *addr)
 {
 	kfree(addr);
 }
+EXPORT_SYMBOL(vfree);
 
 void *__vmalloc(unsigned long size, gfp_t gfp_mask, pgprot_t prot)
 {
@@ -185,17 +180,19 @@ void *__vmalloc(unsigned long size, gfp_t gfp_mask, pgprot_t prot)
 	 */
 	return kmalloc(size, (gfp_mask | __GFP_COMP) & ~__GFP_HIGHMEM);
 }
+EXPORT_SYMBOL(__vmalloc);
 
 struct page * vmalloc_to_page(void *addr)
 {
 	return virt_to_page(addr);
 }
+EXPORT_SYMBOL(vmalloc_to_page);
 
 unsigned long vmalloc_to_pfn(void *addr)
 {
 	return page_to_pfn(virt_to_page(addr));
 }
-
+EXPORT_SYMBOL(vmalloc_to_pfn);
 
 long vread(char *buf, char *addr, unsigned long count)
 {
@@ -236,9 +233,8 @@ void *vmalloc_node(unsigned long size, int node)
 }
 EXPORT_SYMBOL(vmalloc_node);
 
-/*
- *	vmalloc_32  -  allocate virtually continguos memory (32bit addressable)
- *
+/**
+ * vmalloc_32  -  allocate virtually contiguous memory (32bit addressable)
  *	@size:		allocation size
  *
  *	Allocate enough 32bit PA addressable pages to cover @size from the
@@ -248,17 +244,48 @@ void *vmalloc_32(unsigned long size)
 {
 	return __vmalloc(size, GFP_KERNEL, PAGE_KERNEL);
 }
+EXPORT_SYMBOL(vmalloc_32);
+
+/**
+ * vmalloc_32_user - allocate zeroed virtually contiguous 32bit memory
+ *	@size:		allocation size
+ *
+ * The resulting memory area is 32bit addressable and zeroed so it can be
+ * mapped to userspace without leaking data.
+ */
+void *vmalloc_32_user(unsigned long size)
+{
+	return __vmalloc(size, GFP_KERNEL | __GFP_ZERO, PAGE_KERNEL);
+}
+EXPORT_SYMBOL(vmalloc_32_user);
 
 void *vmap(struct page **pages, unsigned int count, unsigned long flags, pgprot_t prot)
 {
 	BUG();
 	return NULL;
 }
+EXPORT_SYMBOL(vmap);
 
 void vunmap(void *addr)
 {
 	BUG();
 }
+EXPORT_SYMBOL(vunmap);
+
+/*
+ * Implement a stub for vmalloc_sync_all() if the architecture chose not to
+ * have one.
+ */
+void  __attribute__((weak)) vmalloc_sync_all(void)
+{
+}
+
+int vm_insert_page(struct vm_area_struct *vma, unsigned long addr,
+		   struct page *page)
+{
+	return -EINVAL;
+}
+EXPORT_SYMBOL(vm_insert_page);
 
 /*
  *  sys_brk() for the most part doesn't need the global kernel
@@ -356,6 +383,11 @@ EXPORT_SYMBOL(find_vma);
 struct vm_area_struct *find_extend_vma(struct mm_struct *mm, unsigned long addr)
 {
 	return find_vma(mm, addr);
+}
+
+int expand_stack(struct vm_area_struct *vma, unsigned long address)
+{
+	return -ENOMEM;
 }
 
 /*
@@ -630,7 +662,7 @@ static int validate_mmap_request(struct file *file,
 	}
 
 	/* allow the security API to have its say */
-	ret = security_file_mmap(file, reqprot, prot, flags);
+	ret = security_file_mmap(file, reqprot, prot, flags, addr, 0);
 	if (ret < 0)
 		return ret;
 
@@ -826,6 +858,11 @@ unsigned long do_mmap_pgoff(struct file *file,
 		unsigned long pglen = (len + PAGE_SIZE - 1) >> PAGE_SHIFT;
 		unsigned long vmpglen;
 
+		/* suppress VMA sharing for shared regions */
+		if (vm_flags & VM_SHARED &&
+		    capabilities & BDI_CAP_MAP_DIRECT)
+			goto dont_share_VMAs;
+
 		for (rb = rb_first(&nommu_vma_tree); rb; rb = rb_next(rb)) {
 			vma = rb_entry(rb, struct vm_area_struct, vm_rb);
 
@@ -859,6 +896,7 @@ unsigned long do_mmap_pgoff(struct file *file,
 			goto shared;
 		}
 
+	dont_share_VMAs:
 		vma = NULL;
 
 		/* obtain the address at which to make a shared mapping
@@ -974,6 +1012,7 @@ unsigned long do_mmap_pgoff(struct file *file,
 	show_free_areas();
 	return -ENOMEM;
 }
+EXPORT_SYMBOL(do_mmap_pgoff);
 
 /*
  * handle mapping disposal for uClinux
@@ -1054,6 +1093,7 @@ int do_munmap(struct mm_struct *mm, unsigned long addr, size_t len)
 
 	return 0;
 }
+EXPORT_SYMBOL(do_munmap);
 
 asmlinkage long sys_munmap(unsigned long addr, size_t len)
 {
@@ -1144,6 +1184,7 @@ unsigned long do_mremap(unsigned long addr,
 
 	return vma->vm_start;
 }
+EXPORT_SYMBOL(do_mremap);
 
 asmlinkage unsigned long sys_mremap(unsigned long addr,
 	unsigned long old_len, unsigned long new_len,
@@ -1193,6 +1234,27 @@ void unmap_mapping_range(struct address_space *mapping,
 EXPORT_SYMBOL(unmap_mapping_range);
 
 /*
+ * ask for an unmapped area at which to create a mapping on a file
+ */
+unsigned long get_unmapped_area(struct file *file, unsigned long addr,
+				unsigned long len, unsigned long pgoff,
+				unsigned long flags)
+{
+	unsigned long (*get_area)(struct file *, unsigned long, unsigned long,
+				  unsigned long, unsigned long);
+
+	get_area = current->mm->get_unmapped_area;
+	if (file && file->f_op && file->f_op->get_unmapped_area)
+		get_area = file->f_op->get_unmapped_area;
+
+	if (!get_area)
+		return -ENOSYS;
+
+	return get_area(file, addr, len, pgoff, flags);
+}
+EXPORT_SYMBOL(get_unmapped_area);
+
+/*
  * Check that a process has enough memory to allocate a new virtual
  * mapping. 0 means there is enough memory for the allocation to
  * succeed and -ENOMEM implies there is not.
@@ -1208,7 +1270,7 @@ EXPORT_SYMBOL(unmap_mapping_range);
  * Note this is a helper function intended to be used by LSMs which
  * wish to use this logic.
  */
-int __vm_enough_memory(long pages, int cap_sys_admin)
+int __vm_enough_memory(struct mm_struct *mm, long pages, int cap_sys_admin)
 {
 	unsigned long free, allowed;
 
@@ -1299,12 +1361,12 @@ int in_gate_area_no_task(unsigned long addr)
 	return 0;
 }
 
-struct page *filemap_nopage(struct vm_area_struct *area,
-			unsigned long address, int *type)
+int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
 	BUG();
-	return NULL;
+	return 0;
 }
+EXPORT_SYMBOL(filemap_fault);
 
 /*
  * Access another process' address space.

@@ -15,6 +15,16 @@ extern unsigned long parisc_vmerge_max_size;
 #define virt_to_bus virt_to_phys
 #define bus_to_virt phys_to_virt
 
+static inline unsigned long isa_bus_to_virt(unsigned long addr) {
+	BUG();
+	return 0;
+}
+
+static inline unsigned long isa_virt_to_bus(void *addr) {
+	BUG();
+	return 0;
+}
+
 /*
  * Memory mapped I/O
  *
@@ -67,7 +77,7 @@ static inline unsigned long long gsc_readq(unsigned long addr)
 {
 	unsigned long long ret;
 
-#ifdef __LP64__
+#ifdef CONFIG_64BIT
 	__asm__ __volatile__(
 	"	ldda	0(%1),%0\n"
 	:  "=r" (ret) : "r" (addr) );
@@ -108,7 +118,7 @@ static inline void gsc_writel(unsigned int val, unsigned long addr)
 
 static inline void gsc_writeq(unsigned long long val, unsigned long addr)
 {
-#ifdef __LP64__
+#ifdef CONFIG_64BIT
 	__asm__ __volatile__(
 	"	stda	%0,0(%1)\n"
 	: :  "r" (val), "r" (addr) );

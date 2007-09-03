@@ -26,7 +26,6 @@
  * Tested with Planet AP in 2.5.73-bk, 216 Kbytes/s in Infrastructure mode
  * with a SMP machine (dual pentium 100), using pktgen, 432 pps (pkt_size = 60)
  */
-#undef REALLY_SLOW_IO	/* most systems can safely undef this */
 
 #include <linux/delay.h>
 #include <linux/types.h>
@@ -1012,7 +1011,7 @@ static inline void wl3501_md_ind_interrupt(struct net_device *dev,
 	} else {
 		skb->dev = dev;
 		skb_reserve(skb, 2); /* IP headers on 16 bytes boundaries */
-		eth_copy_and_sum(skb, (unsigned char *)&sig.daddr, 12, 0);
+		skb_copy_to_linear_data(skb, (unsigned char *)&sig.daddr, 12);
 		wl3501_receive(this, skb->data, pkt_len);
 		skb_put(skb, pkt_len);
 		skb->protocol	= eth_type_trans(skb, dev);

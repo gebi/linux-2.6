@@ -35,7 +35,6 @@
 #include <linux/mm.h>
 #include <linux/notifier.h>
 #include <linux/smp.h>
-#include <linux/smp_lock.h>
 #include <linux/spinlock.h>
 #include <linux/efi.h>
 #include <linux/percpu.h>
@@ -371,10 +370,11 @@ smp_setup_percpu_timer (void)
 {
 }
 
-static void __devinit
+static void __cpuinit
 smp_callin (void)
 {
 	int cpuid, phys_id, itc_master;
+	struct cpuinfo_ia64 *last_cpuinfo, *this_cpuinfo;
 	extern void ia64_init_itm(void);
 	extern volatile int time_keeper_id;
 
@@ -395,9 +395,13 @@ smp_callin (void)
 	fix_b0_for_bsp();
 
 	lock_ipi_calllock();
+	spin_lock(&vector_lock);
+	/* Setup the per cpu irq handling data structures */
+	__setup_vector_irq(cpuid);
 	cpu_set(cpuid, cpu_online_map);
 	unlock_ipi_calllock();
 	per_cpu(cpu_state, cpuid) = CPU_ONLINE;
+	spin_unlock(&vector_lock);
 
 	smp_setup_percpu_timer();
 
@@ -424,7 +428,21 @@ smp_callin (void)
 	 * Get our bogomips.
 	 */
 	ia64_init_itm();
-	calibrate_delay();
+
+	/*
+	 * Delay calibration can be skipped if new processor is identical to the
+	 * previous processor.
+	 */
+	last_cpuinfo = cpu_data(cpuid - 1);
+	this_cpuinfo = local_cpu_data;
+	if (last_cpuinfo->itc_freq != this_cpuinfo->itc_freq ||
+	    last_cpuinfo->proc_freq != this_cpuinfo->proc_freq ||
+	    last_cpuinfo->features != this_cpuinfo->features ||
+	    last_cpuinfo->revision != this_cpuinfo->revision ||
+	    last_cpuinfo->family != this_cpuinfo->family ||
+	    last_cpuinfo->archrev != this_cpuinfo->archrev ||
+	    last_cpuinfo->model != this_cpuinfo->model)
+		calibrate_delay();
 	local_cpu_data->loops_per_jiffy = loops_per_jiffy;
 
 #ifdef CONFIG_IA32_SUPPORT
@@ -442,7 +460,7 @@ smp_callin (void)
 /*
  * Activate a secondary processor.  head.S calls this.
  */
-int __devinit
+int __cpuinit
 start_secondary (void *unused)
 {
 	/* Early console may use I/O ports */
@@ -469,7 +487,7 @@ struct create_idle {
 	int cpu;
 };
 
-void
+void __cpuinit
 do_fork_idle(struct work_struct *work)
 {
 	struct create_idle *c_idle =
@@ -479,7 +497,7 @@ do_fork_idle(struct work_struct *work)
 	complete(&c_idle->done);
 }
 
-static int __devinit
+static int __cpuinit
 do_boot_cpu (int sapicid, int cpu)
 {
 	int timeout;
@@ -680,7 +698,7 @@ int migrate_platform_irqs(unsigned int cpu)
 			set_cpei_target_cpu(new_cpei_cpu);
 			desc = irq_desc + ia64_cpe_irq;
 			/*
-			 * Switch for now, immediatly, we need to do fake intr
+			 * Switch for now, immediately, we need to do fake intr
 			 * as other interrupts, but need to study CPEI behaviour with
 			 * polling before making changes.
 			 */
@@ -790,7 +808,7 @@ set_cpu_sibling_map(int cpu)
 	}
 }
 
-int __devinit
+int __cpuinit
 __cpu_up (unsigned int cpu)
 {
 	int ret;
@@ -826,7 +844,7 @@ __cpu_up (unsigned int cpu)
 }
 
 /*
- * Assume that CPU's have been discovered by some platform-dependent interface.  For
+ * Assume that CPUs have been discovered by some platform-dependent interface.  For
  * SoftSDV/Lion, that would be ACPI.
  *
  * Setup of the IPI irq handler is done in irq.c:init_IRQ_SMP().
@@ -840,7 +858,7 @@ init_smp_config(void)
 	} *ap_startup;
 	long sal_ret;
 
-	/* Tell SAL where to drop the AP's.  */
+	/* Tell SAL where to drop the APs.  */
 	ap_startup = (struct fptr *) start_ap;
 	sal_ret = ia64_sal_set_vectors(SAL_VECTOR_OS_BOOT_RENDEZ,
 				       ia64_tpa(ap_startup->fp), ia64_tpa(ap_startup->gp), 0, 0, 0, 0);

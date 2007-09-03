@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
 # Linux kernel version: 2.6.20
-# Sun Feb 18 21:27:42 2007
+# Tue Feb 20 21:47:27 2007
 #
 CONFIG_MIPS=y
 
@@ -9,6 +9,7 @@ CONFIG_MIPS=y
 # Machine selection
 #
 CONFIG_ZONE_DMA=y
+CONFIG_MACH_ALCHEMY=y
 # CONFIG_MIPS_MTX1 is not set
 # CONFIG_MIPS_BOSPORUS is not set
 # CONFIG_MIPS_PB1000 is not set
@@ -25,24 +26,16 @@ CONFIG_MIPS_DB1550=y
 # CONFIG_BASLER_EXCITE is not set
 # CONFIG_MIPS_COBALT is not set
 # CONFIG_MACH_DECSTATION is not set
-# CONFIG_MIPS_EV64120 is not set
 # CONFIG_MACH_JAZZ is not set
-# CONFIG_LASAT is not set
 # CONFIG_MIPS_ATLAS is not set
 # CONFIG_MIPS_MALTA is not set
 # CONFIG_MIPS_SEAD is not set
 # CONFIG_WR_PPMC is not set
 # CONFIG_MIPS_SIM is not set
 # CONFIG_MOMENCO_JAGUAR_ATX is not set
-# CONFIG_MOMENCO_OCELOT is not set
-# CONFIG_MOMENCO_OCELOT_3 is not set
-# CONFIG_MOMENCO_OCELOT_C is not set
-# CONFIG_MOMENCO_OCELOT_G is not set
 # CONFIG_MIPS_XXS1500 is not set
-# CONFIG_PNX8550_V2PCI is not set
 # CONFIG_PNX8550_JBS is not set
 # CONFIG_PNX8550_STB810 is not set
-# CONFIG_DDB5477 is not set
 # CONFIG_MACH_VR41XX is not set
 # CONFIG_PMC_YOSEMITE is not set
 # CONFIG_QEMU is not set
@@ -562,6 +555,7 @@ CONFIG_MTD_NAND_AU1550=m
 #
 # Plug and Play support
 #
+# CONFIG_PNPACPI is not set
 
 #
 # Block devices
@@ -751,6 +745,7 @@ CONFIG_MIPS_AU1X00_ENET=y
 # CONFIG_TIGON3 is not set
 # CONFIG_BNX2 is not set
 CONFIG_QLA3XXX=m
+# CONFIG_ATL1 is not set
 
 #
 # Ethernet (10000 Mbit)
@@ -1219,6 +1214,7 @@ CONFIG_ENABLE_MUST_CHECK=y
 CONFIG_LOG_BUF_SHIFT=14
 CONFIG_CROSSCOMPILE=y
 CONFIG_CMDLINE=""
+CONFIG_SYS_SUPPORTS_KGDB=y
 
 #
 # Security options

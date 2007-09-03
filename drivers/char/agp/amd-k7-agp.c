@@ -223,6 +223,8 @@ static int amd_irongate_configure(void)
 	pci_read_config_dword(agp_bridge->dev, AMD_MMBASE, &temp);
 	temp = (temp & PCI_BASE_ADDRESS_MEM_MASK);
 	amd_irongate_private.registers = (volatile u8 __iomem *) ioremap(temp, 4096);
+	if (!amd_irongate_private.registers)
+		return -ENOMEM;
 
 	/* Write out the address of the gatt table */
 	writel(agp_bridge->gatt_bus_addr, amd_irongate_private.registers+AMD_ATTBASE);
@@ -344,7 +346,7 @@ static int amd_remove_memory(struct agp_memory *mem, off_t pg_start, int type)
 	return 0;
 }
 
-static struct aper_size_info_lvl2 amd_irongate_sizes[7] =
+static const struct aper_size_info_lvl2 amd_irongate_sizes[7] =
 {
 	{2048, 524288, 0x0000000c},
 	{1024, 262144, 0x0000000a},
@@ -355,12 +357,12 @@ static struct aper_size_info_lvl2 amd_irongate_sizes[7] =
 	{32, 8192, 0x00000000}
 };
 
-static struct gatt_mask amd_irongate_masks[] =
+static const struct gatt_mask amd_irongate_masks[] =
 {
 	{.mask = 1, .type = 0}
 };
 
-static struct agp_bridge_driver amd_irongate_driver = {
+static const struct agp_bridge_driver amd_irongate_driver = {
 	.owner			= THIS_MODULE,
 	.aperture_sizes		= amd_irongate_sizes,
 	.size_type		= LVL2_APER_SIZE,
@@ -462,9 +464,7 @@ static int __devinit agp_amdk7_probe(struct pci_dev *pdev,
 	 * erratum 46: Setup violation on AGP SBA pins - Disable side band addressing.
 	 * With this lot disabled, we should prevent lockups. */
 	if (agp_bridge->dev->device == PCI_DEVICE_ID_AMD_FE_GATE_700E) {
-		u8 revision=0;
-		pci_read_config_byte(pdev, PCI_REVISION_ID, &revision);
-		if (revision == 0x10 || revision == 0x11) {
+		if (pdev->revision == 0x10 || pdev->revision == 0x11) {
 			agp_bridge->flags = AGP_ERRATA_FASTWRITES;
 			agp_bridge->flags |= AGP_ERRATA_SBA;
 			agp_bridge->flags |= AGP_ERRATA_1X;

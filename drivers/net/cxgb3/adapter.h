@@ -50,7 +50,9 @@ typedef irqreturn_t(*intr_handler_t) (int, void *);
 
 struct vlan_group;
 
+struct adapter;
 struct port_info {
+	struct adapter *adapter;
 	struct vlan_group *vlan_grp;
 	const struct port_type_info *port_type;
 	u8 port_id;
@@ -71,21 +73,30 @@ enum {				/* adapter flags */
 	QUEUES_BOUND = (1 << 3),
 };
 
+struct fl_pg_chunk {
+	struct page *page;
+	void *va;
+	unsigned int offset;
+};
+
 struct rx_desc;
 struct rx_sw_desc;
 
-struct sge_fl {			/* SGE per free-buffer list state */
-	unsigned int buf_size;	/* size of each Rx buffer */
-	unsigned int credits;	/* # of available Rx buffers */
-	unsigned int size;	/* capacity of free list */
-	unsigned int cidx;	/* consumer index */
-	unsigned int pidx;	/* producer index */
-	unsigned int gen;	/* free list generation */
-	struct rx_desc *desc;	/* address of HW Rx descriptor ring */
-	struct rx_sw_desc *sdesc;	/* address of SW Rx descriptor ring */
-	dma_addr_t phys_addr;	/* physical address of HW ring start */
-	unsigned int cntxt_id;	/* SGE context id for the free list */
-	unsigned long empty;	/* # of times queue ran out of buffers */
+struct sge_fl {                     /* SGE per free-buffer list state */
+	unsigned int buf_size;      /* size of each Rx buffer */
+	unsigned int credits;       /* # of available Rx buffers */
+	unsigned int size;          /* capacity of free list */
+	unsigned int cidx;          /* consumer index */
+	unsigned int pidx;          /* producer index */
+	unsigned int gen;           /* free list generation */
+	struct fl_pg_chunk pg_chunk;/* page chunk cache */
+	unsigned int use_pages;     /* whether FL uses pages or sk_buffs */
+	struct rx_desc *desc;       /* address of HW Rx descriptor ring */
+	struct rx_sw_desc *sdesc;   /* address of SW Rx descriptor ring */
+	dma_addr_t   phys_addr;     /* physical address of HW ring start */
+	unsigned int cntxt_id;      /* SGE context id for the free list */
+	unsigned long empty;        /* # of times queue ran out of buffers */
+	unsigned long alloc_failed; /* # of times buffer allocation failed */
 };
 
 /*
@@ -121,6 +132,8 @@ struct sge_rspq {		/* state for an SGE response queue */
 	unsigned long empty;	/* # of times queue ran out of credits */
 	unsigned long nomem;	/* # of responses deferred due to no mem */
 	unsigned long unhandled_irqs;	/* # of spurious intrs */
+	unsigned long starved;
+	unsigned long restarted;
 };
 
 struct tx_desc;

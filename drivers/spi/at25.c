@@ -111,7 +111,8 @@ at25_ee_read(
 }
 
 static ssize_t
-at25_bin_read(struct kobject *kobj, char *buf, loff_t off, size_t count)
+at25_bin_read(struct kobject *kobj, struct bin_attribute *bin_attr,
+	      char *buf, loff_t off, size_t count)
 {
 	struct device		*dev;
 	struct at25_data	*at25;
@@ -236,7 +237,8 @@ at25_ee_write(struct at25_data *at25, char *buf, loff_t off, size_t count)
 }
 
 static ssize_t
-at25_bin_write(struct kobject *kobj, char *buf, loff_t off, size_t count)
+at25_bin_write(struct kobject *kobj, struct bin_attribute *bin_attr,
+	       char *buf, loff_t off, size_t count)
 {
 	struct device		*dev;
 	struct at25_data	*at25;
@@ -291,7 +293,7 @@ static int at25_probe(struct spi_device *spi)
 	 */
 	sr = spi_w8r8(spi, AT25_RDSR);
 	if (sr < 0 || sr & AT25_SR_nRDY) {
-		dev_dbg(&at25->spi->dev, "rdsr --> %d (%02x)\n", sr, sr);
+		dev_dbg(&spi->dev, "rdsr --> %d (%02x)\n", sr, sr);
 		err = -ENXIO;
 		goto fail;
 	}
@@ -314,7 +316,6 @@ static int at25_probe(struct spi_device *spi)
 	 */
 	at25->bin.attr.name = "eeprom";
 	at25->bin.attr.mode = S_IRUSR;
-	at25->bin.attr.owner = THIS_MODULE;
 	at25->bin.read = at25_bin_read;
 
 	at25->bin.size = at25->chip.byte_len;

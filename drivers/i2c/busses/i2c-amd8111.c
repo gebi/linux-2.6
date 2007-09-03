@@ -254,7 +254,8 @@ static s32 amd8111_access(struct i2c_adapter * adap, u16 addr,
 			break;
 
 		case I2C_SMBUS_BLOCK_PROC_CALL:
-			len = min_t(u8, data->block[0], 31);
+			len = min_t(u8, data->block[0],
+				    I2C_SMBUS_BLOCK_MAX - 1);
 			amd_ec_write(smbus, AMD_SMB_CMD, command);
 			amd_ec_write(smbus, AMD_SMB_BCNT, len);
 			for (i = 0; i < len; i++)
@@ -364,7 +365,7 @@ static int __devinit amd8111_probe(struct pci_dev *dev,
 	}
 
 	smbus->adapter.owner = THIS_MODULE;
-	snprintf(smbus->adapter.name, I2C_NAME_SIZE,
+	snprintf(smbus->adapter.name, sizeof(smbus->adapter.name),
 		"SMBus2 AMD8111 adapter at %04x", smbus->base);
 	smbus->adapter.id = I2C_HW_SMBUS_AMD8111;
 	smbus->adapter.class = I2C_CLASS_HWMON;

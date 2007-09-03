@@ -138,8 +138,10 @@ static void dlm_unregister_domain_handlers(struct dlm_ctxt *dlm);
 
 void __dlm_unhash_lockres(struct dlm_lock_resource *lockres)
 {
-	hlist_del_init(&lockres->hash_node);
-	dlm_lockres_put(lockres);
+	if (!hlist_unhashed(&lockres->hash_node)) {
+		hlist_del_init(&lockres->hash_node);
+		dlm_lockres_put(lockres);
+	}
 }
 
 void __dlm_insert_lockres(struct dlm_ctxt *dlm,
@@ -428,11 +430,10 @@ redo_bucket:
 
 			dlm_lockres_put(res);
 
-			cond_resched_lock(&dlm->spinlock);
-
 			if (dropped)
 				goto redo_bucket;
 		}
+		cond_resched_lock(&dlm->spinlock);
 		num += n;
 		mlog(0, "%s: touched %d lockreses in bucket %d "
 		     "(tot=%d)\n", dlm->name, n, i, num);
@@ -655,6 +656,8 @@ void dlm_unregister_domain(struct dlm_ctxt *dlm)
 		dlm_kick_thread(dlm, NULL);
 
 		while (dlm_migrate_all_locks(dlm)) {
+			/* Give dlm_thread time to purge the lockres' */
+			msleep(500);
 			mlog(0, "%s: more migration to do\n", dlm->name);
 		}
 		dlm_mark_domain_leaving(dlm);
@@ -1031,7 +1034,7 @@ static int dlm_try_to_join_domain(struct dlm_ctxt *dlm)
 {
 	int status = 0, tmpstat, node;
 	struct domain_join_ctxt *ctxt;
-	enum dlm_query_join_response response;
+	enum dlm_query_join_response response = JOIN_DISALLOW;
 
 	mlog_entry("%p", dlm);
 
@@ -1125,8 +1128,8 @@ bail:
 
 static void dlm_unregister_domain_handlers(struct dlm_ctxt *dlm)
 {
-	o2hb_unregister_callback(&dlm->dlm_hb_up);
-	o2hb_unregister_callback(&dlm->dlm_hb_down);
+	o2hb_unregister_callback(NULL, &dlm->dlm_hb_up);
+	o2hb_unregister_callback(NULL, &dlm->dlm_hb_down);
 	o2net_unregister_handler_list(&dlm->dlm_domain_handlers);
 }
 
@@ -1138,13 +1141,13 @@ static int dlm_register_domain_handlers(struct dlm_ctxt *dlm)
 
 	o2hb_setup_callback(&dlm->dlm_hb_down, O2HB_NODE_DOWN_CB,
 			    dlm_hb_node_down_cb, dlm, DLM_HB_NODE_DOWN_PRI);
-	status = o2hb_register_callback(&dlm->dlm_hb_down);
+	status = o2hb_register_callback(NULL, &dlm->dlm_hb_down);
 	if (status)
 		goto bail;
 
 	o2hb_setup_callback(&dlm->dlm_hb_up, O2HB_NODE_UP_CB,
 			    dlm_hb_node_up_cb, dlm, DLM_HB_NODE_UP_PRI);
-	status = o2hb_register_callback(&dlm->dlm_hb_up);
+	status = o2hb_register_callback(NULL, &dlm->dlm_hb_up);
 	if (status)
 		goto bail;
 

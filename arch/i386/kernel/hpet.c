@@ -3,6 +3,9 @@
 #include <linux/errno.h>
 #include <linux/hpet.h>
 #include <linux/init.h>
+#include <linux/sysdev.h>
+#include <linux/pm.h>
+#include <linux/delay.h>
 
 #include <asm/hpet.h>
 #include <asm/io.h>
@@ -185,6 +188,10 @@ static void hpet_set_mode(enum clock_event_mode mode,
 		cfg &= ~HPET_TN_ENABLE;
 		hpet_writel(cfg, HPET_T0_CFG);
 		break;
+
+	case CLOCK_EVT_MODE_RESUME:
+		hpet_enable_int();
+		break;
 	}
 }
 
@@ -197,8 +204,26 @@ static int hpet_next_event(unsigned long delta,
 	cnt += delta;
 	hpet_writel(cnt, HPET_T0_CMP);
 
-	return ((long)(hpet_readl(HPET_COUNTER) - cnt ) > 0);
+	return ((long)(hpet_readl(HPET_COUNTER) - cnt ) > 0) ? -ETIME : 0;
 }
+
+/*
+ * Clock source related code
+ */
+static cycle_t read_hpet(void)
+{
+	return (cycle_t)hpet_readl(HPET_COUNTER);
+}
+
+static struct clocksource clocksource_hpet = {
+	.name		= "hpet",
+	.rating		= 250,
+	.read		= read_hpet,
+	.mask		= HPET_MASK,
+	.shift		= HPET_SHIFT,
+	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
+	.resume		= hpet_start_counter,
+};
 
 /*
  * Try to setup the HPET timer
@@ -207,6 +232,8 @@ int __init hpet_enable(void)
 {
 	unsigned long id;
 	uint64_t hpet_freq;
+	u64 tmp, start, now;
+	cycle_t t1;
 
 	if (!is_hpet_capable())
 		return 0;
@@ -253,51 +280,29 @@ int __init hpet_enable(void)
 	/* Start the counter */
 	hpet_start_counter();
 
-	if (id & HPET_ID_LEGSUP) {
-		hpet_enable_int();
-		hpet_reserve_platform_timers(id);
-		/*
-		 * Start hpet with the boot cpu mask and make it
-		 * global after the IO_APIC has been initialized.
-		 */
-		hpet_clockevent.cpumask =cpumask_of_cpu(0);
-		clockevents_register_device(&hpet_clockevent);
-		global_clock_event = &hpet_clockevent;
-		return 1;
-	}
-	return 0;
-
-out_nohpet:
-	iounmap(hpet_virt_address);
-	hpet_virt_address = NULL;
-	return 0;
-}
-
-/*
- * Clock source related code
- */
-static cycle_t read_hpet(void)
-{
-	return (cycle_t)hpet_readl(HPET_COUNTER);
-}
-
-static struct clocksource clocksource_hpet = {
-	.name		= "hpet",
-	.rating		= 250,
-	.read		= read_hpet,
-	.mask		= HPET_MASK,
-	.shift		= HPET_SHIFT,
-	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
-};
-
-static int __init init_hpet_clocksource(void)
-{
-	u64 tmp;
-
-	if (!hpet_virt_address)
-		return -ENODEV;
+	/* Verify whether hpet counter works */
+	t1 = read_hpet();
+	rdtscll(start);
 
 	/*
+	 * We don't know the TSC frequency yet, but waiting for
+	 * 200000 TSC cycles is safe:
+	 * 4 GHz == 50us
+	 * 1 GHz == 200us
+	 */
+	do {
+		rep_nop();
+		rdtscll(now);
+	} while ((now - start) < 200000UL);
+
+	if (t1 == read_hpet()) {
+		printk(KERN_WARNING
+		       "HPET counter not counting. HPET disabled\n");
+		goto out_nohpet;
+	}
+
+	/* Initialize and register HPET clocksource
+	 *
 	 * hpet period is in femto seconds per cycle
 	 * so we need to convert this to ns/cyc units
 	 * aproximated by mult/2^shift
@@ -312,10 +317,29 @@ static int __init init_hpet_clocksource(void)
 	do_div(tmp, FSEC_PER_NSEC);
 	clocksource_hpet.mult = (u32)tmp;
 
-	return clocksource_register(&clocksource_hpet);
+	clocksource_register(&clocksource_hpet);
+
+	if (id & HPET_ID_LEGSUP) {
+		hpet_enable_int();
+		hpet_reserve_platform_timers(id);
+		/*
+		 * Start hpet with the boot cpu mask and make it
+		 * global after the IO_APIC has been initialized.
+		 */
+		hpet_clockevent.cpumask = cpumask_of_cpu(smp_processor_id());
+		clockevents_register_device(&hpet_clockevent);
+		global_clock_event = &hpet_clockevent;
+		return 1;
+	}
+	return 0;
+
+out_nohpet:
+	iounmap(hpet_virt_address);
+	hpet_virt_address = NULL;
+	boot_hpet_disable = 1;
+	return 0;
 }
 
-module_init(init_hpet_clocksource);
 
 #ifdef CONFIG_HPET_EMULATE_RTC
 

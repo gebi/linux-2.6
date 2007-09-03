@@ -324,6 +324,7 @@ static struct mii_chip_info {
 	u32 feature;
 } mii_chip_table[] = {
 	{ "Broadcom PHY BCM5461", { 0x0020, 0x60c0 }, LAN, F_PHY_BCM5461 },
+	{ "Broadcom PHY AC131",   { 0x0143, 0xbc70 }, LAN, 0 },
 	{ "Agere PHY ET1101B",    { 0x0282, 0xf010 }, LAN, 0 },
 	{ "Marvell PHY 88E1111",  { 0x0141, 0x0cc0 }, LAN, F_PHY_88E1111 },
 	{ "Realtek PHY RTL8201",  { 0x0000, 0x8200 }, LAN, 0 },
@@ -547,7 +548,7 @@ static inline int sis190_try_rx_copy(struct sk_buff **sk_buff, int pkt_size,
 		skb = dev_alloc_skb(pkt_size + NET_IP_ALIGN);
 		if (skb) {
 			skb_reserve(skb, NET_IP_ALIGN);
-			eth_copy_and_sum(skb, sk_buff[0]->data, pkt_size, 0);
+			skb_copy_to_linear_data(skb, sk_buff[0]->data, pkt_size);
 			*sk_buff = skb;
 			sis190_give_to_asic(desc, rx_buf_sz);
 			ret = 0;
@@ -631,7 +632,6 @@ static int sis190_rx_interrupt(struct net_device *dev,
 			pci_action(tp->pci_dev, le32_to_cpu(desc->addr),
 				   tp->rx_buf_sz, PCI_DMA_FROMDEVICE);
 
-			skb->dev = dev;
 			skb_put(skb, pkt_size);
 			skb->protocol = eth_type_trans(skb, dev);
 
@@ -1593,6 +1593,9 @@ static int __devinit sis190_get_mac_addr_from_apc(struct pci_dev *pdev,
 		  pci_name(pdev));
 
 	isa_bridge = pci_get_device(PCI_VENDOR_ID_SI, 0x0965, NULL);
+	if (!isa_bridge)
+		isa_bridge = pci_get_device(PCI_VENDOR_ID_SI, 0x0966, NULL);
+
 	if (!isa_bridge) {
 		net_probe(tp, KERN_INFO "%s: Can not find ISA bridge.\n",
 			  pci_name(pdev));

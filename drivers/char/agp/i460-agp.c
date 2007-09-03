@@ -78,7 +78,7 @@ static struct {
 	} *lp_desc;
 } i460;
 
-static struct aper_size_info_8 i460_sizes[3] =
+static const struct aper_size_info_8 i460_sizes[3] =
 {
 	/*
 	 * The 32GB aperture is only available with a 4M GART page size.  Due to the
@@ -249,6 +249,10 @@ static int i460_create_gatt_table (struct agp_bridge_data *bridge)
 	num_entries = A_SIZE_8(temp)->num_entries;
 
 	i460.gatt = ioremap(INTEL_I460_ATTBASE, PAGE_SIZE << page_order);
+	if (!i460.gatt) {
+		printk(KERN_ERR PFX "ioremap failed\n");
+		return -ENOMEM;
+	}
 
 	/* These are no good, the should be removed from the agp_bridge strucure... */
 	agp_bridge->gatt_table_real = NULL;
@@ -550,7 +554,7 @@ static unsigned long i460_mask_memory (struct agp_bridge_data *bridge,
 		| (((addr & ~((1 << I460_IO_PAGE_SHIFT) - 1)) & 0xfffff000) >> 12);
 }
 
-struct agp_bridge_driver intel_i460_driver = {
+const struct agp_bridge_driver intel_i460_driver = {
 	.owner			= THIS_MODULE,
 	.aperture_sizes		= i460_sizes,
 	.size_type		= U8_APER_SIZE,

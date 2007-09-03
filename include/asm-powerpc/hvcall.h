@@ -206,6 +206,7 @@
 #define H_FREE_LOGICAL_LAN_BUFFER 0x1D4
 #define H_QUERY_INT_STATE       0x1E4
 #define H_POLL_PENDING		0x1D8
+#define H_ILLAN_ATTRIBUTES	0x244
 #define H_JOIN			0x298
 #define H_VASI_STATE            0x2A4
 #define H_ENABLE_CRQ		0x2B0
@@ -235,6 +236,20 @@ long plpar_hcall_norets(unsigned long opcode, ...);
  */
 #define PLPAR_HCALL_BUFSIZE 4
 long plpar_hcall(unsigned long opcode, unsigned long *retbuf, ...);
+
+/**
+ * plpar_hcall_raw: - Make a hypervisor call without calculating hcall stats
+ * @opcode: The hypervisor call to make.
+ * @retbuf: Buffer to store up to 4 return arguments in.
+ *
+ * This call supports up to 6 arguments and 4 return arguments. Use
+ * PLPAR_HCALL_BUFSIZE to size the return argument buffer.
+ *
+ * Used when phyp interface needs to be called in real mode. Similar to
+ * plpar_hcall, but plpar_hcall_raw works in real mode and does not
+ * calculate hypervisor call statistics.
+ */
+long plpar_hcall_raw(unsigned long opcode, unsigned long *retbuf, ...);
 
 /**
  * plpar_hcall9: - Make a pseries hypervisor call with up to 9 return arguments

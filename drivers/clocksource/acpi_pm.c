@@ -26,7 +26,7 @@
 /*
  * The I/O port the PMTMR resides at.
  * The location is detected during setup_arch(),
- * in arch/i386/acpi/boot.c
+ * in arch/i386/kernel/acpi/boot.c
  */
 u32 pmtmr_ioport __read_mostly;
 
@@ -71,7 +71,7 @@ static struct clocksource clocksource_acpi_pm = {
 	.rating		= 200,
 	.read		= acpi_pm_read,
 	.mask		= (cycle_t)ACPI_PM_MASK,
-	.mult		= 0, /*to be caluclated*/
+	.mult		= 0, /*to be calculated*/
 	.shift		= 22,
 	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
 
@@ -90,7 +90,7 @@ __setup("acpi_pm_good", acpi_pm_good_setup);
 static inline void acpi_pm_need_workaround(void)
 {
 	clocksource_acpi_pm.read = acpi_pm_read_slow;
-	clocksource_acpi_pm.rating = 110;
+	clocksource_acpi_pm.rating = 120;
 }
 
 /*
@@ -105,14 +105,11 @@ static inline void acpi_pm_need_workaround(void)
  */
 static void __devinit acpi_pm_check_blacklist(struct pci_dev *dev)
 {
-	u8 rev;
-
 	if (acpi_pm_good)
 		return;
 
-	pci_read_config_byte(dev, PCI_REVISION_ID, &rev);
 	/* the bug has been fixed in PIIX4M */
-	if (rev < 3) {
+	if (dev->revision < 3) {
 		printk(KERN_WARNING "* Found PM-Timer Bug on the chipset."
 		       " Due to workarounds for a bug,\n"
 		       "* this clock source is slow. Consider trying"
@@ -214,4 +211,7 @@ pm_good:
 	return clocksource_register(&clocksource_acpi_pm);
 }
 
-module_init(init_acpi_pm_clocksource);
+/* We use fs_initcall because we want the PCI fixups to have run
+ * but we still need to load before device_initcall
+ */
+fs_initcall(init_acpi_pm_clocksource);

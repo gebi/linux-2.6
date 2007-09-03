@@ -7,7 +7,7 @@
 
 #endif
 
-#ifdef __KERNEL__
+#if defined(__KERNEL__) || !defined(__GLIBC__) || (__GLIBC__ < 2)
 
 #define S_IFMT  00170000
 #define S_IFSOCK 0140000
@@ -52,6 +52,9 @@
 #define S_IRUGO		(S_IRUSR|S_IRGRP|S_IROTH)
 #define S_IWUGO		(S_IWUSR|S_IWGRP|S_IWOTH)
 #define S_IXUGO		(S_IXUSR|S_IXGRP|S_IXOTH)
+
+#define UTIME_NOW	((1l << 30) - 1l)
+#define UTIME_OMIT	((1l << 30) - 2l)
 
 #include <linux/types.h>
 #include <linux/time.h>

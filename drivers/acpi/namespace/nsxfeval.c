@@ -48,7 +48,6 @@
 
 #define _COMPONENT          ACPI_NAMESPACE
 ACPI_MODULE_NAME("nsxfeval")
-
 #ifdef ACPI_FUTURE_USAGE
 /*******************************************************************************
  *
@@ -73,8 +72,8 @@ ACPI_MODULE_NAME("nsxfeval")
 acpi_status
 acpi_evaluate_object_typed(acpi_handle handle,
 			   acpi_string pathname,
-			   struct acpi_object_list * external_params,
-			   struct acpi_buffer * return_buffer,
+			   struct acpi_object_list *external_params,
+			   struct acpi_buffer *return_buffer,
 			   acpi_object_type return_type)
 {
 	acpi_status status;
@@ -143,7 +142,6 @@ acpi_evaluate_object_typed(acpi_handle handle,
 
 ACPI_EXPORT_SYMBOL(acpi_evaluate_object_typed)
 #endif				/*  ACPI_FUTURE_USAGE  */
-
 /*******************************************************************************
  *
  * FUNCTION:    acpi_evaluate_object
@@ -442,7 +440,7 @@ acpi_ns_get_device_callback(acpi_handle obj_handle,
 	acpi_status status;
 	struct acpi_namespace_node *node;
 	u32 flags;
-	struct acpi_device_id hid;
+	struct acpica_device_id hid;
 	struct acpi_compatible_id_list *cid;
 	acpi_native_uint i;
 
@@ -542,7 +540,7 @@ acpi_ns_get_device_callback(acpi_handle obj_handle,
  ******************************************************************************/
 
 acpi_status
-acpi_get_devices(char *HID,
+acpi_get_devices(const char *HID,
 		 acpi_walk_callback user_function,
 		 void *context, void **return_value)
 {

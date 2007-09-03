@@ -12,6 +12,7 @@
  */
 #include <linux/init.h>
 #include <linux/io.h>
+#include <linux/smp.h>
 #include <asm/processor.h>
 #include <asm/cache.h>
 
@@ -89,12 +90,6 @@ int __init detect_cpu_and_cache_system(void)
 		current_cpu_data.type = CPU_SH7751;
 		current_cpu_data.flags |= CPU_HAS_FPU;
 		break;
-	case 0x2000:
-		current_cpu_data.type = CPU_SH73180;
-		current_cpu_data.icache.ways = 4;
-		current_cpu_data.dcache.ways = 4;
-		current_cpu_data.flags |= CPU_HAS_LLSC;
-		break;
 	case 0x2001:
 	case 0x2004:
 		current_cpu_data.type = CPU_SH7770;
@@ -124,6 +119,14 @@ int __init detect_cpu_and_cache_system(void)
 		current_cpu_data.dcache.ways = 4;
 		current_cpu_data.flags |= CPU_HAS_LLSC;
 		break;
+	case 0x3004:
+	case 0x3007:
+		current_cpu_data.type = CPU_SH7785;
+		current_cpu_data.icache.ways = 4;
+		current_cpu_data.dcache.ways = 4;
+		current_cpu_data.flags |= CPU_HAS_FPU | CPU_HAS_PERF_COUNTER |
+					  CPU_HAS_LLSC;
+		break;
 	case 0x3008:
 		if (prr == 0xa0) {
 			current_cpu_data.type = CPU_SH7722;
@@ -131,6 +134,14 @@ int __init detect_cpu_and_cache_system(void)
 			current_cpu_data.dcache.ways = 4;
 			current_cpu_data.flags |= CPU_HAS_LLSC;
 		}
+		break;
+	case 0x4000:	/* 1st cut */
+	case 0x4001:	/* 2nd cut */
+		current_cpu_data.type = CPU_SHX3;
+		current_cpu_data.icache.ways = 4;
+		current_cpu_data.dcache.ways = 4;
+		current_cpu_data.flags |= CPU_HAS_FPU | CPU_HAS_PERF_COUNTER |
+					  CPU_HAS_LLSC;
 		break;
 	case 0x8000:
 		current_cpu_data.type = CPU_ST40RA;
@@ -195,25 +206,12 @@ int __init detect_cpu_and_cache_system(void)
 
 	}
 
-	/* Setup the rest of the I-cache info */
-	current_cpu_data.icache.entry_mask = current_cpu_data.icache.way_incr -
-				      current_cpu_data.icache.linesz;
-
-	current_cpu_data.icache.way_size = current_cpu_data.icache.sets *
-				    current_cpu_data.icache.linesz;
-
 	/* And the rest of the D-cache */
 	if (current_cpu_data.dcache.ways > 1) {
 		size = sizes[(cvr >> 16) & 0xf];
 		current_cpu_data.dcache.way_incr	= (size >> 1);
 		current_cpu_data.dcache.sets		= (size >> 6);
 	}
-
-	current_cpu_data.dcache.entry_mask = current_cpu_data.dcache.way_incr -
-				      current_cpu_data.dcache.linesz;
-
-	current_cpu_data.dcache.way_size = current_cpu_data.dcache.sets *
-				    current_cpu_data.dcache.linesz;
 
 	/*
 	 * Setup the L2 cache desc

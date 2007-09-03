@@ -484,18 +484,12 @@ static int ecryptfs_read_super(struct super_block *sb, const char *dev_name)
 	struct vfsmount *lower_mnt;
 
 	memset(&nd, 0, sizeof(struct nameidata));
-	rc = path_lookup(dev_name, LOOKUP_FOLLOW, &nd);
+	rc = path_lookup(dev_name, LOOKUP_FOLLOW | LOOKUP_DIRECTORY, &nd);
 	if (rc) {
 		ecryptfs_printk(KERN_WARNING, "path_lookup() failed\n");
-		goto out_free;
+		goto out;
 	}
 	lower_root = nd.dentry;
-	if (!lower_root->d_inode) {
-		ecryptfs_printk(KERN_WARNING,
-				"No directory to interpose on\n");
-		rc = -ENOENT;
-		goto out_free;
-	}
 	lower_mnt = nd.mnt;
 	ecryptfs_set_superblock_lower(sb, lower_root->d_sb);
 	sb->s_maxbytes = lower_root->d_sb->s_maxbytes;
@@ -589,9 +583,7 @@ inode_info_init_once(void *vptr, struct kmem_cache *cachep, unsigned long flags)
 {
 	struct ecryptfs_inode_info *ei = (struct ecryptfs_inode_info *)vptr;
 
-	if ((flags & (SLAB_CTOR_VERIFY | SLAB_CTOR_CONSTRUCTOR)) ==
-	    SLAB_CTOR_CONSTRUCTOR)
-		inode_init_once(&ei->vfs_inode);
+	inode_init_once(&ei->vfs_inode);
 }
 
 static struct ecryptfs_cache_info {
@@ -685,7 +677,7 @@ static int ecryptfs_init_kmem_caches(void)
 
 		info = &ecryptfs_cache_infos[i];
 		*(info->cache) = kmem_cache_create(info->name, info->size,
-				0, SLAB_HWCACHE_ALIGN, info->ctor, NULL);
+				0, SLAB_HWCACHE_ALIGN, info->ctor);
 		if (!*(info->cache)) {
 			ecryptfs_free_kmem_caches();
 			ecryptfs_printk(KERN_WARNING, "%s: "
@@ -799,7 +791,7 @@ static int do_sysfs_registration(void)
 		       "Unable to register ecryptfs sysfs subsystem\n");
 		goto out;
 	}
-	rc = sysfs_create_file(&ecryptfs_subsys.kset.kobj,
+	rc = sysfs_create_file(&ecryptfs_subsys.kobj,
 			       &sysfs_attr_version.attr);
 	if (rc) {
 		printk(KERN_ERR
@@ -807,18 +799,27 @@ static int do_sysfs_registration(void)
 		subsystem_unregister(&ecryptfs_subsys);
 		goto out;
 	}
-	rc = sysfs_create_file(&ecryptfs_subsys.kset.kobj,
+	rc = sysfs_create_file(&ecryptfs_subsys.kobj,
 			       &sysfs_attr_version_str.attr);
 	if (rc) {
 		printk(KERN_ERR
 		       "Unable to create ecryptfs version_str attribute\n");
-		sysfs_remove_file(&ecryptfs_subsys.kset.kobj,
+		sysfs_remove_file(&ecryptfs_subsys.kobj,
 				  &sysfs_attr_version.attr);
 		subsystem_unregister(&ecryptfs_subsys);
 		goto out;
 	}
 out:
 	return rc;
+}
+
+static void do_sysfs_unregistration(void)
+{
+	sysfs_remove_file(&ecryptfs_subsys.kobj,
+			  &sysfs_attr_version.attr);
+	sysfs_remove_file(&ecryptfs_subsys.kobj,
+			  &sysfs_attr_version_str.attr);
+	subsystem_unregister(&ecryptfs_subsys);
 }
 
 static int __init ecryptfs_init(void)
@@ -847,9 +848,7 @@ static int __init ecryptfs_init(void)
 		ecryptfs_free_kmem_caches();
 		goto out;
 	}
-	kset_set_kset_s(&ecryptfs_subsys, fs_subsys);
-	sysfs_attr_version.attr.owner = THIS_MODULE;
-	sysfs_attr_version_str.attr.owner = THIS_MODULE;
+	kobj_set_kset_s(&ecryptfs_subsys, fs_subsys);
 	rc = do_sysfs_registration();
 	if (rc) {
 		printk(KERN_ERR "sysfs registration failed\n");
@@ -861,6 +860,9 @@ static int __init ecryptfs_init(void)
 	if (rc) {
 		ecryptfs_printk(KERN_ERR, "Failure occured while attempting to "
 				"initialize the eCryptfs netlink socket\n");
+		do_sysfs_unregistration();
+		unregister_filesystem(&ecryptfs_fs_type);
+		ecryptfs_free_kmem_caches();
 	}
 out:
 	return rc;
@@ -868,11 +870,7 @@ out:
 
 static void __exit ecryptfs_exit(void)
 {
-	sysfs_remove_file(&ecryptfs_subsys.kset.kobj,
-			  &sysfs_attr_version.attr);
-	sysfs_remove_file(&ecryptfs_subsys.kset.kobj,
-			  &sysfs_attr_version_str.attr);
-	subsystem_unregister(&ecryptfs_subsys);
+	do_sysfs_unregistration();
 	ecryptfs_release_messaging(ecryptfs_transport);
 	unregister_filesystem(&ecryptfs_fs_type);
 	ecryptfs_free_kmem_caches();

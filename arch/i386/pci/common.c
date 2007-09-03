@@ -193,6 +193,14 @@ static struct dmi_system_id __devinitdata pciprobe_dmi_table[] = {
 	},
 	{
 		.callback = set_bf_sort,
+		.ident = "Dell PowerEdge R900",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "PowerEdge R900"),
+		},
+	},
+	{
+		.callback = set_bf_sort,
 		.ident = "HP ProLiant BL20p G3",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "HP"),
@@ -285,6 +293,7 @@ static struct dmi_system_id __devinitdata pciprobe_dmi_table[] = {
 struct pci_bus * __devinit pcibios_scan_root(int busnum)
 {
 	struct pci_bus *bus = NULL;
+	struct pci_sysdata *sd;
 
 	dmi_check_system(pciprobe_dmi_table);
 
@@ -295,9 +304,19 @@ struct pci_bus * __devinit pcibios_scan_root(int busnum)
 		}
 	}
 
+	/* Allocate per-root-bus (not per bus) arch-specific data.
+	 * TODO: leak; this memory is never freed.
+	 * It's arguable whether it's worth the trouble to care.
+	 */
+	sd = kzalloc(sizeof(*sd), GFP_KERNEL);
+	if (!sd) {
+		printk(KERN_ERR "PCI: OOM, not probing PCI bus %02x\n", busnum);
+		return NULL;
+	}
+
 	printk(KERN_DEBUG "PCI: Probing PCI hardware (bus %02x)\n", busnum);
 
-	return pci_scan_bus_parented(NULL, busnum, &pci_root_ops, NULL);
+	return pci_scan_bus_parented(NULL, busnum, &pci_root_ops, sd);
 }
 
 extern u8 pci_cache_line_size;
@@ -426,11 +445,36 @@ int pcibios_enable_device(struct pci_dev *dev, int mask)
 	if ((err = pcibios_enable_resources(dev, mask)) < 0)
 		return err;
 
-	return pcibios_enable_irq(dev);
+	if (!dev->msi_enabled)
+		return pcibios_enable_irq(dev);
+	return 0;
 }
 
 void pcibios_disable_device (struct pci_dev *dev)
 {
-	if (pcibios_disable_irq)
+	if (!dev->msi_enabled && pcibios_disable_irq)
 		pcibios_disable_irq(dev);
+}
+
+struct pci_bus *pci_scan_bus_with_sysdata(int busno)
+{
+	struct pci_bus *bus = NULL;
+	struct pci_sysdata *sd;
+
+	/*
+	 * Allocate per-root-bus (not per bus) arch-specific data.
+	 * TODO: leak; this memory is never freed.
+	 * It's arguable whether it's worth the trouble to care.
+	 */
+	sd = kzalloc(sizeof(*sd), GFP_KERNEL);
+	if (!sd) {
+		printk(KERN_ERR "PCI: OOM, skipping PCI bus %02x\n", busno);
+		return NULL;
+	}
+	sd->node = -1;
+	bus = pci_scan_bus(busno, &pci_root_ops, sd);
+	if (!bus)
+		kfree(sd);
+
+	return bus;
 }

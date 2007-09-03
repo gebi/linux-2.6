@@ -407,6 +407,10 @@ static int ipoib_mcast_join_complete(int status,
 			queue_delayed_work(ipoib_workqueue,
 					   &priv->mcast_task, 0);
 		mutex_unlock(&mcast_mutex);
+
+		if (mcast == priv->broadcast)
+			netif_carrier_on(dev);
+
 		return 0;
 	}
 
@@ -520,18 +524,16 @@ void ipoib_mcast_join_task(struct work_struct *work)
 		return;
 
 	if (ib_query_gid(priv->ca, priv->port, 0, &priv->local_gid))
-		ipoib_warn(priv, "ib_gid_entry_get() failed\n");
+		ipoib_warn(priv, "ib_query_gid() failed\n");
 	else
 		memcpy(priv->dev->dev_addr + 4, priv->local_gid.raw, sizeof (union ib_gid));
 
 	{
 		struct ib_port_attr attr;
 
-		if (!ib_query_port(priv->ca, priv->port, &attr)) {
-			priv->local_lid  = attr.lid;
-			priv->local_rate = attr.active_speed *
-				ib_width_enum_to_int(attr.active_width);
-		} else
+		if (!ib_query_port(priv->ca, priv->port, &attr))
+			priv->local_lid = attr.lid;
+		else
 			ipoib_warn(priv, "ib_query_port failed\n");
 	}
 
@@ -596,7 +598,6 @@ void ipoib_mcast_join_task(struct work_struct *work)
 	ipoib_dbg_mcast(priv, "successfully joined all multicast groups\n");
 
 	clear_bit(IPOIB_MCAST_RUN, &priv->flags);
-	netif_carrier_on(dev);
 }
 
 int ipoib_mcast_start_thread(struct net_device *dev)
@@ -643,6 +644,9 @@ static int ipoib_mcast_leave(struct net_device *dev, struct ipoib_mcast *mcast)
 	struct ipoib_dev_priv *priv = netdev_priv(dev);
 	int ret = 0;
 
+	if (test_and_clear_bit(IPOIB_MCAST_FLAG_BUSY, &mcast->flags))
+		ib_sa_free_multicast(mcast->mc);
+
 	if (test_and_clear_bit(IPOIB_MCAST_FLAG_ATTACHED, &mcast->flags)) {
 		ipoib_dbg_mcast(priv, "leaving MGID " IPOIB_GID_FMT "\n",
 				IPOIB_GID_ARG(mcast->mcmember.mgid));
@@ -653,9 +657,6 @@ static int ipoib_mcast_leave(struct net_device *dev, struct ipoib_mcast *mcast)
 		if (ret)
 			ipoib_warn(priv, "ipoib_mcast_detach failed (result = %d)\n", ret);
 	}
-
-	if (test_and_clear_bit(IPOIB_MCAST_FLAG_BUSY, &mcast->flags))
-		ib_sa_free_multicast(mcast->mc);
 
 	return 0;
 }

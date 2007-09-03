@@ -257,6 +257,7 @@ static void __sst_dac_write(u8 __iomem *vbase, u8 reg, u8 val)
 	r_dprintk("sst_dac_write(%#x, %#x)\n", reg, val);
 	reg &= 0x07;
 	__sst_write(vbase, DAC_DATA,(((u32)reg << 8)) | (u32)val);
+	__sst_wait_idle(vbase);
 }
 
 /* indexed access to ti/att dacs */
@@ -1347,7 +1348,7 @@ static int __devinit sstfb_probe(struct pci_dev *pdev,
 	f_ddprintk("found device : %s\n", spec->name);
 
 	par->dev = pdev;
-	pci_read_config_byte(pdev, PCI_REVISION_ID, &par->revision);
+	par->revision = pdev->revision;
 
 	fix->mmio_start = pci_resource_start(pdev,0);
 	fix->mmio_len	= 0x400000;

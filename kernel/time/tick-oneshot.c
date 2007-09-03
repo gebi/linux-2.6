@@ -41,6 +41,18 @@ int tick_program_event(ktime_t expires, int force)
 }
 
 /**
+ * tick_resume_onshot - resume oneshot mode
+ */
+void tick_resume_oneshot(void)
+{
+	struct tick_device *td = &__get_cpu_var(tick_cpu_device);
+	struct clock_event_device *dev = td->evtdev;
+
+	clockevents_set_mode(dev, CLOCK_EVT_MODE_ONESHOT);
+	tick_program_event(ktime_get(), 1);
+}
+
+/**
  * tick_setup_oneshot - setup the event device for oneshot mode (hres or nohz)
  */
 void tick_setup_oneshot(struct clock_event_device *newdev,
@@ -61,8 +73,21 @@ int tick_switch_to_oneshot(void (*handler)(struct clock_event_device *))
 	struct clock_event_device *dev = td->evtdev;
 
 	if (!dev || !(dev->features & CLOCK_EVT_FEAT_ONESHOT) ||
-	    !tick_device_is_functional(dev))
+		    !tick_device_is_functional(dev)) {
+
+		printk(KERN_INFO "Clockevents: "
+		       "could not switch to one-shot mode:");
+		if (!dev) {
+			printk(" no tick device\n");
+		} else {
+			if (!tick_device_is_functional(dev))
+				printk(" %s is not functional.\n", dev->name);
+			else
+				printk(" %s does not support one-shot mode.\n",
+				       dev->name);
+		}
 		return -EINVAL;
+	}
 
 	td->mode = TICKDEV_MODE_ONESHOT;
 	dev->event_handler = handler;

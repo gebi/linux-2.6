@@ -43,9 +43,10 @@ static inline int gpio_direction_input(unsigned gpio)
 	return pxa_gpio_mode(gpio | GPIO_IN);
 }
 
-static inline int gpio_direction_output(unsigned gpio)
+static inline int gpio_direction_output(unsigned gpio, int value)
 {
-	return pxa_gpio_mode(gpio | GPIO_OUT);
+	return pxa_gpio_mode(gpio | GPIO_OUT |
+                         (value ? GPIO_DFLT_HIGH : GPIO_DFLT_LOW));
 }
 
 static inline int __gpio_get_value(unsigned gpio)

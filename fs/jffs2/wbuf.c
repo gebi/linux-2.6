@@ -1,15 +1,13 @@
 /*
  * JFFS2 -- Journalling Flash File System, Version 2.
  *
- * Copyright (C) 2001-2003 Red Hat, Inc.
- * Copyright (C) 2004 Thomas Gleixner <tglx@linutronix.de>
+ * Copyright © 2001-2007 Red Hat, Inc.
+ * Copyright © 2004 Thomas Gleixner <tglx@linutronix.de>
  *
  * Created by David Woodhouse <dwmw2@infradead.org>
  * Modified debugged and enhanced by Thomas Gleixner <tglx@linutronix.de>
  *
  * For licensing information, see the file 'LICENCE' in this directory.
- *
- * $Id: wbuf.c,v 1.100 2005/09/30 13:59:13 dedekind Exp $
  *
  */
 
@@ -238,7 +236,10 @@ static void jffs2_wbuf_recover(struct jffs2_sb_info *c)
 	jeb = &c->blocks[c->wbuf_ofs / c->sector_size];
 
 	spin_lock(&c->erase_completion_lock);
-	jffs2_block_refile(c, jeb, REFILE_NOTEMPTY);
+	if (c->wbuf_ofs % c->mtd->erasesize)
+		jffs2_block_refile(c, jeb, REFILE_NOTEMPTY);
+	else
+		jffs2_block_refile(c, jeb, REFILE_ANYWAY);
 	spin_unlock(&c->erase_completion_lock);
 
 	BUG_ON(!ref_obsolete(jeb->last_node));
@@ -341,6 +342,9 @@ static void jffs2_wbuf_recover(struct jffs2_sb_info *c)
 		kfree(buf);
 		return;
 	}
+
+	/* The summary is not recovered, so it must be disabled for this erase block */
+	jffs2_sum_disable_collecting(c->summary);
 
 	ret = jffs2_prealloc_raw_node_refs(c, c->nextblock, nr_refile);
 	if (ret) {
@@ -633,7 +637,10 @@ static int __jffs2_flush_wbuf(struct jffs2_sb_info *c, int pad)
 
 	memset(c->wbuf,0xff,c->wbuf_pagesize);
 	/* adjust write buffer offset, else we get a non contiguous write bug */
-	c->wbuf_ofs += c->wbuf_pagesize;
+	if (SECTOR_ADDR(c->wbuf_ofs) == SECTOR_ADDR(c->wbuf_ofs+c->wbuf_pagesize))
+		c->wbuf_ofs += c->wbuf_pagesize;
+	else
+		c->wbuf_ofs = 0xffffffff;
 	c->wbuf_len = 0;
 	return 0;
 }
@@ -964,9 +971,9 @@ exit:
 
 static const struct jffs2_unknown_node oob_cleanmarker =
 {
-	.magic = cpu_to_je16(JFFS2_MAGIC_BITMASK),
-	.nodetype = cpu_to_je16(JFFS2_NODETYPE_CLEANMARKER),
-	.totlen = cpu_to_je32(8)
+	.magic = constant_cpu_to_je16(JFFS2_MAGIC_BITMASK),
+	.nodetype = constant_cpu_to_je16(JFFS2_NODETYPE_CLEANMARKER),
+	.totlen = constant_cpu_to_je32(8)
 };
 
 /*
@@ -1087,7 +1094,7 @@ int jffs2_write_nand_badblock(struct jffs2_sb_info *c, struct jffs2_eraseblock *
 	if (!c->mtd->block_markbad)
 		return 1; // What else can we do?
 
-	D1(printk(KERN_WARNING "jffs2_write_nand_badblock(): Marking bad block at %08x\n", bad_offset));
+	printk(KERN_WARNING "JFFS2: marking eraseblock at %08x\n as bad", bad_offset);
 	ret = c->mtd->block_markbad(c->mtd, bad_offset);
 
 	if (ret) {
@@ -1203,5 +1210,29 @@ int jffs2_nor_wbuf_flash_setup(struct jffs2_sb_info *c) {
 }
 
 void jffs2_nor_wbuf_flash_cleanup(struct jffs2_sb_info *c) {
+	kfree(c->wbuf);
+}
+
+int jffs2_ubivol_setup(struct jffs2_sb_info *c) {
+	c->cleanmarker_size = 0;
+
+	if (c->mtd->writesize == 1)
+		/* We do not need write-buffer */
+		return 0;
+
+	init_rwsem(&c->wbuf_sem);
+
+	c->wbuf_pagesize =  c->mtd->writesize;
+	c->wbuf_ofs = 0xFFFFFFFF;
+	c->wbuf = kmalloc(c->wbuf_pagesize, GFP_KERNEL);
+	if (!c->wbuf)
+		return -ENOMEM;
+
+	printk(KERN_INFO "JFFS2 write-buffering enabled buffer (%d) erasesize (%d)\n", c->wbuf_pagesize, c->sector_size);
+
+	return 0;
+}
+
+void jffs2_ubivol_cleanup(struct jffs2_sb_info *c) {
 	kfree(c->wbuf);
 }

@@ -156,17 +156,14 @@ static void inode_go_sync(struct gfs2_glock *gl)
 		ip = NULL;
 
 	if (test_bit(GLF_DIRTY, &gl->gl_flags)) {
-		gfs2_log_flush(gl->gl_sbd, gl);
 		if (ip)
 			filemap_fdatawrite(ip->i_inode.i_mapping);
+		gfs2_log_flush(gl->gl_sbd, gl);
 		gfs2_meta_sync(gl);
 		if (ip) {
 			struct address_space *mapping = ip->i_inode.i_mapping;
 			int error = filemap_fdatawait(mapping);
-			if (error == -ENOSPC)
-				set_bit(AS_ENOSPC, &mapping->flags);
-			else if (error)
-				set_bit(AS_EIO, &mapping->flags);
+			mapping_set_error(mapping, error);
 		}
 		clear_bit(GLF_DIRTY, &gl->gl_flags);
 		gfs2_ail_empty_gl(gl);
@@ -245,7 +242,6 @@ static void inode_go_inval(struct gfs2_glock *gl, int flags)
 
 	if (ip && S_ISREG(ip->i_inode.i_mode)) {
 		truncate_inode_pages(ip->i_inode.i_mapping, 0);
-		gfs2_assert_withdraw(GFS2_SB(&ip->i_inode), !ip->i_inode.i_mapping->nrpages);
 		clear_bit(GIF_PAGED, &ip->i_flags);
 	}
 }
@@ -459,6 +455,8 @@ const struct gfs2_glock_operations gfs2_inode_glops = {
 };
 
 const struct gfs2_glock_operations gfs2_rgrp_glops = {
+	.go_xmote_th = meta_go_sync,
+	.go_drop_th = meta_go_sync,
 	.go_inval = meta_go_inval,
 	.go_demote_ok = rgrp_go_demote_ok,
 	.go_lock = rgrp_go_lock,

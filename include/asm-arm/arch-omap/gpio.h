@@ -5,7 +5,7 @@
  *
  * Copyright (C) 2003-2005 Nokia Corporation
  *
- * Written by Juha Yrjölä <juha.yrjola@nokia.com>
+ * Written by Juha YrjÃ¶lÃ¤ <juha.yrjola@nokia.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -113,8 +113,9 @@ static inline int gpio_direction_input(unsigned gpio)
 	return __gpio_set_direction(gpio, 1);
 }
 
-static inline int gpio_direction_output(unsigned gpio)
+static inline int gpio_direction_output(unsigned gpio, int value)
 {
+	omap_set_gpio_dataout(gpio, value);
 	return __gpio_set_direction(gpio, 0);
 }
 

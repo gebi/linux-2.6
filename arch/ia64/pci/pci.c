@@ -18,7 +18,6 @@
 #include <linux/init.h>
 #include <linux/ioport.h>
 #include <linux/slab.h>
-#include <linux/smp_lock.h>
 #include <linux/spinlock.h>
 
 #include <asm/machvec.h>
@@ -355,10 +354,13 @@ pci_acpi_scan_root(struct acpi_device *device, int domain, int bus)
 
 	acpi_walk_resources(device->handle, METHOD_NAME__CRS, count_window,
 			&windows);
-	controller->window = kmalloc_node(sizeof(*controller->window) * windows,
-			GFP_KERNEL, controller->node);
-	if (!controller->window)
-		goto out2;
+	if (windows) {
+		controller->window =
+			kmalloc_node(sizeof(*controller->window) * windows,
+				     GFP_KERNEL, controller->node);
+		if (!controller->window)
+			goto out2;
+	}
 
 	name = kmalloc(16, GFP_KERNEL);
 	if (!name)
@@ -557,14 +559,17 @@ pcibios_enable_device (struct pci_dev *dev, int mask)
 	if (ret < 0)
 		return ret;
 
-	return acpi_pci_irq_enable(dev);
+	if (!dev->msi_enabled)
+		return acpi_pci_irq_enable(dev);
+	return 0;
 }
 
 void
 pcibios_disable_device (struct pci_dev *dev)
 {
 	BUG_ON(atomic_read(&dev->enable_cnt));
-	acpi_pci_irq_disable(dev);
+	if (!dev->msi_enabled)
+		acpi_pci_irq_disable(dev);
 }
 
 void
@@ -576,7 +581,7 @@ pcibios_align_resource (void *data, struct resource *res,
 /*
  * PCI BIOS setup, always defaults to SAL interface
  */
-char * __init
+char * __devinit
 pcibios_setup (char *str)
 {
 	return str;
@@ -586,6 +591,9 @@ int
 pci_mmap_page_range (struct pci_dev *dev, struct vm_area_struct *vma,
 		     enum pci_mmap_state mmap_state, int write_combine)
 {
+	unsigned long size = vma->vm_end - vma->vm_start;
+	pgprot_t prot;
+
 	/*
 	 * I/O space cannot be accessed via normal processor loads and
 	 * stores on this platform.
@@ -599,15 +607,24 @@ pci_mmap_page_range (struct pci_dev *dev, struct vm_area_struct *vma,
 		 */
 		return -EINVAL;
 
+	if (!valid_mmap_phys_addr_range(vma->vm_pgoff, size))
+		return -EINVAL;
+
+	prot = phys_mem_access_prot(NULL, vma->vm_pgoff, size,
+				    vma->vm_page_prot);
+
 	/*
-	 * Leave vm_pgoff as-is, the PCI space address is the physical
-	 * address on this platform.
+	 * If the user requested WC, the kernel uses UC or WC for this region,
+	 * and the chipset supports WC, we can use WC. Otherwise, we have to
+	 * use the same attribute the kernel uses.
 	 */
-	if (write_combine && efi_range_is_wc(vma->vm_start,
-					     vma->vm_end - vma->vm_start))
+	if (write_combine &&
+	    ((pgprot_val(prot) & _PAGE_MA_MASK) == _PAGE_MA_UC ||
+	     (pgprot_val(prot) & _PAGE_MA_MASK) == _PAGE_MA_WC) &&
+	    efi_range_is_wc(vma->vm_start, vma->vm_end - vma->vm_start))
 		vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
 	else
-		vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+		vma->vm_page_prot = prot;
 
 	if (remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff,
 			     vma->vm_end - vma->vm_start, vma->vm_page_prot))
@@ -656,8 +673,6 @@ pci_mmap_legacy_page_range(struct pci_bus *bus, struct vm_area_struct *vma)
 		return -EINVAL;
 	prot = phys_mem_access_prot(NULL, vma->vm_pgoff, size,
 				    vma->vm_page_prot);
-	if (pgprot_val(prot) != pgprot_val(pgprot_noncached(vma->vm_page_prot)))
-		return -EINVAL;
 
 	addr = pci_get_legacy_mem(bus);
 	if (IS_ERR(addr))

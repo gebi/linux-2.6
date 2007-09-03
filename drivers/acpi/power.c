@@ -59,10 +59,16 @@ static int acpi_power_remove(struct acpi_device *device, int type);
 static int acpi_power_resume(struct acpi_device *device);
 static int acpi_power_open_fs(struct inode *inode, struct file *file);
 
+static struct acpi_device_id power_device_ids[] = {
+	{ACPI_POWER_HID, 0},
+	{"", 0},
+};
+MODULE_DEVICE_TABLE(acpi, power_device_ids);
+
 static struct acpi_driver acpi_power_driver = {
 	.name = "power",
 	.class = ACPI_POWER_CLASS,
-	.ids = ACPI_POWER_HID,
+	.ids = power_device_ids,
 	.ops = {
 		.add = acpi_power_add,
 		.remove = acpi_power_remove,
@@ -436,8 +442,6 @@ int acpi_power_transition(struct acpi_device *device, int state)
 	cl = &device->power.states[device->power.state].resources;
 	tl = &device->power.states[state].resources;
 
-	device->power.state = ACPI_STATE_UNKNOWN;
-
 	if (!cl->count && !tl->count) {
 		result = -ENODEV;
 		goto end;
@@ -468,12 +472,15 @@ int acpi_power_transition(struct acpi_device *device, int state)
 			goto end;
 	}
 
-	/* We shouldn't change the state till all above operations succeed */
-	device->power.state = state;
-      end:
-	if (result)
+     end:
+	if (result) {
+		device->power.state = ACPI_STATE_UNKNOWN;
 		printk(KERN_WARNING PREFIX "Transitioning device [%s] to D%d\n",
 			      device->pnp.bus_id, state);
+	} else {
+	/* We shouldn't change the state till all above operations succeed */
+		device->power.state = state;
+	}
 
 	return result;
 }
@@ -687,13 +694,6 @@ static int acpi_power_resume(struct acpi_device *device)
 		return result;
 
 	mutex_lock(&resource->resource_lock);
-	if ((resource->state == ACPI_POWER_RESOURCE_STATE_ON) &&
-	    list_empty(&resource->reference)) {
-		mutex_unlock(&resource->resource_lock);
-		result = acpi_power_off_device(device->handle, NULL);
-		return result;
-	}
-
 	if ((resource->state == ACPI_POWER_RESOURCE_STATE_OFF) &&
 	    !list_empty(&resource->reference)) {
 		ref = container_of(resource->reference.next, struct acpi_power_reference, node);

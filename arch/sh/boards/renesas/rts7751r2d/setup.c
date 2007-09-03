@@ -12,6 +12,7 @@
 #include <linux/platform_device.h>
 #include <linux/pata_platform.h>
 #include <linux/serial_8250.h>
+#include <linux/sm501.h>
 #include <linux/pm.h>
 #include <asm/machvec.h>
 #include <asm/rts7751r2d.h>
@@ -85,7 +86,8 @@ static struct plat_serial8250_port uart_platform_data[] = {
 		.flags		= UPF_BOOT_AUTOCONF | UPF_SKIP_TEST,
 		.regshift	= 2,
 		.uartclk	= (9600 * 16),
-	}
+	},
+	{ 0 },
 };
 
 static struct platform_device uart_device = {
@@ -111,14 +113,46 @@ static struct platform_device heartbeat_device = {
 	.resource	= heartbeat_resources,
 };
 
+static struct resource sm501_resources[] = {
+	[0]	= {
+		.start	= 0x10000000,
+		.end	= 0x13e00000 - 1,
+		.flags	= IORESOURCE_MEM,
+	},
+	[1]	= {
+		.start	= 0x13e00000,
+		.end	= 0x13ffffff,
+		.flags	= IORESOURCE_MEM,
+	},
+	[2]	= {
+		.start	= 32,
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device sm501_device = {
+	.name		= "sm501",
+	.id		= -1,
+	.num_resources	= ARRAY_SIZE(sm501_resources),
+	.resource	= sm501_resources,
+};
+
 static struct platform_device *rts7751r2d_devices[] __initdata = {
 	&uart_device,
 	&heartbeat_device,
-	&cf_ide_device,
+	&sm501_device,
 };
 
 static int __init rts7751r2d_devices_setup(void)
 {
+	int ret;
+
+	if (ctrl_inw(PA_BVERREG) == 0x10) { /* only working on R2D-PLUS */
+		ret = platform_device_register(&cf_ide_device);
+		if (ret)
+			return ret;
+	}
+
 	return platform_add_devices(rts7751r2d_devices,
 				    ARRAY_SIZE(rts7751r2d_devices));
 }
@@ -150,7 +184,7 @@ static void __init rts7751r2d_setup(char **cmdline_p)
 /*
  * The Machine Vector
  */
-struct sh_machine_vector mv_rts7751r2d __initmv = {
+static struct sh_machine_vector mv_rts7751r2d __initmv = {
 	.mv_name		= "RTS7751R2D",
 	.mv_setup		= rts7751r2d_setup,
 	.mv_nr_irqs		= 72,
@@ -163,4 +197,3 @@ struct sh_machine_vector mv_rts7751r2d __initmv = {
 	.mv_consistent_free	= voyagergx_consistent_free,
 #endif
 };
-ALIAS_MV(rts7751r2d)

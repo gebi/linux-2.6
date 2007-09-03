@@ -21,7 +21,6 @@
 #include <linux/mm.h>
 #include <linux/elfcore.h>
 #include <linux/smp.h>
-#include <linux/smp_lock.h>
 #include <linux/stddef.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
@@ -39,6 +38,7 @@
 #include <linux/random.h>
 #include <linux/personality.h>
 #include <linux/tick.h>
+#include <linux/percpu.h>
 
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
@@ -49,7 +49,6 @@
 #include <asm/i387.h>
 #include <asm/desc.h>
 #include <asm/vm86.h>
-#include <asm/idle.h>
 #ifdef CONFIG_MATH_EMULATION
 #include <asm/math_emu.h>
 #endif
@@ -58,7 +57,6 @@
 
 #include <asm/tlbflush.h>
 #include <asm/cpu.h>
-#include <asm/pda.h>
 
 asmlinkage void ret_from_fork(void) __asm__("ret_from_fork");
 
@@ -66,6 +64,12 @@ static int hlt_counter;
 
 unsigned long boot_option_idle_override = 0;
 EXPORT_SYMBOL(boot_option_idle_override);
+
+DEFINE_PER_CPU(struct task_struct *, current_task) = &init_task;
+EXPORT_PER_CPU_SYMBOL(current_task);
+
+DEFINE_PER_CPU(int, cpu_number);
+EXPORT_PER_CPU_SYMBOL(cpu_number);
 
 /*
  * Return saved PC of a blocked thread.
@@ -81,42 +85,6 @@ unsigned long thread_saved_pc(struct task_struct *tsk)
 void (*pm_idle)(void);
 EXPORT_SYMBOL(pm_idle);
 static DEFINE_PER_CPU(unsigned int, cpu_idle_state);
-
-static ATOMIC_NOTIFIER_HEAD(idle_notifier);
-
-void idle_notifier_register(struct notifier_block *n)
-{
-	atomic_notifier_chain_register(&idle_notifier, n);
-}
-
-void idle_notifier_unregister(struct notifier_block *n)
-{
-	atomic_notifier_chain_unregister(&idle_notifier, n);
-}
-
-static DEFINE_PER_CPU(volatile unsigned long, idle_state);
-
-void enter_idle(void)
-{
-	/* needs to be atomic w.r.t. interrupts, not against other CPUs */
-	__set_bit(0, &__get_cpu_var(idle_state));
-	atomic_notifier_call_chain(&idle_notifier, IDLE_START, NULL);
-}
-
-static void __exit_idle(void)
-{
-	/* needs to be atomic w.r.t. interrupts, not against other CPUs */
-	if (__test_and_clear_bit(0, &__get_cpu_var(idle_state)) == 0)
-		return;
-	atomic_notifier_call_chain(&idle_notifier, IDLE_END, NULL);
-}
-
-void exit_idle(void)
-{
-	if (current->pid)
-		return;
-	__exit_idle();
-}
 
 void disable_hlt(void)
 {
@@ -168,7 +136,6 @@ EXPORT_SYMBOL(default_idle);
  */
 static void poll_idle (void)
 {
-	local_irq_enable();
 	cpu_relax();
 }
 
@@ -219,6 +186,7 @@ void cpu_idle(void)
 			if (__get_cpu_var(cpu_idle_state))
 				__get_cpu_var(cpu_idle_state) = 0;
 
+			check_pgt_cache();
 			rmb();
 			idle = pm_idle;
 
@@ -229,16 +197,7 @@ void cpu_idle(void)
 				play_dead();
 
 			__get_cpu_var(irq_stat).idle_timestamp = jiffies;
-
-			/*
-			 * Idle routines should keep interrupts disabled
-			 * from here on, until they go to idle.
-			 * Otherwise, idle callbacks can misfire.
-			 */
-			local_irq_disable();
-			enter_idle();
 			idle();
-			__exit_idle();
 		}
 		tick_nohz_restart_sched_tick();
 		preempt_enable_no_resched();
@@ -293,11 +252,7 @@ void mwait_idle_with_hints(unsigned long eax, unsigned long ecx)
 		__monitor((void *)&current_thread_info()->flags, 0, 0);
 		smp_mb();
 		if (!need_resched())
-			__sti_mwait(eax, ecx);
-		else
-			local_irq_enable();
-	} else {
-		local_irq_enable();
+			__mwait(eax, ecx);
 	}
 }
 
@@ -323,29 +278,29 @@ void __devinit select_idle_routine(const struct cpuinfo_x86 *c)
 	}
 }
 
-static int __init idle_setup (char *str)
+static int __init idle_setup(char *str)
 {
-	if (!strncmp(str, "poll", 4)) {
+	if (!strcmp(str, "poll")) {
 		printk("using polling idle threads.\n");
 		pm_idle = poll_idle;
 #ifdef CONFIG_X86_SMP
 		if (smp_num_siblings > 1)
 			printk("WARNING: polling idle and HT enabled, performance may degrade.\n");
 #endif
-	} else if (!strncmp(str, "halt", 4)) {
-		printk("using halt in idle threads.\n");
-		pm_idle = default_idle;
-	}
+	} else if (!strcmp(str, "mwait"))
+		force_mwait = 1;
+	else
+		return -1;
 
 	boot_option_idle_override = 1;
-	return 1;
+	return 0;
 }
-
-__setup("idle=", idle_setup);
+early_param("idle", idle_setup);
 
 void show_regs(struct pt_regs * regs)
 {
 	unsigned long cr0 = 0L, cr2 = 0L, cr3 = 0L, cr4 = 0L;
+	unsigned long d0, d1, d2, d3, d6, d7;
 
 	printk("\n");
 	printk("Pid: %d, comm: %20s\n", current->pid, current->comm);
@@ -370,6 +325,17 @@ void show_regs(struct pt_regs * regs)
 	cr3 = read_cr3();
 	cr4 = read_cr4_safe();
 	printk("CR0: %08lx CR2: %08lx CR3: %08lx CR4: %08lx\n", cr0, cr2, cr3, cr4);
+
+	get_debugreg(d0, 0);
+	get_debugreg(d1, 1);
+	get_debugreg(d2, 2);
+	get_debugreg(d3, 3);
+	printk("DR0: %08lx DR1: %08lx DR2: %08lx DR3: %08lx\n",
+			d0, d1, d2, d3);
+	get_debugreg(d6, 6);
+	get_debugreg(d7, 7);
+	printk("DR6: %08lx DR7: %08lx\n", d6, d7);
+
 	show_trace(NULL, regs, &regs->esp);
 }
 
@@ -394,7 +360,7 @@ int kernel_thread(int (*fn)(void *), void * arg, unsigned long flags)
 
 	regs.xds = __USER_DS;
 	regs.xes = __USER_DS;
-	regs.xfs = __KERNEL_PDA;
+	regs.xfs = __KERNEL_PERCPU;
 	regs.orig_eax = -1;
 	regs.eip = (unsigned long) kernel_thread_helper;
 	regs.xcs = __KERNEL_CS | get_kernel_rpl();
@@ -427,7 +393,7 @@ void exit_thread(void)
 		t->io_bitmap_max = 0;
 		tss->io_bitmap_owner = NULL;
 		tss->io_bitmap_max = 0;
-		tss->io_bitmap_base = INVALID_IO_BITMAP_OFFSET;
+		tss->x86_tss.io_bitmap_base = INVALID_IO_BITMAP_OFFSET;
 		put_cpu();
 	}
 }
@@ -584,8 +550,31 @@ int dump_task_regs(struct task_struct *tsk, elf_gregset_t *regs)
 	return 1;
 }
 
-static noinline void __switch_to_xtra(struct task_struct *next_p,
-				    struct tss_struct *tss)
+#ifdef CONFIG_SECCOMP
+void hard_disable_TSC(void)
+{
+	write_cr4(read_cr4() | X86_CR4_TSD);
+}
+void disable_TSC(void)
+{
+	preempt_disable();
+	if (!test_and_set_thread_flag(TIF_NOTSC))
+		/*
+		 * Must flip the CPU state synchronously with
+		 * TIF_NOTSC in the current running context.
+		 */
+		hard_disable_TSC();
+	preempt_enable();
+}
+void hard_enable_TSC(void)
+{
+	write_cr4(read_cr4() & ~X86_CR4_TSD);
+}
+#endif /* CONFIG_SECCOMP */
+
+static noinline void
+__switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p,
+		 struct tss_struct *tss)
 {
 	struct thread_struct *next;
 
@@ -601,12 +590,23 @@ static noinline void __switch_to_xtra(struct task_struct *next_p,
 		set_debugreg(next->debugreg[7], 7);
 	}
 
+#ifdef CONFIG_SECCOMP
+	if (test_tsk_thread_flag(prev_p, TIF_NOTSC) ^
+	    test_tsk_thread_flag(next_p, TIF_NOTSC)) {
+		/* prev and next are different */
+		if (test_tsk_thread_flag(next_p, TIF_NOTSC))
+			hard_disable_TSC();
+		else
+			hard_enable_TSC();
+	}
+#endif
+
 	if (!test_tsk_thread_flag(next_p, TIF_IO_BITMAP)) {
 		/*
 		 * Disable the bitmap via an invalid offset. We still cache
 		 * the previous bitmap owner and the IO bitmap contents:
 		 */
-		tss->io_bitmap_base = INVALID_IO_BITMAP_OFFSET;
+		tss->x86_tss.io_bitmap_base = INVALID_IO_BITMAP_OFFSET;
 		return;
 	}
 
@@ -616,7 +616,7 @@ static noinline void __switch_to_xtra(struct task_struct *next_p,
 		 * matches the next task, we dont have to do anything but
 		 * to set a valid offset in the TSS:
 		 */
-		tss->io_bitmap_base = IO_BITMAP_OFFSET;
+		tss->x86_tss.io_bitmap_base = IO_BITMAP_OFFSET;
 		return;
 	}
 	/*
@@ -628,34 +628,7 @@ static noinline void __switch_to_xtra(struct task_struct *next_p,
 	 * redundant copies when the currently switched task does not
 	 * perform any I/O during its timeslice.
 	 */
-	tss->io_bitmap_base = INVALID_IO_BITMAP_OFFSET_LAZY;
-}
-
-/*
- * This function selects if the context switch from prev to next
- * has to tweak the TSC disable bit in the cr4.
- */
-static inline void disable_tsc(struct task_struct *prev_p,
-			       struct task_struct *next_p)
-{
-	struct thread_info *prev, *next;
-
-	/*
-	 * gcc should eliminate the ->thread_info dereference if
-	 * has_secure_computing returns 0 at compile time (SECCOMP=n).
-	 */
-	prev = task_thread_info(prev_p);
-	next = task_thread_info(next_p);
-
-	if (has_secure_computing(prev) || has_secure_computing(next)) {
-		/* slow path here */
-		if (has_secure_computing(prev) &&
-		    !has_secure_computing(next)) {
-			write_cr4(read_cr4() & ~X86_CR4_TSD);
-		} else if (!has_secure_computing(prev) &&
-			   has_secure_computing(next))
-			write_cr4(read_cr4() | X86_CR4_TSD);
-	}
+	tss->x86_tss.io_bitmap_base = INVALID_IO_BITMAP_OFFSET_LAZY;
 }
 
 /*
@@ -735,11 +708,9 @@ struct task_struct fastcall * __switch_to(struct task_struct *prev_p, struct tas
 	/*
 	 * Now maybe handle debug registers and/or IO bitmaps
 	 */
-	if (unlikely((task_thread_info(next_p)->flags & _TIF_WORK_CTXSW)
-	    || test_tsk_thread_flag(prev_p, TIF_IO_BITMAP)))
-		__switch_to_xtra(next_p, tss);
-
-	disable_tsc(prev_p, next_p);
+	if (unlikely(task_thread_info(prev_p)->flags & _TIF_WORK_CTXSW_PREV ||
+		     task_thread_info(next_p)->flags & _TIF_WORK_CTXSW_NEXT))
+		__switch_to_xtra(prev_p, next_p, tss);
 
 	/*
 	 * Leave lazy mode, flushing any hypercalls made here.
@@ -763,7 +734,7 @@ struct task_struct fastcall * __switch_to(struct task_struct *prev_p, struct tas
 	if (prev->gs | next->gs)
 		loadsegment(gs, next->gs);
 
-	write_pda(pcurrent, next_p);
+	x86_write_percpu(current_task, next_p);
 
 	return prev_p;
 }

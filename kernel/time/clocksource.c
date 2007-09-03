@@ -55,16 +55,18 @@ static DEFINE_SPINLOCK(clocksource_lock);
 static char override_name[32];
 static int finished_booting;
 
-/* clocksource_done_booting - Called near the end of bootup
+/* clocksource_done_booting - Called near the end of core bootup
  *
- * Hack to avoid lots of clocksource churn at boot time
+ * Hack to avoid lots of clocksource churn at boot time.
+ * We use fs_initcall because we want this to start before
+ * device_initcall but after subsys_initcall.
  */
 static int __init clocksource_done_booting(void)
 {
 	finished_booting = 1;
 	return 0;
 }
-late_initcall(clocksource_done_booting);
+fs_initcall(clocksource_done_booting);
 
 #ifdef CONFIG_CLOCKSOURCE_WATCHDOG
 static LIST_HEAD(watchdog_list);
@@ -72,15 +74,17 @@ static struct clocksource *watchdog;
 static struct timer_list watchdog_timer;
 static DEFINE_SPINLOCK(watchdog_lock);
 static cycle_t watchdog_last;
+static unsigned long watchdog_resumed;
+
 /*
- * Interval: 0.5sec Treshold: 0.0625s
+ * Interval: 0.5sec Threshold: 0.0625s
  */
 #define WATCHDOG_INTERVAL (HZ >> 1)
-#define WATCHDOG_TRESHOLD (NSEC_PER_SEC >> 4)
+#define WATCHDOG_THRESHOLD (NSEC_PER_SEC >> 4)
 
 static void clocksource_ratewd(struct clocksource *cs, int64_t delta)
 {
-	if (delta > -WATCHDOG_TRESHOLD && delta < WATCHDOG_TRESHOLD)
+	if (delta > -WATCHDOG_THRESHOLD && delta < WATCHDOG_THRESHOLD)
 		return;
 
 	printk(KERN_WARNING "Clocksource %s unstable (delta = %Ld ns)\n",
@@ -96,8 +100,11 @@ static void clocksource_watchdog(unsigned long data)
 	struct clocksource *cs, *tmp;
 	cycle_t csnow, wdnow;
 	int64_t wd_nsec, cs_nsec;
+	int resumed;
 
 	spin_lock(&watchdog_lock);
+
+	resumed = test_and_clear_bit(0, &watchdog_resumed);
 
 	wdnow = watchdog->read();
 	wd_nsec = cyc2ns(watchdog, (wdnow - watchdog_last) & watchdog->mask);
@@ -105,6 +112,12 @@ static void clocksource_watchdog(unsigned long data)
 
 	list_for_each_entry_safe(cs, tmp, &watchdog_list, wd_list) {
 		csnow = cs->read();
+
+		if (unlikely(resumed)) {
+			cs->wd_last = csnow;
+			continue;
+		}
+
 		/* Initialized ? */
 		if (!(cs->flags & CLOCK_SOURCE_WATCHDOG)) {
 			if ((cs->flags & CLOCK_SOURCE_IS_CONTINUOUS) &&
@@ -134,6 +147,11 @@ static void clocksource_watchdog(unsigned long data)
 	}
 	spin_unlock(&watchdog_lock);
 }
+static void clocksource_resume_watchdog(void)
+{
+	set_bit(0, &watchdog_resumed);
+}
+
 static void clocksource_check_watchdog(struct clocksource *cs)
 {
 	struct clocksource *cse;
@@ -149,7 +167,8 @@ static void clocksource_check_watchdog(struct clocksource *cs)
 			watchdog_timer.expires = jiffies + WATCHDOG_INTERVAL;
 			add_timer(&watchdog_timer);
 		}
-	} else if (cs->flags & CLOCK_SOURCE_IS_CONTINUOUS) {
+	} else {
+		if (cs->flags & CLOCK_SOURCE_IS_CONTINUOUS)
 			cs->flags |= CLOCK_SOURCE_VALID_FOR_HRES;
 
 		if (!watchdog || cs->rating > watchdog->rating) {
@@ -179,7 +198,32 @@ static void clocksource_check_watchdog(struct clocksource *cs)
 	if (cs->flags & CLOCK_SOURCE_IS_CONTINUOUS)
 		cs->flags |= CLOCK_SOURCE_VALID_FOR_HRES;
 }
+
+static inline void clocksource_resume_watchdog(void) { }
 #endif
+
+/**
+ * clocksource_resume - resume the clocksource(s)
+ */
+void clocksource_resume(void)
+{
+	struct list_head *tmp;
+	unsigned long flags;
+
+	spin_lock_irqsave(&clocksource_lock, flags);
+
+	list_for_each(tmp, &clocksource_list) {
+		struct clocksource *cs;
+
+		cs = list_entry(tmp, struct clocksource, list);
+		if (cs->resume)
+			cs->resume();
+	}
+
+	clocksource_resume_watchdog();
+
+	spin_unlock_irqrestore(&clocksource_lock, flags);
+}
 
 /**
  * clocksource_get_next - Returns the selected clocksource

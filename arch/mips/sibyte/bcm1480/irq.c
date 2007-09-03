@@ -76,7 +76,7 @@ __setup("nokgdb", nokgdb);
 
 /* Default to UART1 */
 int kgdb_port = 1;
-#ifdef CONFIG_SIBYTE_SB1250_DUART
+#ifdef CONFIG_SERIAL_SB1250_DUART
 extern char sb1250_duart_present[];
 #endif
 #endif
@@ -141,11 +141,11 @@ static void bcm1480_set_affinity(unsigned int irq, cpumask_t mask)
 	unsigned long flags;
 	unsigned int irq_dirty;
 
-	i = first_cpu(mask);
-	if (next_cpu(i, mask) <= NR_CPUS) {
+	if (cpus_weight(mask) != 1) {
 		printk("attempted to set irq affinity for irq %d to multiple CPUs\n", irq);
 		return;
 	}
+	i = first_cpu(mask);
 
 	/* Convert logical CPU to physical CPU */
 	cpu = cpu_logical_map(i);
@@ -404,7 +404,7 @@ void __init arch_init_irq(void)
 	if (kgdb_flag) {
 		kgdb_irq = K_BCM1480_INT_UART_0 + kgdb_port;
 
-#ifdef CONFIG_SIBYTE_SB1250_DUART
+#ifdef CONFIG_SERIAL_SB1250_DUART
 		sb1250_duart_present[kgdb_port] = 0;
 #endif
 		/* Setup uart 1 settings, mapper */
@@ -420,7 +420,7 @@ void __init arch_init_irq(void)
 #ifdef CONFIG_GDB_CONSOLE
 		register_gdb_console();
 #endif
-		prom_printf("Waiting for GDB on UART port %d\n", kgdb_port);
+		printk("Waiting for GDB on UART port %d\n", kgdb_port);
 		set_debug_traps();
 		breakpoint();
 	}

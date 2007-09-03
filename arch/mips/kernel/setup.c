@@ -20,6 +20,7 @@
 #include <linux/highmem.h>
 #include <linux/console.h>
 #include <linux/pfn.h>
+#include <linux/debugfs.h>
 
 #include <asm/addrspace.h>
 #include <asm/bootinfo.h>
@@ -525,6 +526,14 @@ void __init setup_arch(char **cmdline_p)
 {
 	cpu_probe();
 	prom_init();
+
+#ifdef CONFIG_EARLY_PRINTK
+	{
+		extern void setup_early_printk(void);
+
+		setup_early_printk();
+	}
+#endif
 	cpu_report();
 
 #if defined(CONFIG_VT)
@@ -566,3 +575,18 @@ __setup("nodsp", dsp_disable);
 
 unsigned long kernelsp[NR_CPUS];
 unsigned long fw_arg0, fw_arg1, fw_arg2, fw_arg3;
+
+#ifdef CONFIG_DEBUG_FS
+struct dentry *mips_debugfs_dir;
+static int __init debugfs_mips(void)
+{
+	struct dentry *d;
+
+	d = debugfs_create_dir("mips", NULL);
+	if (IS_ERR(d))
+		return PTR_ERR(d);
+	mips_debugfs_dir = d;
+	return 0;
+}
+arch_initcall(debugfs_mips);
+#endif

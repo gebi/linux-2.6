@@ -23,7 +23,6 @@
 #include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/ioport.h>
-#include <linux/ptrace.h>
 #include <linux/sysdev.h>
 
 #include <asm/hardware.h>
@@ -137,7 +136,7 @@ static struct irq_chip s3c2443_irq_lcd = {
 
 static void s3c2443_irq_demux_dma(unsigned int irq, struct irq_desc *desc)
 {
-	s3c2443_irq_demux(IRQ_S3C2443_DMA1, 6);
+	s3c2443_irq_demux(IRQ_S3C2443_DMA0, 6);
 }
 
 #define INTMSK_DMA	(1UL << (IRQ_S3C2443_DMA - IRQ_EINT0))

@@ -4,17 +4,11 @@
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
- *
- * 16 Dec 2003: Yasuyuki Kozakai @USAGI <yasuyuki.kozakai@toshiba.co.jp>
- *	- enable working with Layer 3 protocol independent connection tracking.
- *
- * Derived from net/ipv4/netfilter/ip_conntrack_proto_udp.c
  */
 
 #include <linux/types.h>
 #include <linux/timer.h>
 #include <linux/module.h>
-#include <linux/netfilter.h>
 #include <linux/udp.h>
 #include <linux/seq_file.h>
 #include <linux/skbuff.h>
@@ -196,7 +190,7 @@ static struct ctl_table udp_compat_sysctl_table[] = {
 #endif /* CONFIG_NF_CONNTRACK_PROC_COMPAT */
 #endif /* CONFIG_SYSCTL */
 
-struct nf_conntrack_l4proto nf_conntrack_l4proto_udp4 =
+struct nf_conntrack_l4proto nf_conntrack_l4proto_udp4 __read_mostly =
 {
 	.l3proto		= PF_INET,
 	.l4proto		= IPPROTO_UDP,
@@ -208,8 +202,7 @@ struct nf_conntrack_l4proto nf_conntrack_l4proto_udp4 =
 	.packet			= udp_packet,
 	.new			= udp_new,
 	.error			= udp_error,
-#if defined(CONFIG_NF_CT_NETLINK) || \
-    defined(CONFIG_NF_CT_NETLINK_MODULE)
+#if defined(CONFIG_NF_CT_NETLINK) || defined(CONFIG_NF_CT_NETLINK_MODULE)
 	.tuple_to_nfattr	= nf_ct_port_tuple_to_nfattr,
 	.nfattr_to_tuple	= nf_ct_port_nfattr_to_tuple,
 #endif
@@ -224,7 +217,7 @@ struct nf_conntrack_l4proto nf_conntrack_l4proto_udp4 =
 };
 EXPORT_SYMBOL_GPL(nf_conntrack_l4proto_udp4);
 
-struct nf_conntrack_l4proto nf_conntrack_l4proto_udp6 =
+struct nf_conntrack_l4proto nf_conntrack_l4proto_udp6 __read_mostly =
 {
 	.l3proto		= PF_INET6,
 	.l4proto		= IPPROTO_UDP,
@@ -236,8 +229,7 @@ struct nf_conntrack_l4proto nf_conntrack_l4proto_udp6 =
 	.packet			= udp_packet,
 	.new			= udp_new,
 	.error			= udp_error,
-#if defined(CONFIG_NF_CT_NETLINK) || \
-    defined(CONFIG_NF_CT_NETLINK_MODULE)
+#if defined(CONFIG_NF_CT_NETLINK) || defined(CONFIG_NF_CT_NETLINK_MODULE)
 	.tuple_to_nfattr	= nf_ct_port_tuple_to_nfattr,
 	.nfattr_to_tuple	= nf_ct_port_nfattr_to_tuple,
 #endif

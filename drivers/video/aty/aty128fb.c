@@ -357,6 +357,12 @@ static int default_lcd_on __devinitdata = 1;
 static int mtrr = 1;
 #endif
 
+#ifdef CONFIG_PMAC_BACKLIGHT
+static int backlight __devinitdata = 1;
+#else
+static int backlight __devinitdata = 0;
+#endif
+
 /* PLL constants */
 struct aty128_constants {
 	u32 ref_clk;
@@ -1652,6 +1658,9 @@ static int __devinit aty128fb_setup(char *options)
 		} else if (!strncmp(this_opt, "crt:", 4)) {
 			default_crt_on = simple_strtoul(this_opt+4, NULL, 0);
 			continue;
+		} else if (!strncmp(this_opt, "backlight:", 10)) {
+			backlight = simple_strtoul(this_opt+10, NULL, 0);
+			continue;
 		}
 #ifdef CONFIG_MTRR
 		if(!strncmp(this_opt, "nomtrr", 6)) {
@@ -1724,7 +1733,7 @@ static int aty128_bl_get_level_brightness(struct aty128fb_par *par,
 
 static int aty128_bl_update_status(struct backlight_device *bd)
 {
-	struct aty128fb_par *par = class_get_devdata(&bd->class_dev);
+	struct aty128fb_par *par = bl_get_data(bd);
 	unsigned int reg = aty_ld_le32(LVDS_GEN_CNTL);
 	int level;
 
@@ -1985,7 +1994,8 @@ static int __devinit aty128_init(struct pci_dev *pdev, const struct pci_device_i
 	par->lock_blank = 0;
 
 #ifdef CONFIG_FB_ATY128_BACKLIGHT
-	aty128_bl_init(par);
+	if (backlight)
+		aty128_bl_init(par);
 #endif
 
 	if (register_framebuffer(info) < 0)
@@ -2155,18 +2165,29 @@ static void __devexit aty128_remove(struct pci_dev *pdev)
 static int aty128fb_blank(int blank, struct fb_info *fb)
 {
 	struct aty128fb_par *par = fb->par;
-	u8 state = 0;
+	u8 state;
 
 	if (par->lock_blank || par->asleep)
 		return 0;
 
-	if (blank & FB_BLANK_VSYNC_SUSPEND)
-		state |= 2;
-	if (blank & FB_BLANK_HSYNC_SUSPEND)
-		state |= 1;
-	if (blank & FB_BLANK_POWERDOWN)
-		state |= 4;
-
+	switch (blank) {
+	case FB_BLANK_NORMAL:
+		state = 4;
+		break;
+	case FB_BLANK_VSYNC_SUSPEND:
+		state = 6;
+		break;
+	case FB_BLANK_HSYNC_SUSPEND:
+		state = 5;
+		break;
+	case FB_BLANK_POWERDOWN:
+		state = 7;
+		break;
+	case FB_BLANK_UNBLANK:
+	default:
+		state = 0;
+		break;
+	}
 	aty_st_8(CRTC_EXT_CNTL+1, state);
 
 	if (par->chip_gen == rage_M3) {
@@ -2420,7 +2441,7 @@ static int aty128_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 	wait_for_idle(par);
 
 	/* Blank display and LCD */
-	aty128fb_blank(VESA_POWERDOWN, info);
+	aty128fb_blank(FB_BLANK_POWERDOWN, info);
 
 	/* Sleep */
 	par->asleep = 1;

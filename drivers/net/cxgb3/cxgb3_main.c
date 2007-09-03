@@ -42,6 +42,8 @@
 #include <linux/workqueue.h>
 #include <linux/proc_fs.h>
 #include <linux/rtnetlink.h>
+#include <linux/firmware.h>
+#include <linux/log2.h>
 #include <asm/uaccess.h>
 
 #include "common.h"
@@ -184,16 +186,24 @@ void t3_os_link_changed(struct adapter *adapter, int port_id, int link_stat,
 			int speed, int duplex, int pause)
 {
 	struct net_device *dev = adapter->port[port_id];
+	struct port_info *pi = netdev_priv(dev);
+	struct cmac *mac = &pi->mac;
 
 	/* Skip changes from disabled ports. */
 	if (!netif_running(dev))
 		return;
 
 	if (link_stat != netif_carrier_ok(dev)) {
-		if (link_stat)
+		if (link_stat) {
+			t3_mac_enable(mac, MAC_DIRECTION_RX);
 			netif_carrier_on(dev);
-		else
+		} else {
 			netif_carrier_off(dev);
+			pi->phy.ops->power_down(&pi->phy, 1);
+			t3_mac_disable(mac, MAC_DIRECTION_RX);
+			t3_link_start(&pi->phy, mac, &pi->link_config);
+		}
+
 		link_report(dev);
 	}
 }
@@ -348,11 +358,14 @@ static int init_dummy_netdevs(struct adapter *adap)
 
 		for (j = 0; j < pi->nqsets - 1; j++) {
 			if (!adap->dummy_netdev[dummy_idx]) {
-				nd = alloc_netdev(0, "", ether_setup);
+				struct port_info *p;
+
+				nd = alloc_netdev(sizeof(*p), "", ether_setup);
 				if (!nd)
 					goto free_all;
 
-				nd->priv = adap;
+				p = netdev_priv(nd);
+				p->adapter = adap;
 				nd->weight = 64;
 				set_bit(__LINK_STATE_START, &nd->state);
 				adap->dummy_netdev[dummy_idx] = nd;
@@ -406,7 +419,7 @@ static void quiesce_rx(struct adapter *adap)
 static int setup_sge_qsets(struct adapter *adap)
 {
 	int i, j, err, irq_idx = 0, qset_idx = 0, dummy_dev_idx = 0;
-	unsigned int ntxq = is_offload(adap) ? SGE_TXQ_PER_SET : 1;
+	unsigned int ntxq = SGE_TXQ_PER_SET;
 
 	if (adap->params.rev > 0 && !(adap->flags & USING_MSI))
 		irq_idx = -1;
@@ -434,27 +447,25 @@ static int setup_sge_qsets(struct adapter *adap)
 
 static ssize_t attr_show(struct device *d, struct device_attribute *attr,
 			 char *buf,
-			 ssize_t(*format) (struct adapter *, char *))
+			 ssize_t(*format) (struct net_device *, char *))
 {
 	ssize_t len;
-	struct adapter *adap = to_net_dev(d)->priv;
 
 	/* Synchronize with ioctls that may shut down the device */
 	rtnl_lock();
-	len = (*format) (adap, buf);
+	len = (*format) (to_net_dev(d), buf);
 	rtnl_unlock();
 	return len;
 }
 
 static ssize_t attr_store(struct device *d, struct device_attribute *attr,
 			  const char *buf, size_t len,
-			  ssize_t(*set) (struct adapter *, unsigned int),
+			  ssize_t(*set) (struct net_device *, unsigned int),
 			  unsigned int min_val, unsigned int max_val)
 {
 	char *endp;
 	ssize_t ret;
 	unsigned int val;
-	struct adapter *adap = to_net_dev(d)->priv;
 
 	if (!capable(CAP_NET_ADMIN))
 		return -EPERM;
@@ -464,7 +475,7 @@ static ssize_t attr_store(struct device *d, struct device_attribute *attr,
 		return -EINVAL;
 
 	rtnl_lock();
-	ret = (*set) (adap, val);
+	ret = (*set) (to_net_dev(d), val);
 	if (!ret)
 		ret = len;
 	rtnl_unlock();
@@ -472,8 +483,10 @@ static ssize_t attr_store(struct device *d, struct device_attribute *attr,
 }
 
 #define CXGB3_SHOW(name, val_expr) \
-static ssize_t format_##name(struct adapter *adap, char *buf) \
+static ssize_t format_##name(struct net_device *dev, char *buf) \
 { \
+	struct port_info *pi = netdev_priv(dev); \
+	struct adapter *adap = pi->adapter; \
 	return sprintf(buf, "%u\n", val_expr); \
 } \
 static ssize_t show_##name(struct device *d, struct device_attribute *attr, \
@@ -482,13 +495,18 @@ static ssize_t show_##name(struct device *d, struct device_attribute *attr, \
 	return attr_show(d, attr, buf, format_##name); \
 }
 
-static ssize_t set_nfilters(struct adapter *adap, unsigned int val)
+static ssize_t set_nfilters(struct net_device *dev, unsigned int val)
 {
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adap = pi->adapter;
+	int min_tids = is_offload(adap) ? MC5_MIN_TIDS : 0;
+
 	if (adap->flags & FULL_INIT_DONE)
 		return -EBUSY;
 	if (val && adap->params.rev == 0)
 		return -EINVAL;
-	if (val > t3_mc5_size(&adap->mc5) - adap->params.mc5.nservers)
+	if (val > t3_mc5_size(&adap->mc5) - adap->params.mc5.nservers -
+	    min_tids)
 		return -EINVAL;
 	adap->params.mc5.nfilters = val;
 	return 0;
@@ -500,11 +518,15 @@ static ssize_t store_nfilters(struct device *d, struct device_attribute *attr,
 	return attr_store(d, attr, buf, len, set_nfilters, 0, ~0);
 }
 
-static ssize_t set_nservers(struct adapter *adap, unsigned int val)
+static ssize_t set_nservers(struct net_device *dev, unsigned int val)
 {
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adap = pi->adapter;
+
 	if (adap->flags & FULL_INIT_DONE)
 		return -EBUSY;
-	if (val > t3_mc5_size(&adap->mc5) - adap->params.mc5.nfilters)
+	if (val > t3_mc5_size(&adap->mc5) - adap->params.mc5.nfilters -
+	    MC5_MIN_TIDS)
 		return -EINVAL;
 	adap->params.mc5.nservers = val;
 	return 0;
@@ -540,9 +562,10 @@ static struct attribute_group cxgb3_attr_group = {.attrs = cxgb3_attrs };
 static ssize_t tm_attr_show(struct device *d, struct device_attribute *attr,
 			    char *buf, int sched)
 {
-	ssize_t len;
+	struct port_info *pi = netdev_priv(to_net_dev(d));
+	struct adapter *adap = pi->adapter;
 	unsigned int v, addr, bpt, cpt;
-	struct adapter *adap = to_net_dev(d)->priv;
+	ssize_t len;
 
 	addr = A_TP_TX_MOD_Q1_Q0_RATE_LIMIT - sched / 2;
 	rtnl_lock();
@@ -565,10 +588,11 @@ static ssize_t tm_attr_show(struct device *d, struct device_attribute *attr,
 static ssize_t tm_attr_store(struct device *d, struct device_attribute *attr,
 			     const char *buf, size_t len, int sched)
 {
+	struct port_info *pi = netdev_priv(to_net_dev(d));
+	struct adapter *adap = pi->adapter;
+	unsigned int val;
 	char *endp;
 	ssize_t ret;
-	unsigned int val;
-	struct adapter *adap = to_net_dev(d)->priv;
 
 	if (!capable(CAP_NET_ADMIN))
 		return -EPERM;
@@ -704,6 +728,94 @@ static void bind_qsets(struct adapter *adap)
 	}
 }
 
+#define FW_FNAME "t3fw-%d.%d.%d.bin"
+#define TPSRAM_NAME "t3%c_protocol_sram-%d.%d.%d.bin"
+
+static int upgrade_fw(struct adapter *adap)
+{
+	int ret;
+	char buf[64];
+	const struct firmware *fw;
+	struct device *dev = &adap->pdev->dev;
+
+	snprintf(buf, sizeof(buf), FW_FNAME, FW_VERSION_MAJOR,
+		 FW_VERSION_MINOR, FW_VERSION_MICRO);
+	ret = request_firmware(&fw, buf, dev);
+	if (ret < 0) {
+		dev_err(dev, "could not upgrade firmware: unable to load %s\n",
+			buf);
+		return ret;
+	}
+	ret = t3_load_fw(adap, fw->data, fw->size);
+	release_firmware(fw);
+
+	if (ret == 0)
+		dev_info(dev, "successful upgrade to firmware %d.%d.%d\n",
+			 FW_VERSION_MAJOR, FW_VERSION_MINOR, FW_VERSION_MICRO);
+	else
+		dev_err(dev, "failed to upgrade to firmware %d.%d.%d\n",
+			FW_VERSION_MAJOR, FW_VERSION_MINOR, FW_VERSION_MICRO);
+	
+	return ret;
+}
+
+static inline char t3rev2char(struct adapter *adapter)
+{
+	char rev = 0;
+
+	switch(adapter->params.rev) {
+	case T3_REV_B:
+	case T3_REV_B2:
+		rev = 'b';
+		break;
+	}
+	return rev;
+}
+
+int update_tpsram(struct adapter *adap)
+{
+	const struct firmware *tpsram;
+	char buf[64];
+	struct device *dev = &adap->pdev->dev;
+	int ret;
+	char rev;
+	
+	rev = t3rev2char(adap);
+	if (!rev)
+		return 0;
+
+	snprintf(buf, sizeof(buf), TPSRAM_NAME, rev,
+		 TP_VERSION_MAJOR, TP_VERSION_MINOR, TP_VERSION_MICRO);
+
+	ret = request_firmware(&tpsram, buf, dev);
+	if (ret < 0) {
+		dev_err(dev, "could not load TP SRAM: unable to load %s\n",
+			buf);
+		return ret;
+	}
+	
+	ret = t3_check_tpsram(adap, tpsram->data, tpsram->size);
+	if (ret)
+		goto release_tpsram;	
+
+	ret = t3_set_proto_sram(adap, tpsram->data);
+	if (ret == 0)
+		dev_info(dev,
+			 "successful update of protocol engine "
+			 "to %d.%d.%d\n",
+			 TP_VERSION_MAJOR, TP_VERSION_MINOR, TP_VERSION_MICRO);
+	else
+		dev_err(dev, "failed to update of protocol engine %d.%d.%d\n",
+			TP_VERSION_MAJOR, TP_VERSION_MINOR, TP_VERSION_MICRO);
+	if (ret)
+		dev_err(dev, "loading protocol SRAM failed\n");
+
+release_tpsram:
+	release_firmware(tpsram);
+	
+	return ret;
+}
+
 /**
  *	cxgb_up - enable the adapter
  *	@adapter: adapter being enabled
@@ -717,11 +829,21 @@ static void bind_qsets(struct adapter *adap)
 static int cxgb_up(struct adapter *adap)
 {
 	int err = 0;
+	int must_load;
 
 	if (!(adap->flags & FULL_INIT_DONE)) {
 		err = t3_check_fw_version(adap);
+		if (err == -EINVAL)
+			err = upgrade_fw(adap);
 		if (err)
 			goto out;
+
+		err = t3_check_tpsram_version(adap, &must_load);
+		if (err == -EINVAL) {
+			err = update_tpsram(adap);
+			if (err && must_load)
+				goto out;
+		}
 
 		err = init_dummy_netdevs(adap);
 		if (err)
@@ -731,6 +853,8 @@ static int cxgb_up(struct adapter *adap)
 		if (err)
 			goto out;
 
+		t3_write_reg(adap, A_ULPRX_TDDP_PSZ, V_HPZ0(PAGE_SHIFT - 12));
+		
 		err = setup_sge_qsets(adap);
 		if (err)
 			goto out;
@@ -816,8 +940,9 @@ static void schedule_chk_task(struct adapter *adap)
 
 static int offload_open(struct net_device *dev)
 {
-	struct adapter *adapter = dev->priv;
-	struct t3cdev *tdev = T3CDEV(dev);
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
+	struct t3cdev *tdev = dev2t3cdev(dev);
 	int adap_up = adapter->open_device_map & PORT_MASK;
 	int err = 0;
 
@@ -882,16 +1007,16 @@ static int offload_close(struct t3cdev *tdev)
 
 static int cxgb_open(struct net_device *dev)
 {
-	int err;
-	struct adapter *adapter = dev->priv;
 	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
 	int other_ports = adapter->open_device_map & PORT_MASK;
+	int err;
 
 	if (!adapter->open_device_map && (err = cxgb_up(adapter)) < 0)
 		return err;
 
 	set_bit(pi->port_id, &adapter->open_device_map);
-	if (!ofld_disable) {
+	if (is_offload(adapter) && !ofld_disable) {
 		err = offload_open(dev);
 		if (err)
 			printk(KERN_WARNING
@@ -909,17 +1034,17 @@ static int cxgb_open(struct net_device *dev)
 
 static int cxgb_close(struct net_device *dev)
 {
-	struct adapter *adapter = dev->priv;
-	struct port_info *p = netdev_priv(dev);
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
 
-	t3_port_intr_disable(adapter, p->port_id);
+	t3_port_intr_disable(adapter, pi->port_id);
 	netif_stop_queue(dev);
-	p->phy.ops->power_down(&p->phy, 1);
+	pi->phy.ops->power_down(&pi->phy, 1);
 	netif_carrier_off(dev);
-	t3_mac_disable(&p->mac, MAC_DIRECTION_TX | MAC_DIRECTION_RX);
+	t3_mac_disable(&pi->mac, MAC_DIRECTION_TX | MAC_DIRECTION_RX);
 
 	spin_lock(&adapter->work_lock);	/* sync with update task */
-	clear_bit(p->port_id, &adapter->open_device_map);
+	clear_bit(pi->port_id, &adapter->open_device_map);
 	spin_unlock(&adapter->work_lock);
 
 	if (!(adapter->open_device_map & PORT_MASK))
@@ -934,13 +1059,13 @@ static int cxgb_close(struct net_device *dev)
 
 static struct net_device_stats *cxgb_get_stats(struct net_device *dev)
 {
-	struct adapter *adapter = dev->priv;
-	struct port_info *p = netdev_priv(dev);
-	struct net_device_stats *ns = &p->netstats;
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
+	struct net_device_stats *ns = &pi->netstats;
 	const struct mac_stats *pstats;
 
 	spin_lock(&adapter->stats_lock);
-	pstats = t3_mac_update_stats(&p->mac);
+	pstats = t3_mac_update_stats(&pi->mac);
 	spin_unlock(&adapter->stats_lock);
 
 	ns->tx_bytes = pstats->tx_octets;
@@ -973,14 +1098,16 @@ static struct net_device_stats *cxgb_get_stats(struct net_device *dev)
 
 static u32 get_msglevel(struct net_device *dev)
 {
-	struct adapter *adapter = dev->priv;
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
 
 	return adapter->msg_enable;
 }
 
 static void set_msglevel(struct net_device *dev, u32 val)
 {
-	struct adapter *adapter = dev->priv;
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
 
 	adapter->msg_enable = val;
 }
@@ -1028,7 +1155,11 @@ static char stats_strings[][ETH_GSTRING_LEN] = {
 	"VLANinsertions     ",
 	"TxCsumOffload      ",
 	"RxCsumGood         ",
-	"RxDrops            "
+	"RxDrops            ",
+
+	"CheckTXEnToggled   ",
+	"CheckResets        ",
+
 };
 
 static int get_stats_count(struct net_device *dev)
@@ -1050,10 +1181,13 @@ static int get_eeprom_len(struct net_device *dev)
 
 static void get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
 {
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
 	u32 fw_vers = 0;
-	struct adapter *adapter = dev->priv;
+	u32 tp_vers = 0;
 
 	t3_get_fw_version(adapter, &fw_vers);
+	t3_get_tp_version(adapter, &tp_vers);
 
 	strcpy(info->driver, DRV_NAME);
 	strcpy(info->version, DRV_VERSION);
@@ -1062,11 +1196,14 @@ static void get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
 		strcpy(info->fw_version, "N/A");
 	else {
 		snprintf(info->fw_version, sizeof(info->fw_version),
-			 "%s %u.%u.%u",
+			 "%s %u.%u.%u TP %u.%u.%u",
 			 G_FW_VERSION_TYPE(fw_vers) ? "T" : "N",
 			 G_FW_VERSION_MAJOR(fw_vers),
 			 G_FW_VERSION_MINOR(fw_vers),
-			 G_FW_VERSION_MICRO(fw_vers));
+			 G_FW_VERSION_MICRO(fw_vers),
+			 G_TP_VERSION_MAJOR(tp_vers),
+			 G_TP_VERSION_MINOR(tp_vers),
+			 G_TP_VERSION_MICRO(tp_vers));
 	}
 }
 
@@ -1090,8 +1227,8 @@ static unsigned long collect_sge_port_stats(struct adapter *adapter,
 static void get_stats(struct net_device *dev, struct ethtool_stats *stats,
 		      u64 *data)
 {
-	struct adapter *adapter = dev->priv;
 	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
 	const struct mac_stats *s;
 
 	spin_lock(&adapter->stats_lock);
@@ -1142,6 +1279,9 @@ static void get_stats(struct net_device *dev, struct ethtool_stats *stats,
 	*data++ = collect_sge_port_stats(adapter, pi, SGE_PSTAT_TX_CSUM);
 	*data++ = collect_sge_port_stats(adapter, pi, SGE_PSTAT_RX_CSUM_GOOD);
 	*data++ = s->rx_cong_drops;
+
+	*data++ = s->num_toggled;
+	*data++ = s->num_resets;
 }
 
 static inline void reg_block_dump(struct adapter *ap, void *buf,
@@ -1156,7 +1296,8 @@ static inline void reg_block_dump(struct adapter *ap, void *buf,
 static void get_regs(struct net_device *dev, struct ethtool_regs *regs,
 		     void *buf)
 {
-	struct adapter *ap = dev->priv;
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *ap = pi->adapter;
 
 	/*
 	 * Version scheme:
@@ -1197,8 +1338,9 @@ static int restart_autoneg(struct net_device *dev)
 
 static int cxgb3_phys_id(struct net_device *dev, u32 data)
 {
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
 	int i;
-	struct adapter *adapter = dev->priv;
 
 	if (data == 0)
 		data = 2;
@@ -1359,23 +1501,27 @@ static int set_rx_csum(struct net_device *dev, u32 data)
 
 static void get_sge_param(struct net_device *dev, struct ethtool_ringparam *e)
 {
-	struct adapter *adapter = dev->priv;
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
+	const struct qset_params *q = &adapter->params.sge.qset[pi->first_qset];
 
 	e->rx_max_pending = MAX_RX_BUFFERS;
 	e->rx_mini_max_pending = 0;
 	e->rx_jumbo_max_pending = MAX_RX_JUMBO_BUFFERS;
 	e->tx_max_pending = MAX_TXQ_ENTRIES;
 
-	e->rx_pending = adapter->params.sge.qset[0].fl_size;
-	e->rx_mini_pending = adapter->params.sge.qset[0].rspq_size;
-	e->rx_jumbo_pending = adapter->params.sge.qset[0].jumbo_size;
-	e->tx_pending = adapter->params.sge.qset[0].txq_size[0];
+	e->rx_pending = q->fl_size;
+	e->rx_mini_pending = q->rspq_size;
+	e->rx_jumbo_pending = q->jumbo_size;
+	e->tx_pending = q->txq_size[0];
 }
 
 static int set_sge_param(struct net_device *dev, struct ethtool_ringparam *e)
 {
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
+	struct qset_params *q;
 	int i;
-	struct adapter *adapter = dev->priv;
 
 	if (e->rx_pending > MAX_RX_BUFFERS ||
 	    e->rx_jumbo_pending > MAX_RX_JUMBO_BUFFERS ||
@@ -1390,9 +1536,8 @@ static int set_sge_param(struct net_device *dev, struct ethtool_ringparam *e)
 	if (adapter->flags & FULL_INIT_DONE)
 		return -EBUSY;
 
-	for (i = 0; i < SGE_QSETS; ++i) {
-		struct qset_params *q = &adapter->params.sge.qset[i];
-
+	q = &adapter->params.sge.qset[pi->first_qset];
+	for (i = 0; i < pi->nqsets; ++i, ++q) {
 		q->rspq_size = e->rx_mini_pending;
 		q->fl_size = e->rx_pending;
 		q->jumbo_size = e->rx_jumbo_pending;
@@ -1405,7 +1550,8 @@ static int set_sge_param(struct net_device *dev, struct ethtool_ringparam *e)
 
 static int set_coalesce(struct net_device *dev, struct ethtool_coalesce *c)
 {
-	struct adapter *adapter = dev->priv;
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
 	struct qset_params *qsp = &adapter->params.sge.qset[0];
 	struct sge_qset *qs = &adapter->sge.qs[0];
 
@@ -1419,7 +1565,8 @@ static int set_coalesce(struct net_device *dev, struct ethtool_coalesce *c)
 
 static int get_coalesce(struct net_device *dev, struct ethtool_coalesce *c)
 {
-	struct adapter *adapter = dev->priv;
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
 	struct qset_params *q = adapter->params.sge.qset;
 
 	c->rx_coalesce_usecs = q->coalesce_usecs;
@@ -1429,8 +1576,9 @@ static int get_coalesce(struct net_device *dev, struct ethtool_coalesce *c)
 static int get_eeprom(struct net_device *dev, struct ethtool_eeprom *e,
 		      u8 * data)
 {
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
 	int i, err = 0;
-	struct adapter *adapter = dev->priv;
 
 	u8 *buf = kmalloc(EEPROMSIZE, GFP_KERNEL);
 	if (!buf)
@@ -1449,10 +1597,11 @@ static int get_eeprom(struct net_device *dev, struct ethtool_eeprom *e,
 static int set_eeprom(struct net_device *dev, struct ethtool_eeprom *eeprom,
 		      u8 * data)
 {
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
+	u32 aligned_offset, aligned_len, *p;
 	u8 *buf;
 	int err = 0;
-	u32 aligned_offset, aligned_len, *p;
-	struct adapter *adapter = dev->priv;
 
 	if (eeprom->magic != EEPROM_MAGIC)
 		return -EINVAL;
@@ -1531,7 +1680,6 @@ static const struct ethtool_ops cxgb_ethtool_ops = {
 	.get_wol = get_wol,
 	.get_tso = ethtool_op_get_tso,
 	.set_tso = ethtool_op_set_tso,
-	.get_perm_addr = ethtool_op_get_perm_addr
 };
 
 static int in_range(int val, int lo, int hi)
@@ -1541,40 +1689,15 @@ static int in_range(int val, int lo, int hi)
 
 static int cxgb_extension_ioctl(struct net_device *dev, void __user *useraddr)
 {
-	int ret;
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
 	u32 cmd;
-	struct adapter *adapter = dev->priv;
+	int ret;
 
 	if (copy_from_user(&cmd, useraddr, sizeof(cmd)))
 		return -EFAULT;
 
 	switch (cmd) {
-	case CHELSIO_SETREG:{
-		struct ch_reg edata;
-
-		if (!capable(CAP_NET_ADMIN))
-			return -EPERM;
-		if (copy_from_user(&edata, useraddr, sizeof(edata)))
-			return -EFAULT;
-		if ((edata.addr & 3) != 0
-			|| edata.addr >= adapter->mmio_len)
-			return -EINVAL;
-		writel(edata.val, adapter->regs + edata.addr);
-		break;
-	}
-	case CHELSIO_GETREG:{
-		struct ch_reg edata;
-
-		if (copy_from_user(&edata, useraddr, sizeof(edata)))
-			return -EFAULT;
-		if ((edata.addr & 3) != 0
-			|| edata.addr >= adapter->mmio_len)
-			return -EINVAL;
-		edata.val = readl(adapter->regs + edata.addr);
-		if (copy_to_user(useraddr, &edata, sizeof(edata)))
-			return -EFAULT;
-		break;
-	}
 	case CHELSIO_SET_QSET_PARAMS:{
 		int i;
 		struct qset_params *q;
@@ -1793,8 +1916,8 @@ static int cxgb_extension_ioctl(struct net_device *dev, void __user *useraddr)
 			return -EBUSY;
 		if (copy_from_user(&m, useraddr, sizeof(m)))
 			return -EFAULT;
-		if (!m.rx_pg_sz || (m.rx_pg_sz & (m.rx_pg_sz - 1)) ||
-			!m.tx_pg_sz || (m.tx_pg_sz & (m.tx_pg_sz - 1)))
+		if (!is_power_of_2(m.rx_pg_sz) ||
+			!is_power_of_2(m.tx_pg_sz))
 			return -EINVAL;	/* not power of 2 */
 		if (!(m.rx_pg_sz & 0x14000))
 			return -EINVAL;	/* not 16KB or 64KB */
@@ -1838,10 +1961,10 @@ static int cxgb_extension_ioctl(struct net_device *dev, void __user *useraddr)
 			return -EINVAL;
 
 		/*
-			* Version scheme:
-			* bits 0..9: chip version
-			* bits 10..15: chip revision
-			*/
+		 * Version scheme:
+		 * bits 0..9: chip version
+		 * bits 10..15: chip revision
+		 */
 		t.version = 3 | (adapter->params.rev << 10);
 		if (copy_to_user(useraddr, &t, sizeof(t)))
 			return -EFAULT;
@@ -1890,20 +2013,6 @@ static int cxgb_extension_ioctl(struct net_device *dev, void __user *useraddr)
 						t.trace_rx);
 		break;
 	}
-	case CHELSIO_SET_PKTSCHED:{
-		struct ch_pktsched_params p;
-
-		if (!capable(CAP_NET_ADMIN))
-				return -EPERM;
-		if (!adapter->open_device_map)
-				return -EAGAIN;	/* uP and SGE must be running */
-		if (copy_from_user(&p, useraddr, sizeof(p)))
-				return -EFAULT;
-		send_pktsched_cmd(adapter, p.sched, p.idx, p.min, p.max,
-				  p.binding);
-		break;
-			
-	}
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -1912,10 +2021,10 @@ static int cxgb_extension_ioctl(struct net_device *dev, void __user *useraddr)
 
 static int cxgb_ioctl(struct net_device *dev, struct ifreq *req, int cmd)
 {
-	int ret, mmd;
-	struct adapter *adapter = dev->priv;
-	struct port_info *pi = netdev_priv(dev);
 	struct mii_ioctl_data *data = if_mii(req);
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
+	int ret, mmd;
 
 	switch (cmd) {
 	case SIOCGMIIPHY:
@@ -1983,9 +2092,9 @@ static int cxgb_ioctl(struct net_device *dev, struct ifreq *req, int cmd)
 
 static int cxgb_change_mtu(struct net_device *dev, int new_mtu)
 {
-	int ret;
-	struct adapter *adapter = dev->priv;
 	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
+	int ret;
 
 	if (new_mtu < 81)	/* accommodate SACK */
 		return -EINVAL;
@@ -2002,8 +2111,8 @@ static int cxgb_change_mtu(struct net_device *dev, int new_mtu)
 
 static int cxgb_set_mac_addr(struct net_device *dev, void *p)
 {
-	struct adapter *adapter = dev->priv;
 	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
 	struct sockaddr *addr = p;
 
 	if (!is_valid_ether_addr(addr->sa_data))
@@ -2039,8 +2148,8 @@ static void t3_synchronize_rx(struct adapter *adap, const struct port_info *p)
 
 static void vlan_rx_register(struct net_device *dev, struct vlan_group *grp)
 {
-	struct adapter *adapter = dev->priv;
 	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
 
 	pi->vlan_grp = grp;
 	if (adapter->params.rev > 0)
@@ -2056,19 +2165,24 @@ static void vlan_rx_register(struct net_device *dev, struct vlan_group *grp)
 	t3_synchronize_rx(adapter, pi);
 }
 
-static void vlan_rx_kill_vid(struct net_device *dev, unsigned short vid)
-{
-	/* nothing */
-}
-
 #ifdef CONFIG_NET_POLL_CONTROLLER
 static void cxgb_netpoll(struct net_device *dev)
 {
-	struct adapter *adapter = dev->priv;
-	struct sge_qset *qs = dev2qset(dev);
+	struct port_info *pi = netdev_priv(dev);
+	struct adapter *adapter = pi->adapter;
+	int qidx;
 
-	t3_intr_handler(adapter, qs->rspq.polling) (adapter->pdev->irq,
-						    adapter);
+	for (qidx = pi->first_qset; qidx < pi->first_qset + pi->nqsets; qidx++) {
+		struct sge_qset *qs = &adapter->sge.qs[qidx];
+		void *source;
+		
+		if (adapter->flags & USING_MSIX)
+			source = qs;
+		else
+			source = adapter;
+
+		t3_intr_handler(adapter, qs->rspq.polling) (0, source);
+	}
 }
 #endif
 
@@ -2104,6 +2218,42 @@ static void check_link_status(struct adapter *adapter)
 	}
 }
 
+static void check_t3b2_mac(struct adapter *adapter)
+{
+	int i;
+
+	if (!rtnl_trylock())	/* synchronize with ifdown */
+		return;
+
+	for_each_port(adapter, i) {
+		struct net_device *dev = adapter->port[i];
+		struct port_info *p = netdev_priv(dev);
+		int status;
+
+		if (!netif_running(dev))
+			continue;
+
+		status = 0;
+		if (netif_running(dev) && netif_carrier_ok(dev))
+			status = t3b2_mac_watchdog_task(&p->mac);
+		if (status == 1)
+			p->mac.stats.num_toggled++;
+		else if (status == 2) {
+			struct cmac *mac = &p->mac;
+
+			t3_mac_set_mtu(mac, dev->mtu);
+			t3_mac_set_address(mac, 0, dev->dev_addr);
+			cxgb_set_rxmode(dev);
+			t3_link_start(&p->phy, mac, &p->link_config);
+			t3_mac_enable(mac, MAC_DIRECTION_RX | MAC_DIRECTION_TX);
+			t3_port_intr_enable(adapter, p->port_id);
+			p->mac.stats.num_resets++;
+		}
+	}
+	rtnl_unlock();
+}
+
+
 static void t3_adap_check_task(struct work_struct *work)
 {
 	struct adapter *adapter = container_of(work, struct adapter,
@@ -2123,6 +2273,9 @@ static void t3_adap_check_task(struct work_struct *work)
 		mac_stats_update(adapter);
 		adapter->check_task_cnt = 0;
 	}
+
+	if (p->rev == T3_REV_B2)
+		check_t3b2_mac(adapter);
 
 	/* Schedule the next check update if any port is active. */
 	spin_lock(&adapter->work_lock);
@@ -2232,9 +2385,9 @@ static void __devinit print_port_info(struct adapter *adap,
 
 		if (!test_bit(i, &adap->registered_device_map))
 			continue;
-		printk(KERN_INFO "%s: %s %s RNIC (rev %d) %s%s\n",
+		printk(KERN_INFO "%s: %s %s %sNIC (rev %d) %s%s\n",
 		       dev->name, ai->desc, pi->port_type->desc,
-		       adap->params.rev, buf,
+		       is_offload(adap) ? "R" : "", adap->params.rev, buf,
 		       (adap->flags & USING_MSIX) ? " MSI-X" :
 		       (adap->flags & USING_MSI) ? " MSI" : "");
 		if (adap->name == dev->name && adap->params.vpd.mclk)
@@ -2342,6 +2495,7 @@ static int __devinit init_one(struct pci_dev *pdev,
 
 		adapter->port[i] = netdev;
 		pi = netdev_priv(netdev);
+		pi->adapter = adapter;
 		pi->rx_csum_offload = 1;
 		pi->nqsets = 1;
 		pi->first_qset = i;
@@ -2351,7 +2505,6 @@ static int __devinit init_one(struct pci_dev *pdev,
 		netdev->irq = pdev->irq;
 		netdev->mem_start = mmio_start;
 		netdev->mem_end = mmio_start + mmio_len - 1;
-		netdev->priv = adapter;
 		netdev->features |= NETIF_F_SG | NETIF_F_IP_CSUM | NETIF_F_TSO;
 		netdev->features |= NETIF_F_LLTX;
 		if (pci_using_dac)
@@ -2359,7 +2512,6 @@ static int __devinit init_one(struct pci_dev *pdev,
 
 		netdev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
 		netdev->vlan_rx_register = vlan_rx_register;
-		netdev->vlan_rx_kill_vid = vlan_rx_kill_vid;
 
 		netdev->open = cxgb_open;
 		netdev->stop = cxgb_close;
@@ -2377,12 +2529,12 @@ static int __devinit init_one(struct pci_dev *pdev,
 		SET_ETHTOOL_OPS(netdev, &cxgb_ethtool_ops);
 	}
 
-	pci_set_drvdata(pdev, adapter->port[0]);
+	pci_set_drvdata(pdev, adapter);
 	if (t3_prep_adapter(adapter, ai, 1) < 0) {
 		err = -ENODEV;
 		goto out_free_dev;
 	}
-
+		
 	/*
 	 * The card is now ready to go.  If any errors occur during device
 	 * registration we do not fail the whole card but rather proceed only
@@ -2450,11 +2602,10 @@ out_release_regions:
 
 static void __devexit remove_one(struct pci_dev *pdev)
 {
-	struct net_device *dev = pci_get_drvdata(pdev);
+	struct adapter *adapter = pci_get_drvdata(pdev);
 
-	if (dev) {
+	if (adapter) {
 		int i;
-		struct adapter *adapter = dev->priv;
 
 		t3_sge_stop(adapter);
 		sysfs_remove_group(&adapter->port[0]->dev.kobj,

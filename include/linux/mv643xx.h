@@ -13,10 +13,6 @@
 #ifndef __ASM_MV643XX_H
 #define __ASM_MV643XX_H
 
-#ifdef __mips__
-#include <asm/addrspace.h>
-#include <asm/marvell.h>
-#endif
 #include <asm/types.h>
 
 /****************************************/
@@ -1288,7 +1284,7 @@ struct mv64xxx_i2c_pdata {
 #define MV643XX_ETH_NAME	"mv643xx_eth"
 
 struct mv643xx_eth_platform_data {
-	char		*mac_addr;	/* pointer to mac address */
+	int		port_number;
 	u16		force_phy_addr;	/* force override if phy_addr == 0 */
 	u16		phy_addr;
 
@@ -1303,6 +1299,15 @@ struct mv643xx_eth_platform_data {
 	u32		tx_sram_size;
 	u32		rx_sram_addr;
 	u32		rx_sram_size;
+	u8		mac_addr[6];	/* mac address if non-zero*/
+};
+
+/* Watchdog Platform Device, Driver Data */
+#define	MV64x60_WDT_NAME			"mv64x60_wdt"
+
+struct mv64x60_wdt_pdata {
+	int	timeout;	/* watchdog expiry in seconds, default 10 */
+	int	bus_clk;	/* bus clock in MHz, default 133 */
 };
 
 #endif /* __ASM_MV643XX_H */

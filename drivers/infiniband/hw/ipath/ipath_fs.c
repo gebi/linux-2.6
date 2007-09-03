@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006 QLogic, Inc. All rights reserved.
+ * Copyright (c) 2006, 2007 QLogic Corporation. All rights reserved.
  * Copyright (c) 2006 PathScale, Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
@@ -38,7 +38,6 @@
 #include <linux/pagemap.h>
 #include <linux/init.h>
 #include <linux/namei.h>
-#include <linux/pci.h>
 
 #include "ipath_kernel.h"
 
@@ -258,9 +257,14 @@ static ssize_t atomic_port_info_read(struct file *file, char __user *buf,
 		/* Notimpl InitType (actually, an SMA decision) */
 		/* VLHighLimit is 0 (only one VL) */
 		; /* VLArbitrationHighCap is 0 (only one VL) */
+	/*
+	 * Note: the chips support a maximum MTU of 4096, but the driver
+	 * hasn't implemented this feature yet, so set the maximum
+	 * to 2048.
+	 */
 	portinfo[10] = 	/* VLArbitrationLowCap is 0 (only one VL) */
 		/* InitTypeReply is SMA decision */
-		(5 << 16)	/* MTUCap 4096 */
+		(4 << 16)	/* MTUCap 2048 */
 		| (7 << 13)	/* VLStallCount */
 		| (0x1f << 8)	/* HOQLife */
 		| (1 << 4)
@@ -451,11 +455,17 @@ bail:
 	return ret;
 }
 
-static void remove_file(struct dentry *parent, char *name)
+static int remove_file(struct dentry *parent, char *name)
 {
 	struct dentry *tmp;
+	int ret;
 
 	tmp = lookup_one_len(name, parent, strlen(name));
+
+	if (IS_ERR(tmp)) {
+		ret = PTR_ERR(tmp);
+		goto bail;
+	}
 
 	spin_lock(&dcache_lock);
 	spin_lock(&tmp->d_lock);
@@ -469,6 +479,14 @@ static void remove_file(struct dentry *parent, char *name)
 		spin_unlock(&tmp->d_lock);
 		spin_unlock(&dcache_lock);
 	}
+
+	ret = 0;
+bail:
+	/*
+	 * We don't expect clients to care about the return value, but
+	 * it's there if they need it.
+	 */
+	return ret;
 }
 
 static int remove_device_files(struct super_block *sb,
@@ -510,7 +528,7 @@ static int ipathfs_fill_super(struct super_block *sb, void *data,
 	int ret;
 
 	static struct tree_descr files[] = {
-		[1] = {"atomic_stats", &atomic_stats_ops, S_IRUGO},
+		[2] = {"atomic_stats", &atomic_stats_ops, S_IRUGO},
 		{""},
 	};
 

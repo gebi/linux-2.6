@@ -12,16 +12,15 @@
 #include <linux/sched.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
-#include <linux/smp_lock.h>
 #include <linux/kernel.h>
 #include <linux/signal.h>
 #include <linux/syscalls.h>
 #include <linux/errno.h>
 #include <linux/wait.h>
 #include <linux/ptrace.h>
-#include <linux/compat.h>
 #include <linux/suspend.h>
 #include <linux/compiler.h>
+#include <linux/uaccess.h>
 
 #include <asm/abi.h>
 #include <asm/asm.h>
@@ -29,75 +28,12 @@
 #include <linux/bitops.h>
 #include <asm/cacheflush.h>
 #include <asm/sim.h>
-#include <asm/uaccess.h>
 #include <asm/ucontext.h>
 #include <asm/system.h>
 #include <asm/fpu.h>
 #include <asm/war.h>
 
 #include "signal-common.h"
-
-#define SI_PAD_SIZE32   ((SI_MAX_SIZE/sizeof(int)) - 3)
-
-typedef struct compat_siginfo {
-	int si_signo;
-	int si_code;
-	int si_errno;
-
-	union {
-		int _pad[SI_PAD_SIZE32];
-
-		/* kill() */
-		struct {
-			compat_pid_t _pid;	/* sender's pid */
-			compat_uid_t _uid;	/* sender's uid */
-		} _kill;
-
-		/* SIGCHLD */
-		struct {
-			compat_pid_t _pid;	/* which child */
-			compat_uid_t _uid;	/* sender's uid */
-			int _status;		/* exit code */
-			compat_clock_t _utime;
-			compat_clock_t _stime;
-		} _sigchld;
-
-		/* IRIX SIGCHLD */
-		struct {
-			compat_pid_t _pid;	/* which child */
-			compat_clock_t _utime;
-			int _status;		/* exit code */
-			compat_clock_t _stime;
-		} _irix_sigchld;
-
-		/* SIGILL, SIGFPE, SIGSEGV, SIGBUS */
-		struct {
-			s32 _addr; /* faulting insn/memory ref. */
-		} _sigfault;
-
-		/* SIGPOLL, SIGXFSZ (To do ...)  */
-		struct {
-			int _band;	/* POLL_IN, POLL_OUT, POLL_MSG */
-			int _fd;
-		} _sigpoll;
-
-		/* POSIX.1b timers */
-		struct {
-			timer_t _tid;		/* timer id */
-			int _overrun;		/* overrun count */
-			compat_sigval_t _sigval;/* same as below */
-			int _sys_private;       /* not to be passed to user */
-		} _timer;
-
-		/* POSIX.1b signals */
-		struct {
-			compat_pid_t _pid;	/* sender's pid */
-			compat_uid_t _uid;	/* sender's uid */
-			compat_sigval_t _sigval;
-		} _rt;
-
-	} _sifields;
-} compat_siginfo_t;
 
 /*
  * Including <asm/unistd.h> would give use the 64-bit syscall numbers ...
@@ -176,11 +112,52 @@ struct rt_sigframe32 {
 /*
  * sigcontext handlers
  */
+static int protected_save_fp_context32(struct sigcontext32 __user *sc)
+{
+	int err;
+	while (1) {
+		lock_fpu_owner();
+		own_fpu_inatomic(1);
+		err = save_fp_context32(sc); /* this might fail */
+		unlock_fpu_owner();
+		if (likely(!err))
+			break;
+		/* touch the sigcontext and try again */
+		err = __put_user(0, &sc->sc_fpregs[0]) |
+			__put_user(0, &sc->sc_fpregs[31]) |
+			__put_user(0, &sc->sc_fpc_csr);
+		if (err)
+			break;	/* really bad sigcontext */
+	}
+	return err;
+}
+
+static int protected_restore_fp_context32(struct sigcontext32 __user *sc)
+{
+	int err, tmp;
+	while (1) {
+		lock_fpu_owner();
+		own_fpu_inatomic(0);
+		err = restore_fp_context32(sc); /* this might fail */
+		unlock_fpu_owner();
+		if (likely(!err))
+			break;
+		/* touch the sigcontext and try again */
+		err = __get_user(tmp, &sc->sc_fpregs[0]) |
+			__get_user(tmp, &sc->sc_fpregs[31]) |
+			__get_user(tmp, &sc->sc_fpc_csr);
+		if (err)
+			break;	/* really bad sigcontext */
+	}
+	return err;
+}
+
 static int setup_sigcontext32(struct pt_regs *regs,
 			      struct sigcontext32 __user *sc)
 {
 	int err = 0;
 	int i;
+	u32 used_math;
 
 	err |= __put_user(regs->cp0_epc, &sc->sc_pc);
 
@@ -200,24 +177,29 @@ static int setup_sigcontext32(struct pt_regs *regs,
 		err |= __put_user(mflo3(), &sc->sc_lo3);
 	}
 
-	err |= __put_user(!!used_math(), &sc->sc_used_math);
+	used_math = !!used_math();
+	err |= __put_user(used_math, &sc->sc_used_math);
 
-	if (used_math()) {
+	if (used_math) {
 		/*
 		 * Save FPU state to signal context.  Signal handler
 		 * will "inherit" current FPU state.
 		 */
-		preempt_disable();
-
-		if (!is_fpu_owner()) {
-			own_fpu();
-			restore_fp(current);
-		}
-		err |= save_fp_context32(sc);
-
-		preempt_enable();
+		err |= protected_save_fp_context32(sc);
 	}
 	return err;
+}
+
+static int
+check_and_restore_fp_context32(struct sigcontext32 __user *sc)
+{
+	int err, sig;
+
+	err = sig = fpcsr_pending(&sc->sc_fpc_csr);
+	if (err > 0)
+		err = 0;
+	err |= protected_restore_fp_context32(sc);
+	return err ?: sig;
 }
 
 static int restore_sigcontext32(struct pt_regs *regs,
@@ -250,18 +232,14 @@ static int restore_sigcontext32(struct pt_regs *regs,
 	err |= __get_user(used_math, &sc->sc_used_math);
 	conditional_used_math(used_math);
 
-	preempt_disable();
-
-	if (used_math()) {
+	if (used_math) {
 		/* restore fpu context if we have used it before */
-		own_fpu();
-		err |= restore_fp_context32(sc);
+		if (!err)
+			err = check_and_restore_fp_context32(sc);
 	} else {
 		/* signal handler may have used FPU.  Give it up. */
-		lose_fpu();
+		lose_fpu(0);
 	}
-
-	preempt_enable();
 
 	return err;
 }
@@ -508,6 +486,7 @@ asmlinkage void sys32_sigreturn(nabi_no_regargs struct pt_regs regs)
 {
 	struct sigframe32 __user *frame;
 	sigset_t blocked;
+	int sig;
 
 	frame = (struct sigframe32 __user *) regs.regs[29];
 	if (!access_ok(VERIFY_READ, frame, sizeof(*frame)))
@@ -521,8 +500,11 @@ asmlinkage void sys32_sigreturn(nabi_no_regargs struct pt_regs regs)
 	recalc_sigpending();
 	spin_unlock_irq(&current->sighand->siglock);
 
-	if (restore_sigcontext32(&regs, &frame->sf_sc))
+	sig = restore_sigcontext32(&regs, &frame->sf_sc);
+	if (sig < 0)
 		goto badframe;
+	else if (sig)
+		force_sig(sig, current);
 
 	/*
 	 * Don't let your children do this ...
@@ -545,6 +527,7 @@ asmlinkage void sys32_rt_sigreturn(nabi_no_regargs struct pt_regs regs)
 	sigset_t set;
 	stack_t st;
 	s32 sp;
+	int sig;
 
 	frame = (struct rt_sigframe32 __user *) regs.regs[29];
 	if (!access_ok(VERIFY_READ, frame, sizeof(*frame)))
@@ -558,8 +541,11 @@ asmlinkage void sys32_rt_sigreturn(nabi_no_regargs struct pt_regs regs)
 	recalc_sigpending();
 	spin_unlock_irq(&current->sighand->siglock);
 
-	if (restore_sigcontext32(&regs, &frame->rs_uc.uc_mcontext))
+	sig = restore_sigcontext32(&regs, &frame->rs_uc.uc_mcontext);
+	if (sig < 0)
 		goto badframe;
+	else if (sig)
+		force_sig(sig, current);
 
 	/* The ucontext contains a stack32_t, so we must convert!  */
 	if (__get_user(sp, &frame->rs_uc.uc_stack.ss_sp))
