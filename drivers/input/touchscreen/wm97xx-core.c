@@ -147,15 +147,15 @@ EXPORT_SYMBOL_GPL(wm97xx_reg_read);
 void wm97xx_reg_write(struct wm97xx *wm, u16 reg, u16 val)
 {
 	/* cache digitiser registers */
-	if(reg >= AC97_WM9713_DIG1 && reg <= AC97_WM9713_DIG3)
+	if (reg >= AC97_WM9713_DIG1 && reg <= AC97_WM9713_DIG3)
 		wm->dig[(reg - AC97_WM9713_DIG1) >> 1] = val;
 
 	/* cache gpio regs */
-	if(reg >= AC97_GPIO_CFG && reg <= AC97_MISC_AFE)
+	if (reg >= AC97_GPIO_CFG && reg <= AC97_MISC_AFE)
 		wm->gpio[(reg - AC97_GPIO_CFG) >> 1] = val;
 
 	/* wm9713 irq reg */
-	if(reg == 0x5a)
+	if (reg == 0x5a)
 		wm->misc = val;
 
 	if (wm->ac97)
@@ -413,10 +413,10 @@ static int wm97xx_read_samples(struct wm97xx *wm, struct ts_state *state)
 
 	mutex_lock(&wm->codec_mutex);
 
-    if (wm->mach_ops && wm->mach_ops->acc_enabled)
-	   rc = wm->mach_ops->acc_pen_down(wm);
-    else
-        rc = wm->codec->poll_touch(wm, &data);
+	if (wm->mach_ops && wm->mach_ops->acc_enabled)
+		rc = wm->mach_ops->acc_pen_down(wm);
+	else
+		rc = wm->codec->poll_touch(wm, &data);
 
 	if (rc & RC_PENUP) {
 		if (wm->pen_is_down) {
@@ -595,7 +595,7 @@ static void wm97xx_ts_input_close(struct input_dev *idev)
  */
 static int wm97xx_bus_match(struct device *dev, struct device_driver *drv)
 {
-    return !(strcmp(dev->bus_id,drv->name));
+	return !(strcmp(dev->bus_id,drv->name));
 }
 
 /*
@@ -604,35 +604,35 @@ static int wm97xx_bus_match(struct device *dev, struct device_driver *drv)
  */
 static int wm97xx_bus_suspend(struct device *dev, pm_message_t state)
 {
-    int ret = 0;
+	int ret = 0;
 
-    if (dev->driver && dev->driver->suspend)
-        ret = dev->driver->suspend(dev, state);
+	if (dev->driver && dev->driver->suspend)
+		ret = dev->driver->suspend(dev, state);
 
-    return ret;
+	return ret;
 }
 
 static int wm97xx_bus_resume(struct device *dev)
 {
-    int ret = 0;
+	int ret = 0;
 
-    if (dev->driver && dev->driver->resume)
-        ret = dev->driver->resume(dev);
+	if (dev->driver && dev->driver->resume)
+		ret = dev->driver->resume(dev);
 
-    return ret;
+	return ret;
 }
 
 struct bus_type wm97xx_bus_type = {
-    .name       = "wm97xx",
-    .match      = wm97xx_bus_match,
-    .suspend    = wm97xx_bus_suspend,
-    .resume     = wm97xx_bus_resume,
+	.name       = "wm97xx",
+	.match      = wm97xx_bus_match,
+	.suspend    = wm97xx_bus_suspend,
+	.resume     = wm97xx_bus_resume,
 };
 EXPORT_SYMBOL_GPL(wm97xx_bus_type);
 
 static void  wm97xx_release(struct device *dev)
 {
-    kfree(dev);
+	kfree(dev);
 }
 
 static int wm97xx_probe(struct device *dev)
@@ -642,7 +642,7 @@ static int wm97xx_probe(struct device *dev)
 
 	if (!(wm = kzalloc(sizeof(struct wm97xx), GFP_KERNEL)))
 		return -ENOMEM;
-    mutex_init(&wm->codec_mutex);
+	mutex_init(&wm->codec_mutex);
 
 	init_waitqueue_head(&wm->pen_irq_wait);
 	wm->dev = dev;
@@ -657,16 +657,16 @@ static int wm97xx_probe(struct device *dev)
 	}
 
 	wm->id = wm97xx_reg_read(wm, AC97_VENDOR_ID2);
-	if(wm->id != wm97xx_codec.id) {
+	if (wm->id != wm97xx_codec.id) {
 		err("could not find a the selected codec, please build for wm97%2x", wm->id & 0xff);
 		kfree(wm);
 		return -ENODEV;
 	}
 
-	if((wm->input_dev = input_allocate_device()) == NULL) {
-        kfree(wm);
+	if ((wm->input_dev = input_allocate_device()) == NULL) {
+		kfree(wm);
 		return -ENOMEM;
-    }
+	}
 
 	/* set up touch configuration */
 	info("detected a wm97%2x codec", wm->id & 0xff);
@@ -688,10 +688,10 @@ static int wm97xx_probe(struct device *dev)
 	wm->input_dev->absfuzz[ABS_PRESSURE] = abs_p[2];
 	wm->input_dev->private = wm;
 	wm->codec = &wm97xx_codec;
-	if((ret = input_register_device(wm->input_dev)) < 0) {
+	if ((ret = input_register_device(wm->input_dev)) < 0) {
 		kfree(wm);
 		return -ENOMEM;
-    }
+	}
 
 	/* set up physical characteristics */
 	wm->codec->digitiser_ioctl(wm, WM97XX_PHY_INIT);
@@ -705,43 +705,43 @@ static int wm97xx_probe(struct device *dev)
 	wm->gpio[5] = wm97xx_reg_read(wm, AC97_MISC_AFE);
 
 	/* register our battery device */
-    if (!(wm->battery_dev = kzalloc(sizeof(struct device), GFP_KERNEL))) {
-    	ret = -ENOMEM;
-        goto batt_err;
-    }
-    wm->battery_dev->bus = &wm97xx_bus_type;
-    strcpy(wm->battery_dev->bus_id,"wm97xx-battery");
-    wm->battery_dev->driver_data = wm;
-    wm->battery_dev->parent = dev;
-    wm->battery_dev->release = wm97xx_release;
-    if((ret = device_register(wm->battery_dev)) < 0)
-    	goto batt_reg_err;
+	if (!(wm->battery_dev = kzalloc(sizeof(struct device), GFP_KERNEL))) {
+		ret = -ENOMEM;
+		goto batt_err;
+	}
+	wm->battery_dev->bus = &wm97xx_bus_type;
+	strcpy(wm->battery_dev->bus_id, "wm97xx-battery");
+	wm->battery_dev->driver_data = wm;
+	wm->battery_dev->parent = dev;
+	wm->battery_dev->release = wm97xx_release;
+	if ((ret = device_register(wm->battery_dev)) < 0)
+		goto batt_reg_err;
 
 	/* register our extended touch device (for machine specific extensions) */
-    if (!(wm->touch_dev = kzalloc(sizeof(struct device), GFP_KERNEL))) {
-    	ret = -ENOMEM;
-        goto touch_err;
-    }
-    wm->touch_dev->bus = &wm97xx_bus_type;
-    strcpy(wm->touch_dev->bus_id,"wm97xx-touchscreen");
-    wm->touch_dev->driver_data = wm;
-    wm->touch_dev->parent = dev;
-    wm->touch_dev->release = wm97xx_release;
-    if((ret = device_register(wm->touch_dev)) < 0)
-    	goto touch_reg_err;
+	if (!(wm->touch_dev = kzalloc(sizeof(struct device), GFP_KERNEL))) {
+		ret = -ENOMEM;
+		goto touch_err;
+	}
+	wm->touch_dev->bus = &wm97xx_bus_type;
+	strcpy(wm->touch_dev->bus_id, "wm97xx-touchscreen");
+	wm->touch_dev->driver_data = wm;
+	wm->touch_dev->parent = dev;
+	wm->touch_dev->release = wm97xx_release;
+	if ((ret = device_register(wm->touch_dev)) < 0)
+		goto touch_reg_err;
 
-    return ret;
+	return ret;
 
-touch_reg_err:
+ touch_reg_err:
 	kfree(wm->touch_dev);
-touch_err:
-    device_unregister(wm->battery_dev);
-batt_reg_err:
+ touch_err:
+	device_unregister(wm->battery_dev);
+ batt_reg_err:
 	kfree(wm->battery_dev);
-batt_err:
-    input_unregister_device(wm->input_dev);
-    kfree(wm);
-    return ret;
+ batt_err:
+	input_unregister_device(wm->input_dev);
+	kfree(wm);
+	return ret;
 }
 
 static int wm97xx_remove(struct device *dev)
@@ -757,7 +757,7 @@ static int wm97xx_remove(struct device *dev)
 	}
 	device_unregister(wm->battery_dev);
 	device_unregister(wm->touch_dev);
-    input_unregister_device(wm->input_dev);
+	input_unregister_device(wm->input_dev);
 
 	kfree(wm);
 	return 0;
@@ -769,10 +769,10 @@ int wm97xx_resume(struct device* dev)
 	struct wm97xx *wm = dev_get_drvdata(dev);
 
 	/* restore digitiser and gpio's */
-	if(wm->id == WM9713_ID2) {
+	if (wm->id == WM9713_ID2) {
 		wm97xx_reg_write(wm, AC97_WM9713_DIG1, wm->dig[0]);
 		wm97xx_reg_write(wm, 0x5a, wm->misc);
-		if(wm->ts_use_count) {
+		if (wm->ts_use_count) {
 			u16 reg = wm97xx_reg_read(wm, AC97_EXTENDED_MID) & 0x7fff;
 			wm97xx_reg_write(wm, AC97_EXTENDED_MID, reg);
 		}
@@ -801,21 +801,21 @@ int wm97xx_resume(struct device* dev)
 int wm97xx_register_mach_ops(struct wm97xx *wm, struct wm97xx_mach_ops *mach_ops)
 {
 	mutex_lock(&wm->codec_mutex);
-    if(wm->mach_ops) {
-    	mutex_unlock(&wm->codec_mutex);
-    	return -EINVAL;
-    }
-    wm->mach_ops = mach_ops;
-    mutex_unlock(&wm->codec_mutex);
-    return 0;
+	if (wm->mach_ops) {
+		mutex_unlock(&wm->codec_mutex);
+		return -EINVAL;
+	}
+	wm->mach_ops = mach_ops;
+	mutex_unlock(&wm->codec_mutex);
+	return 0;
 }
 EXPORT_SYMBOL_GPL(wm97xx_register_mach_ops);
 
 void wm97xx_unregister_mach_ops(struct wm97xx *wm)
 {
 	mutex_lock(&wm->codec_mutex);
-    wm->mach_ops = NULL;
-    mutex_unlock(&wm->codec_mutex);
+	wm->mach_ops = NULL;
+	mutex_unlock(&wm->codec_mutex);
 }
 EXPORT_SYMBOL_GPL(wm97xx_unregister_mach_ops);
 
@@ -833,15 +833,15 @@ static int __init wm97xx_init(void)
 	int ret;
 
 	info("version %s liam.girdwood@wolfsonmicro.com", WM_CORE_VERSION);
-    if((ret = bus_register(&wm97xx_bus_type)) < 0)
-    	return ret;
+	if ((ret = bus_register(&wm97xx_bus_type)) < 0)
+		return ret;
 	return driver_register(&wm97xx_driver);
 }
 
 static void __exit wm97xx_exit(void)
 {
 	driver_unregister(&wm97xx_driver);
-    bus_unregister(&wm97xx_bus_type);
+	bus_unregister(&wm97xx_bus_type);
 }
 
 module_init(wm97xx_init);

@@ -108,7 +108,7 @@ MODULE_PARM_DESC(ac97_touch_slot, "Touch screen data slot AC97 number");
 
 /* flush AC97 slot 5 FIFO on pxa machines */
 #ifdef CONFIG_PXA27x
-void wm97xx_acc_pen_up (struct wm97xx* wm)
+void wm97xx_acc_pen_up(struct wm97xx* wm)
 {
 	set_current_state(TASK_INTERRUPTIBLE);
 	schedule_timeout(1);
@@ -117,7 +117,7 @@ void wm97xx_acc_pen_up (struct wm97xx* wm)
 		MODR;
 }
 #else
-void wm97xx_acc_pen_up (struct wm97xx* wm)
+void wm97xx_acc_pen_up(struct wm97xx* wm)
 {
 	int count = 16;
 	set_current_state(TASK_INTERRUPTIBLE);
@@ -130,7 +130,7 @@ void wm97xx_acc_pen_up (struct wm97xx* wm)
 }
 #endif
 
-int wm97xx_acc_pen_down (struct wm97xx* wm)
+int wm97xx_acc_pen_down(struct wm97xx* wm)
 {
 	u16 x, y, p = 0x100 | WM97XX_ADCSEL_PRES;
 	int reads = 0;
@@ -226,7 +226,7 @@ int wm97xx_acc_startup(struct wm97xx* wm)
 
 void wm97xx_acc_shutdown(struct wm97xx* wm)
 {
-    /* codec specific deconfig */
+	/* codec specific deconfig */
 	if (pen_int) {
 		switch (wm->id & 0xffff) {
 			case WM9705_ID2:
@@ -244,40 +244,40 @@ void wm97xx_acc_shutdown(struct wm97xx* wm)
 static struct wm97xx_mach_ops pxa_mach_ops = {
 	.acc_enabled = 1,
 	.acc_pen_up = wm97xx_acc_pen_up,
-    .acc_pen_down = wm97xx_acc_pen_down,
-    .acc_startup = wm97xx_acc_startup,
-    .acc_shutdown = wm97xx_acc_shutdown,
+	.acc_pen_down = wm97xx_acc_pen_down,
+	.acc_startup = wm97xx_acc_startup,
+	.acc_shutdown = wm97xx_acc_shutdown,
 };
 
 int pxa_wm97xx_probe(struct device *dev)
 {
-    struct wm97xx *wm = dev->driver_data;
-    return wm97xx_register_mach_ops (wm, &pxa_mach_ops);
+	struct wm97xx *wm = dev->driver_data;
+	return wm97xx_register_mach_ops(wm, &pxa_mach_ops);
 }
 
 int pxa_wm97xx_remove(struct device *dev)
 {
 	struct wm97xx *wm = dev->driver_data;
-    wm97xx_unregister_mach_ops (wm);
-    return 0;
+	wm97xx_unregister_mach_ops (wm);
+	return 0;
 }
 
-static struct device_driver  pxa_wm97xx_driver = {
-    .name = "wm97xx-touchscreen",
-    .bus = &wm97xx_bus_type,
-    .owner = THIS_MODULE,
-    .probe = pxa_wm97xx_probe,
-    .remove = pxa_wm97xx_remove
+static struct device_driver pxa_wm97xx_driver = {
+	.name = "wm97xx-touchscreen",
+	.bus = &wm97xx_bus_type,
+	.owner = THIS_MODULE,
+	.probe = pxa_wm97xx_probe,
+	.remove = pxa_wm97xx_remove
 };
 
 static int __init pxa_wm97xx_init(void)
 {
-    return driver_register(&pxa_wm97xx_driver);
+	return driver_register(&pxa_wm97xx_driver);
 }
 
 static void __exit pxa_wm97xx_exit(void)
 {
-    driver_unregister(&pxa_wm97xx_driver);
+	driver_unregister(&pxa_wm97xx_driver);
 }
 
 module_init(pxa_wm97xx_init);
