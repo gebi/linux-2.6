@@ -85,6 +85,7 @@
 #include <linux/workqueue.h>
 #include <linux/device.h>
 #include <linux/wm97xx.h>
+#include <linux/freezer.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
 
@@ -313,9 +314,9 @@ EXPORT_SYMBOL_GPL(wm97xx_config_gpio);
 /*
  * Handle a pen down interrupt.
  */
-static void wm97xx_pen_irq_worker(void *ptr)
+static void wm97xx_pen_irq_worker(struct work_struct *work)
 {
-	struct wm97xx *wm = (struct wm97xx *) ptr;
+	struct wm97xx *wm = container_of(work, struct wm97xx, pen_event_work);
 
 	/* do we need to enable the touch panel reader */
 	if (wm->id == WM9705_ID2) {
@@ -373,7 +374,7 @@ static int wm97xx_init_pen_irq(struct wm97xx *wm)
 {
 	u16 reg;
 
-	INIT_WORK(&wm->pen_event_work, wm97xx_pen_irq_worker, wm);
+	INIT_WORK(&wm->pen_event_work, wm97xx_pen_irq_worker);
 	if ((wm->pen_irq_workq =
 		create_singlethread_workqueue("kwm97pen")) == NULL) {
 		err("could not create pen irq work queue");

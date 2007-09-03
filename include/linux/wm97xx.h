@@ -249,7 +249,7 @@ struct wm97xx {
 	u16 dig_save[3];		/* saved during aux reading */
 	struct wm97xx_codec_drv *codec;	/* attached codec driver*/
 	struct input_dev* input_dev;	/* touchscreen input device */
-	ac97_t *ac97;			/* ALSA codec access */
+	struct snd_ac97 *ac97;		/* ALSA codec access */
 	struct device *dev;		/* ALSA device */
 	struct device *battery_dev;
 	struct device *touch_dev;
