@@ -124,7 +124,7 @@ MODULE_PARM_DESC(abs_p, "Touchscreen absolute Pressure min, max, fuzz");
 /*
  * Debug
  */
-#if 0
+#if 1
 #define dbg(format, arg...) printk(KERN_DEBUG TS_NAME ": " format "\n" , ## arg)
 #else
 #define dbg(format, arg...)
@@ -512,7 +512,7 @@ static int wm97xx_ts_input_open(struct input_dev *idev)
 	int ret = 0;
 	struct wm97xx *wm = (struct wm97xx *) idev->private;
 
-	mutex_lock(&wm->codec_mutex);
+	mutex_lock(&wm->ts_mutex);
 	/* first time opened ? */
 	if (wm->ts_use_count++ == 0) {
 		/* start touchscreen thread */
@@ -525,7 +525,7 @@ static int wm97xx_ts_input_open(struct input_dev *idev)
 			if (wm->ts_task == NULL)
 				ret = -EINVAL;
 		} else {
-			mutex_unlock(&wm->codec_mutex);
+			mutex_unlock(&wm->ts_mutex);
 			return ret;
 		}
 
@@ -547,7 +547,7 @@ static int wm97xx_ts_input_open(struct input_dev *idev)
 		}
 	}
 
-	mutex_unlock(&wm->codec_mutex);
+	mutex_unlock(&wm->ts_mutex);
 	return 0;
 }
 
@@ -563,7 +563,7 @@ static void wm97xx_ts_input_close(struct input_dev *idev)
 {
 	struct wm97xx *wm = (struct wm97xx *) idev->private;
 
-	mutex_lock(&wm->codec_mutex);
+	mutex_lock(&wm->ts_mutex);
 	if (--wm->ts_use_count == 0) {
 		/* destroy workqueues and free irqs */
 		if (wm->pen_irq) {
@@ -575,11 +575,11 @@ static void wm97xx_ts_input_close(struct input_dev *idev)
 		if (wm->ts_task) {
 			wm->ts_task = NULL;
 			wm->pen_is_down = 1;
-			mutex_unlock(&wm->codec_mutex);
+			mutex_unlock(&wm->ts_mutex);
 			wake_up_interruptible(&wm->pen_irq_wait);
 			wait_for_completion(&wm->ts_exit);
 			wm->pen_is_down = 0;
-			mutex_lock(&wm->codec_mutex);
+			mutex_lock(&wm->ts_mutex);
 		}
 
 		/* stop digitiser */
@@ -587,7 +587,7 @@ static void wm97xx_ts_input_close(struct input_dev *idev)
 		if (wm->mach_ops && wm->mach_ops->acc_enabled)
 			wm->codec->acc_enable(wm, 0);
 	}
-	mutex_unlock(&wm->codec_mutex);
+	mutex_unlock(&wm->ts_mutex);
 }
 
 /*
@@ -644,6 +644,7 @@ static int wm97xx_probe(struct device *dev)
 	if (!(wm = kzalloc(sizeof(struct wm97xx), GFP_KERNEL)))
 		return -ENOMEM;
 	mutex_init(&wm->codec_mutex);
+	mutex_init(&wm->ts_mutex);
 
 	init_waitqueue_head(&wm->pen_irq_wait);
 	wm->dev = dev;

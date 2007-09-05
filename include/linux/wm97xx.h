@@ -255,6 +255,7 @@ struct wm97xx {
 	struct device *touch_dev;
 	struct wm97xx_mach_ops *mach_ops;
 	struct mutex codec_mutex;
+	struct mutex ts_mutex;
 	struct completion ts_init;
 	struct completion ts_exit;
 	struct task_struct *ts_task;
