@@ -190,7 +190,8 @@ static void init_wm9713_phy(struct wm97xx* wm)
 	if (delay < 0 || delay > 15) {
 		info ("supplied delay out of range.");
 		delay = 4;
-		info("setting adc sample delay to %d u Secs.", delay_table[delay]);
+		info("setting adc sample delay to %d u Secs.",
+			delay_table[delay]);
 	}
 	dig2 &= 0xff0f;
 	dig2 |= WM97XX_DELAY(delay);
@@ -216,11 +217,13 @@ static int wm9713_digitiser_ioctl(struct wm97xx* wm, int cmd)
 	case WM97XX_DIG_START:
 		val = wm97xx_reg_read(wm, AC97_EXTENDED_MID);
 		wm97xx_reg_write(wm, AC97_EXTENDED_MID, val & 0x7fff);
-		wm97xx_reg_write(wm, AC97_WM9713_DIG3, wm->dig[2] | WM97XX_PRP_DET_DIG);
+		wm97xx_reg_write(wm, AC97_WM9713_DIG3, wm->dig[2] |
+					WM97XX_PRP_DET_DIG);
 		wm97xx_reg_read(wm, AC97_WM97XX_DIGITISER_RD); /* dummy read */
 		break;
 	case WM97XX_DIG_STOP:
-		wm97xx_reg_write(wm, AC97_WM9713_DIG3, wm->dig[2] & ~WM97XX_PRP_DET_DIG);
+		wm97xx_reg_write(wm, AC97_WM9713_DIG3, wm->dig[2] &
+					~WM97XX_PRP_DET_DIG);
 		val = wm97xx_reg_read(wm, AC97_EXTENDED_MID);
 		wm97xx_reg_write(wm, AC97_EXTENDED_MID, val | 0x8000);
 		break;
@@ -279,7 +282,8 @@ static int wm9713_poll_sample (struct wm97xx* wm, int adcsel, int *sample)
 	poll_delay(delay);
 
 	/* wait for POLL to go low */
-	while ((wm97xx_reg_read(wm, AC97_WM9713_DIG1) & WM9713_POLL) && timeout) {
+	while ((wm97xx_reg_read(wm, AC97_WM9713_DIG1) & WM9713_POLL) &&
+		timeout) {
 		udelay(AC97_LINK_FRAME);
 		timeout--;
 	}
@@ -391,12 +395,15 @@ static int wm9713_poll_touch(struct wm97xx* wm, struct wm97xx_data *data)
 		if((rc = wm9713_poll_coord(wm, data)) != RC_VALID)
 			return rc;
 	} else {
-		if ((rc = wm9713_poll_sample(wm, WM9713_ADCSEL_X, &data->x)) != RC_VALID)
+		if ((rc = wm9713_poll_sample(wm, WM9713_ADCSEL_X, &data->x)) !=
+			RC_VALID)
 			return rc;
-		if ((rc = wm9713_poll_sample(wm, WM9713_ADCSEL_Y, &data->y)) != RC_VALID)
+		if ((rc = wm9713_poll_sample(wm, WM9713_ADCSEL_Y, &data->y)) !=
+			RC_VALID)
 			return rc;
 		if (pil) {
-			if ((rc = wm9713_poll_sample(wm, WM9713_ADCSEL_PRES, &data->p)) != RC_VALID)
+			if ((rc = wm9713_poll_sample(wm, WM9713_ADCSEL_PRES,
+				&data->p)) != RC_VALID)
 				return rc;
 		} else
 			data->p = DEFAULT_PRESSURE;
@@ -423,10 +430,12 @@ static int wm9713_acc_enable (struct wm97xx* wm, int enable)
 			return ret;
 
 		dig1 &= ~WM9713_ADCSEL_MASK;
-		dig1 |= WM9713_CTC | WM9713_COO | WM9713_ADCSEL_X | WM9713_ADCSEL_Y;
+		dig1 |= WM9713_CTC | WM9713_COO | WM9713_ADCSEL_X |
+			WM9713_ADCSEL_Y;
         if (pil)
 		dig1 |= WM9713_ADCSEL_PRES;
-		dig2 &= ~(WM97XX_DELAY_MASK | WM97XX_SLT_MASK  | WM97XX_CM_RATE_MASK);
+		dig2 &= ~(WM97XX_DELAY_MASK | WM97XX_SLT_MASK  |
+			WM97XX_CM_RATE_MASK);
 		dig2 |= WM97XX_SLEN | WM97XX_DELAY (delay) |
 		WM97XX_SLT (wm->acc_slot) | WM97XX_RATE (wm->acc_rate);
 		dig3 |= WM9713_PDEN;

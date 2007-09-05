@@ -320,7 +320,8 @@ static void wm97xx_pen_irq_worker(struct work_struct *work)
 
 	/* do we need to enable the touch panel reader */
 	if (wm->id == WM9705_ID2) {
-		if (wm97xx_reg_read(wm, AC97_WM97XX_DIGITISER_RD) & WM97XX_PEN_DOWN)
+		if (wm97xx_reg_read(wm, AC97_WM97XX_DIGITISER_RD) &
+					WM97XX_PEN_DOWN)
 			wm->pen_is_down = 1;
 		else
 			wm->pen_is_down = 0;
@@ -333,16 +334,20 @@ static void wm97xx_pen_irq_worker(struct work_struct *work)
 
 		if (WM97XX_GPIO_13 & pol & status) {
 			wm->pen_is_down = 1;
-			wm97xx_reg_write(wm, AC97_GPIO_POLARITY, pol & ~WM97XX_GPIO_13);
+			wm97xx_reg_write(wm, AC97_GPIO_POLARITY, pol &
+						~WM97XX_GPIO_13);
 		} else {
 			wm->pen_is_down = 0;
-		    wm97xx_reg_write(wm, AC97_GPIO_POLARITY, pol | WM97XX_GPIO_13);
+		    wm97xx_reg_write(wm, AC97_GPIO_POLARITY, pol |
+		    			WM97XX_GPIO_13);
 		}
 
 		if (wm->id == WM9712_ID2)
-			wm97xx_reg_write(wm, AC97_GPIO_STATUS, (status & ~WM97XX_GPIO_13) << 1);
+			wm97xx_reg_write(wm, AC97_GPIO_STATUS, (status &
+						~WM97XX_GPIO_13) << 1);
 		else
-			wm97xx_reg_write(wm, AC97_GPIO_STATUS, status & ~WM97XX_GPIO_13);
+			wm97xx_reg_write(wm, AC97_GPIO_STATUS, status &
+						~WM97XX_GPIO_13);
 		mutex_unlock(&wm->codec_mutex);
 		wake_up_interruptible(&wm->pen_irq_wait);
 	}
@@ -530,8 +535,8 @@ static int wm97xx_ts_input_open(struct input_dev *idev)
 		}
 
 		/* start digitiser */
-        if (wm->mach_ops && wm->mach_ops->acc_enabled)
-            wm->codec->acc_enable(wm, 1);
+	if (wm->mach_ops && wm->mach_ops->acc_enabled)
+		wm->codec->acc_enable(wm, 1);
 		wm->codec->digitiser_ioctl(wm, WM97XX_DIG_START);
 
 		/* init pen down/up irq handling */
