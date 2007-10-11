@@ -33,7 +33,7 @@
 
 #include "wm9713.h"
 
-#define WM9713_VERSION "0.12"
+#define WM9713_VERSION "0.13"
 
 struct wm9713_priv {
 	u32 pll_in; /* PLL input frequency */
@@ -807,25 +807,25 @@ static int wm9713_set_dai_fmt(struct snd_soc_codec_dai *codec_dai,
 		unsigned int fmt)
 {
 	struct snd_soc_codec *codec = codec_dai->codec;
-	u16 gpio = ac97_read(codec, AC97_GPIO_CFG) & 0xffe2;
+	u16 gpio = ac97_read(codec, AC97_GPIO_CFG) & 0xffc5;
 	u16 reg = 0x8000;
 
 	/* clock masters */
 	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK){
 	case SND_SOC_DAIFMT_CBM_CFM:
 		reg |= 0x4000;
-		gpio |= 0x0008;
+		gpio |= 0x0010;
 		break;
 	case SND_SOC_DAIFMT_CBM_CFS:
 		reg |= 0x6000;
-		gpio |= 0x000c;
+		gpio |= 0x0018;
 		break;
 	case SND_SOC_DAIFMT_CBS_CFS:
 		reg |= 0x0200;
-		gpio |= 0x000d;
+		gpio |= 0x001a;
 		break;
 	case SND_SOC_DAIFMT_CBS_CFM:
-		gpio |= 0x0009;
+		gpio |= 0x0012;
 		break;
 	}
 
