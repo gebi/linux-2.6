@@ -20,10 +20,8 @@
 #include "delegation.h"
 #include "internal.h"
 
-static void nfs_free_delegation(struct nfs_delegation *delegation)
+static void nfs_do_free_delegation(struct nfs_delegation *delegation)
 {
-	if (delegation->cred)
-		put_rpccred(delegation->cred);
 	kfree(delegation);
 }
 
@@ -31,7 +29,18 @@ static void nfs_free_delegation_callback(struct rcu_head *head)
 {
 	struct nfs_delegation *delegation = container_of(head, struct nfs_delegation, rcu);
 
-	nfs_free_delegation(delegation);
+	nfs_do_free_delegation(delegation);
+}
+
+static void nfs_free_delegation(struct nfs_delegation *delegation)
+{
+	struct rpc_cred *cred;
+
+	cred = rcu_dereference(delegation->cred);
+	rcu_assign_pointer(delegation->cred, NULL);
+	call_rcu(&delegation->rcu, nfs_free_delegation_callback);
+	if (cred)
+		put_rpccred(cred);
 }
 
 static int nfs_delegation_claim_locks(struct nfs_open_context *ctx, struct nfs4_state *state)
@@ -43,7 +52,7 @@ static int nfs_delegation_claim_locks(struct nfs_open_context *ctx, struct nfs4_
 	for (fl = inode->i_flock; fl != 0; fl = fl->fl_next) {
 		if (!(fl->fl_flags & (FL_POSIX|FL_FLOCK)))
 			continue;
-		if ((struct nfs_open_context *)fl->fl_file->private_data != ctx)
+		if (nfs_file_open_context(fl->fl_file) != ctx)
 			continue;
 		status = nfs4_lock_delegation_recall(state, fl);
 		if (status >= 0)
@@ -100,6 +109,7 @@ again:
 void nfs_inode_reclaim_delegation(struct inode *inode, struct rpc_cred *cred, struct nfs_openres *res)
 {
 	struct nfs_delegation *delegation = NFS_I(inode)->delegation;
+	struct rpc_cred *oldcred;
 
 	if (delegation == NULL)
 		return;
@@ -107,11 +117,12 @@ void nfs_inode_reclaim_delegation(struct inode *inode, struct rpc_cred *cred, st
 			sizeof(delegation->stateid.data));
 	delegation->type = res->delegation_type;
 	delegation->maxsize = res->maxsize;
-	put_rpccred(cred);
+	oldcred = delegation->cred;
 	delegation->cred = get_rpccred(cred);
 	delegation->flags &= ~NFS_DELEGATION_NEED_RECLAIM;
 	NFS_I(inode)->delegation_state = delegation->type;
 	smp_wmb();
+	put_rpccred(oldcred);
 }
 
 /*
@@ -166,7 +177,7 @@ static int nfs_do_return_delegation(struct inode *inode, struct nfs_delegation *
 	int res = 0;
 
 	res = nfs4_proc_delegreturn(inode, delegation->cred, &delegation->stateid);
-	call_rcu(&delegation->rcu, nfs_free_delegation_callback);
+	nfs_free_delegation(delegation);
 	return res;
 }
 
@@ -448,7 +459,7 @@ restart:
 		spin_unlock(&clp->cl_lock);
 		rcu_read_unlock();
 		if (delegation != NULL)
-			call_rcu(&delegation->rcu, nfs_free_delegation_callback);
+			nfs_free_delegation(delegation);
 		goto restart;
 	}
 	rcu_read_unlock();

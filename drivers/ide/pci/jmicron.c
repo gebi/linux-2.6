@@ -83,40 +83,20 @@ static u8 __devinit ata66_jmicron(ide_hwif_t *hwif)
 	return ATA_CBL_PATA80;
 }
 
-static void jmicron_tuneproc (ide_drive_t *drive, byte mode_wanted)
+static void jmicron_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
-	return;
 }
 
 /**
- *	config_jmicron_chipset_for_pio	-	set drive timings
- *	@drive: drive to tune
- *	@speed we want
+ *	jmicron_set_dma_mode	-	set host controller for DMA mode
+ *	@drive: drive
+ *	@mode: DMA mode
  *
+ *	As the JMicron snoops for timings we don't need to do anything here.
  */
 
-static void config_jmicron_chipset_for_pio (ide_drive_t *drive, byte set_speed)
+static void jmicron_set_dma_mode(ide_drive_t *drive, const u8 mode)
 {
-	u8 speed = XFER_PIO_0 + ide_get_best_pio_mode(drive, 255, 5);
-	if (set_speed)
-		(void) ide_config_drive_speed(drive, speed);
-}
-
-/**
- *	jmicron_tune_chipset	-	set controller timings
- *	@drive: Drive to set up
- *	@xferspeed: speed we want to achieve
- *
- *	As the JMicron snoops for timings all we actually need to do is
- *	make sure we don't set an invalid mode. We do need to honour
- *	the cable detect here.
- */
-
-static int jmicron_tune_chipset (ide_drive_t *drive, byte xferspeed)
-{
-	u8 speed = ide_rate_filter(drive, xferspeed);
-
-	return ide_config_drive_speed(drive, speed);
 }
 
 /**
@@ -132,7 +112,7 @@ static int jmicron_config_drive_for_dma (ide_drive_t *drive)
 	if (ide_tune_dma(drive))
 		return 0;
 
-	config_jmicron_chipset_for_pio(drive, 1);
+	ide_set_max_pio(drive);
 
 	return -1;
 }
@@ -146,8 +126,8 @@ static int jmicron_config_drive_for_dma (ide_drive_t *drive)
 
 static void __devinit init_hwif_jmicron(ide_hwif_t *hwif)
 {
-	hwif->speedproc = &jmicron_tune_chipset;
-	hwif->tuneproc	= &jmicron_tuneproc;
+	hwif->set_pio_mode = &jmicron_set_pio_mode;
+	hwif->set_dma_mode = &jmicron_set_dma_mode;
 
 	hwif->drives[0].autotune = 1;
 	hwif->drives[1].autotune = 1;
@@ -173,22 +153,13 @@ fallback:
 	return;
 }
 
-#define DECLARE_JMB_DEV(name_str)			\
-	{						\
-		.name		= name_str,		\
-		.init_hwif	= init_hwif_jmicron,	\
-		.autodma	= AUTODMA,		\
-		.bootable	= ON_BOARD,		\
-		.enablebits	= { {0x40, 1, 1}, {0x40, 0x10, 0x10} }, \
-		.pio_mask	= ATA_PIO5,		\
-	}
-
-static ide_pci_device_t jmicron_chipsets[] __devinitdata = {
-	/* 0 */ DECLARE_JMB_DEV("JMB361"),
-	/* 1 */ DECLARE_JMB_DEV("JMB363"),
-	/* 2 */ DECLARE_JMB_DEV("JMB365"),
-	/* 3 */ DECLARE_JMB_DEV("JMB366"),
-	/* 4 */ DECLARE_JMB_DEV("JMB368"),
+static ide_pci_device_t jmicron_chipset __devinitdata = {
+	.name		= "JMB",
+	.init_hwif	= init_hwif_jmicron,
+	.autodma	= AUTODMA,
+	.bootable	= ON_BOARD,
+	.enablebits	= { { 0x40, 0x01, 0x01 }, { 0x40, 0x10, 0x10 } },
+	.pio_mask	= ATA_PIO5,
 };
 
 /**
@@ -202,35 +173,29 @@ static ide_pci_device_t jmicron_chipsets[] __devinitdata = {
 
 static int __devinit jmicron_init_one(struct pci_dev *dev, const struct pci_device_id *id)
 {
-	ide_setup_pci_device(dev, &jmicron_chipsets[id->driver_data]);
+	ide_setup_pci_device(dev, &jmicron_chipset);
 	return 0;
 }
 
-/* If libata is configured, jmicron PCI quirk will configure it such
- * that the SATA ports are in AHCI function while the PATA ports are
- * in a separate IDE function.  In such cases, match device class and
- * attach only to IDE.  If libata isn't configured, keep the old
- * behavior for backward compatibility.
+/* All JMB PATA controllers have and will continue to have the same
+ * interface.  Matching vendor and device class is enough for all
+ * current and future controllers if the controller is programmed
+ * properly.
+ *
+ * If libata is configured, jmicron PCI quirk programs the controller
+ * into the correct mode.  If libata isn't configured, match known
+ * device IDs too to maintain backward compatibility.
  */
-#if defined(CONFIG_ATA) || defined(CONFIG_ATA_MODULE)
-#define JMB_CLASS	PCI_CLASS_STORAGE_IDE << 8
-#define JMB_CLASS_MASK	0xffff00
-#else
-#define JMB_CLASS	0
-#define JMB_CLASS_MASK	0
-#endif
-
 static struct pci_device_id jmicron_pci_tbl[] = {
-	{ PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB361,
-	  PCI_ANY_ID, PCI_ANY_ID, JMB_CLASS, JMB_CLASS_MASK, 0},
-	{ PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB363,
-	  PCI_ANY_ID, PCI_ANY_ID, JMB_CLASS, JMB_CLASS_MASK, 1},
-	{ PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB365,
-	  PCI_ANY_ID, PCI_ANY_ID, JMB_CLASS, JMB_CLASS_MASK, 2},
-	{ PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB366,
-	  PCI_ANY_ID, PCI_ANY_ID, JMB_CLASS, JMB_CLASS_MASK, 3},
-	{ PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB368,
-	  PCI_ANY_ID, PCI_ANY_ID, JMB_CLASS, JMB_CLASS_MASK, 4},
+#if !defined(CONFIG_ATA) && !defined(CONFIG_ATA_MODULE)
+	{ PCI_VDEVICE(JMICRON, PCI_DEVICE_ID_JMICRON_JMB361) },
+	{ PCI_VDEVICE(JMICRON, PCI_DEVICE_ID_JMICRON_JMB363) },
+	{ PCI_VDEVICE(JMICRON, PCI_DEVICE_ID_JMICRON_JMB365) },
+	{ PCI_VDEVICE(JMICRON, PCI_DEVICE_ID_JMICRON_JMB366) },
+	{ PCI_VDEVICE(JMICRON, PCI_DEVICE_ID_JMICRON_JMB368) },
+#endif
+	{ PCI_VENDOR_ID_JMICRON, PCI_ANY_ID, PCI_ANY_ID, PCI_ANY_ID,
+	  PCI_CLASS_STORAGE_IDE << 8, 0xffff00, 0 },
 	{ 0, },
 };
 

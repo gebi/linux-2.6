@@ -1753,6 +1753,14 @@ mega_build_sglist(adapter_t *adapter, scb_t *scb, u32 *buf, u32 *len)
 
 	*len = 0;
 
+	if (scsi_sg_count(cmd) == 1 && !adapter->has_64bit_addr) {
+		sg = scsi_sglist(cmd);
+		scb->dma_h_bulkdata = sg_dma_address(sg);
+		*buf = (u32)scb->dma_h_bulkdata;
+		*len = sg_dma_len(sg);
+		return 0;
+	}
+
 	scsi_for_each_sg(cmd, sg, sgcnt, idx) {
 		if (adapter->has_64bit_addr) {
 			scb->sgl64[idx].address = sg_dma_address(sg);
@@ -4408,8 +4416,7 @@ mega_internal_command(adapter_t *adapter, megacmd_t *mc, mega_passthru *pthru)
 	scmd = &adapter->int_scmd;
 	memset(scmd, 0, sizeof(Scsi_Cmnd));
 
-	sdev = kmalloc(sizeof(struct scsi_device), GFP_KERNEL);
-	memset(sdev, 0, sizeof(struct scsi_device));
+	sdev = kzalloc(sizeof(struct scsi_device), GFP_KERNEL);
 	scmd->device = sdev;
 
 	scmd->device->host = adapter->host;

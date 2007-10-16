@@ -405,10 +405,9 @@ static inline int udp6_csum_init(struct sk_buff *skb, struct udphdr *uh,
 	return 0;
 }
 
-int __udp6_lib_rcv(struct sk_buff **pskb, struct hlist_head udptable[],
+int __udp6_lib_rcv(struct sk_buff *skb, struct hlist_head udptable[],
 		   int proto)
 {
-	struct sk_buff *skb = *pskb;
 	struct sock *sk;
 	struct udphdr *uh;
 	struct net_device *dev = skb->dev;
@@ -494,9 +493,9 @@ discard:
 	return 0;
 }
 
-static __inline__ int udpv6_rcv(struct sk_buff **pskb)
+static __inline__ int udpv6_rcv(struct sk_buff *skb)
 {
-	return __udp6_lib_rcv(pskb, udp_hash, IPPROTO_UDP);
+	return __udp6_lib_rcv(skb, udp_hash, IPPROTO_UDP);
 }
 
 /*
@@ -555,6 +554,8 @@ static int udp_v6_push_pending_frames(struct sock *sk)
 out:
 	up->len = 0;
 	up->pending = 0;
+	if (!err)
+		UDP6_INC_STATS_USER(UDP_MIB_OUTDATAGRAMS, up->pcflag);
 	return err;
 }
 
@@ -610,7 +611,7 @@ int udpv6_sendmsg(struct kiocb *iocb, struct sock *sk,
 		daddr = NULL;
 
 	if (daddr) {
-		if (ipv6_addr_type(daddr) == IPV6_ADDR_MAPPED) {
+		if (ipv6_addr_v4mapped(daddr)) {
 			struct sockaddr_in sin;
 			sin.sin_family = AF_INET;
 			sin.sin_port = sin6 ? sin6->sin6_port : inet->dport;
@@ -823,10 +824,8 @@ do_append_data:
 	release_sock(sk);
 out:
 	fl6_sock_release(flowlabel);
-	if (!err) {
-		UDP6_INC_STATS_USER(UDP_MIB_OUTDATAGRAMS, is_udplite);
+	if (!err)
 		return len;
-	}
 	/*
 	 * ENOBUFS = no kernel mem, SOCK_NOSPACE = no sndbuf space.  Reporting
 	 * ENOBUFS might not be good (it's not tunable per se), but otherwise

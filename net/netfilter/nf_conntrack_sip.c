@@ -36,13 +36,13 @@ static unsigned int sip_timeout __read_mostly = SIP_TIMEOUT;
 module_param(sip_timeout, uint, 0600);
 MODULE_PARM_DESC(sip_timeout, "timeout for the master SIP session");
 
-unsigned int (*nf_nat_sip_hook)(struct sk_buff **pskb,
+unsigned int (*nf_nat_sip_hook)(struct sk_buff *skb,
 				enum ip_conntrack_info ctinfo,
 				struct nf_conn *ct,
 				const char **dptr) __read_mostly;
 EXPORT_SYMBOL_GPL(nf_nat_sip_hook);
 
-unsigned int (*nf_nat_sdp_hook)(struct sk_buff **pskb,
+unsigned int (*nf_nat_sdp_hook)(struct sk_buff *skb,
 				enum ip_conntrack_info ctinfo,
 				struct nf_conntrack_expect *exp,
 				const char *dptr) __read_mostly;
@@ -295,6 +295,7 @@ static int epaddr_len(struct nf_conn *ct, const char *dptr,
 static int skp_epaddr_len(struct nf_conn *ct, const char *dptr,
 			  const char *limit, int *shift)
 {
+	const char *start = dptr;
 	int s = *shift;
 
 	/* Search for @, but stop at the end of the line.
@@ -309,8 +310,10 @@ static int skp_epaddr_len(struct nf_conn *ct, const char *dptr,
 	if (dptr <= limit && *dptr == '@') {
 		dptr++;
 		(*shift)++;
-	} else
+	} else {
+		dptr = start;
 		*shift = s;
+	}
 
 	return epaddr_len(ct, dptr, limit, shift);
 }
@@ -330,7 +333,8 @@ int ct_sip_get_info(struct nf_conn *ct,
 
 	while (dptr <= limit) {
 		if ((strncmp(dptr, hnfo->lname, hnfo->lnlen) != 0) &&
-		    (strncmp(dptr, hnfo->sname, hnfo->snlen) != 0)) {
+		    (hnfo->sname == NULL ||
+		     strncmp(dptr, hnfo->sname, hnfo->snlen) != 0)) {
 			dptr++;
 			continue;
 		}
@@ -359,7 +363,7 @@ int ct_sip_get_info(struct nf_conn *ct,
 }
 EXPORT_SYMBOL_GPL(ct_sip_get_info);
 
-static int set_expected_rtp(struct sk_buff **pskb,
+static int set_expected_rtp(struct sk_buff *skb,
 			    struct nf_conn *ct,
 			    enum ip_conntrack_info ctinfo,
 			    union nf_conntrack_address *addr,
@@ -381,7 +385,7 @@ static int set_expected_rtp(struct sk_buff **pskb,
 
 	nf_nat_sdp = rcu_dereference(nf_nat_sdp_hook);
 	if (nf_nat_sdp && ct->status & IPS_NAT_MASK)
-		ret = nf_nat_sdp(pskb, ctinfo, exp, dptr);
+		ret = nf_nat_sdp(skb, ctinfo, exp, dptr);
 	else {
 		if (nf_ct_expect_related(exp) != 0)
 			ret = NF_DROP;
@@ -393,7 +397,7 @@ static int set_expected_rtp(struct sk_buff **pskb,
 	return ret;
 }
 
-static int sip_help(struct sk_buff **pskb,
+static int sip_help(struct sk_buff *skb,
 		    unsigned int protoff,
 		    struct nf_conn *ct,
 		    enum ip_conntrack_info ctinfo)
@@ -410,13 +414,13 @@ static int sip_help(struct sk_buff **pskb,
 
 	/* No Data ? */
 	dataoff = protoff + sizeof(struct udphdr);
-	if (dataoff >= (*pskb)->len)
+	if (dataoff >= skb->len)
 		return NF_ACCEPT;
 
-	nf_ct_refresh(ct, *pskb, sip_timeout * HZ);
+	nf_ct_refresh(ct, skb, sip_timeout * HZ);
 
-	if (!skb_is_nonlinear(*pskb))
-		dptr = (*pskb)->data + dataoff;
+	if (!skb_is_nonlinear(skb))
+		dptr = skb->data + dataoff;
 	else {
 		pr_debug("Copy of skbuff not supported yet.\n");
 		goto out;
@@ -424,13 +428,13 @@ static int sip_help(struct sk_buff **pskb,
 
 	nf_nat_sip = rcu_dereference(nf_nat_sip_hook);
 	if (nf_nat_sip && ct->status & IPS_NAT_MASK) {
-		if (!nf_nat_sip(pskb, ctinfo, ct, &dptr)) {
+		if (!nf_nat_sip(skb, ctinfo, ct, &dptr)) {
 			ret = NF_DROP;
 			goto out;
 		}
 	}
 
-	datalen = (*pskb)->len - dataoff;
+	datalen = skb->len - dataoff;
 	if (datalen < sizeof("SIP/2.0 200") - 1)
 		goto out;
 
@@ -460,7 +464,7 @@ static int sip_help(struct sk_buff **pskb,
 				ret = NF_DROP;
 				goto out;
 			}
-			ret = set_expected_rtp(pskb, ct, ctinfo, &addr,
+			ret = set_expected_rtp(skb, ct, ctinfo, &addr,
 					       htons(port), dptr);
 		}
 	}

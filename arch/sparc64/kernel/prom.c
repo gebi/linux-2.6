@@ -107,6 +107,21 @@ int of_set_property(struct device_node *dp, const char *name, void *val, int len
 }
 EXPORT_SYMBOL(of_set_property);
 
+int of_find_in_proplist(const char *list, const char *match, int len)
+{
+	while (len > 0) {
+		int l;
+
+		if (!strcmp(list, match))
+			return 1;
+		l = strlen(list) + 1;
+		list += l;
+		len -= l;
+	}
+	return 0;
+}
+EXPORT_SYMBOL(of_find_in_proplist);
+
 static unsigned int prom_early_allocated;
 
 static void * __init prom_early_alloc(unsigned long size)
@@ -1031,7 +1046,8 @@ static void __init irq_trans_init(struct device_node *dp)
 	if (!strcmp(dp->name, "fhc") &&
 	    !strcmp(dp->parent->name, "central"))
 		return central_irq_trans_init(dp);
-	if (!strcmp(dp->name, "virtual-devices"))
+	if (!strcmp(dp->name, "virtual-devices") ||
+	    !strcmp(dp->name, "niu"))
 		return sun4v_vdev_irq_trans_init(dp);
 }
 
@@ -1568,8 +1584,12 @@ static void __init of_fill_in_cpu_data(void)
 		ncpus_probed++;
 
 #ifdef CONFIG_SMP
-		if (cpuid >= NR_CPUS)
+		if (cpuid >= NR_CPUS) {
+			printk(KERN_WARNING "Ignoring CPU %d which is "
+			       ">= NR_CPUS (%d)\n",
+			       cpuid, NR_CPUS);
 			continue;
+		}
 #else
 		/* On uniprocessor we only want the values for the
 		 * real physical cpu the kernel booted onto, however

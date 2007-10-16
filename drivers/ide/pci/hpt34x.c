@@ -43,10 +43,9 @@
 
 #define HPT343_DEBUG_DRIVE_INFO		0
 
-static int hpt34x_tune_chipset (ide_drive_t *drive, u8 xferspeed)
+static void hpt34x_set_mode(ide_drive_t *drive, const u8 speed)
 {
 	struct pci_dev *dev	= HWIF(drive)->pci_dev;
-	u8 speed = ide_rate_filter(drive, xferspeed);
 	u32 reg1= 0, tmp1 = 0, reg2 = 0, tmp2 = 0;
 	u8			hi_speed, lo_speed;
 
@@ -74,14 +73,11 @@ static int hpt34x_tune_chipset (ide_drive_t *drive, u8 xferspeed)
 		drive->dn, reg1, tmp1, reg2, tmp2,
 		hi_speed, lo_speed);
 #endif /* HPT343_DEBUG_DRIVE_INFO */
-
-	return(ide_config_drive_speed(drive, speed));
 }
 
-static void hpt34x_tune_drive (ide_drive_t *drive, u8 pio)
+static void hpt34x_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
-	pio = ide_get_best_pio_mode(drive, pio, 5);
-	(void) hpt34x_tune_chipset(drive, (XFER_PIO_0 + pio));
+	hpt34x_set_mode(drive, XFER_PIO_0 + pio);
 }
 
 static int hpt34x_config_drive_xfer_rate (ide_drive_t *drive)
@@ -89,14 +85,10 @@ static int hpt34x_config_drive_xfer_rate (ide_drive_t *drive)
 	drive->init_speed = 0;
 
 	if (ide_tune_dma(drive))
-#ifndef CONFIG_HPT34X_AUTODMA
 		return -1;
-#else
-		return 0;
-#endif
 
 	if (ide_use_fast_pio(drive))
-		hpt34x_tune_drive(drive, 255);
+		ide_set_max_pio(drive);
 
 	return -1;
 }
@@ -150,8 +142,9 @@ static void __devinit init_hwif_hpt34x(ide_hwif_t *hwif)
 
 	hwif->autodma = 0;
 
-	hwif->tuneproc = &hpt34x_tune_drive;
-	hwif->speedproc = &hpt34x_tune_chipset;
+	hwif->set_pio_mode = &hpt34x_set_pio_mode;
+	hwif->set_dma_mode = &hpt34x_set_mode;
+
 	hwif->drives[0].autotune = 1;
 	hwif->drives[1].autotune = 1;
 
@@ -160,9 +153,11 @@ static void __devinit init_hwif_hpt34x(ide_hwif_t *hwif)
 	if (!hwif->dma_base)
 		return;
 
+#ifdef CONFIG_HPT34X_AUTODMA
 	hwif->ultra_mask = 0x07;
 	hwif->mwdma_mask = 0x07;
 	hwif->swdma_mask = 0x07;
+#endif
 
 	hwif->ide_dma_check = &hpt34x_config_drive_xfer_rate;
 	if (!noautodma)

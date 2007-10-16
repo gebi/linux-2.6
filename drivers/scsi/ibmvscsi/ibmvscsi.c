@@ -70,11 +70,13 @@
 #include <linux/moduleparam.h>
 #include <linux/dma-mapping.h>
 #include <linux/delay.h>
+#include <asm/firmware.h>
 #include <asm/vio.h>
 #include <scsi/scsi.h>
 #include <scsi/scsi_cmnd.h>
 #include <scsi/scsi_host.h>
 #include <scsi/scsi_device.h>
+#include <scsi/scsi_transport_srp.h>
 #include "ibmvscsi.h"
 
 /* The values below are somewhat arbitrary default values, but 
@@ -87,7 +89,11 @@ static int max_channel = 3;
 static int init_timeout = 5;
 static int max_requests = IBMVSCSI_MAX_REQUESTS_DEFAULT;
 
+static struct scsi_transport_template *ibmvscsi_transport_template;
+
 #define IBMVSCSI_VERSION "1.5.8"
+
+static struct ibmvscsi_ops *ibmvscsi_ops;
 
 MODULE_DESCRIPTION("IBM Virtual SCSI");
 MODULE_AUTHOR("Dave Boutcher");
@@ -393,12 +399,6 @@ static int map_sg_data(struct scsi_cmnd *cmd,
 		return 1;
 	else if (sg_mapped < 0)
 		return 0;
-	else if (sg_mapped > SG_ALL) {
-		printk(KERN_ERR
-		       "ibmvscsi: More than %d mapped sg entries, got %d\n",
-		       SG_ALL, sg_mapped);
-		return 0;
-	}
 
 	set_srp_direction(cmd, srp_cmd, sg_mapped);
 
@@ -512,8 +512,8 @@ static void ibmvscsi_reset_host(struct ibmvscsi_host_data *hostdata)
 	atomic_set(&hostdata->request_limit, 0);
 
 	purge_requests(hostdata, DID_ERROR);
-	if ((ibmvscsi_reset_crq_queue(&hostdata->queue, hostdata)) ||
-	    (ibmvscsi_send_crq(hostdata, 0xC001000000000000LL, 0)) ||
+	if ((ibmvscsi_ops->reset_crq_queue(&hostdata->queue, hostdata)) ||
+	    (ibmvscsi_ops->send_crq(hostdata, 0xC001000000000000LL, 0)) ||
 	    (vio_enable_interrupts(to_vio_dev(hostdata->dev)))) {
 		atomic_set(&hostdata->request_limit, -1);
 		dev_err(hostdata->dev, "error after reset\n");
@@ -618,7 +618,7 @@ static int ibmvscsi_send_srp_event(struct srp_event_struct *evt_struct,
 	}
 
 	if ((rc =
-	     ibmvscsi_send_crq(hostdata, crq_as_u64[0], crq_as_u64[1])) != 0) {
+	     ibmvscsi_ops->send_crq(hostdata, crq_as_u64[0], crq_as_u64[1])) != 0) {
 		list_del(&evt_struct->list);
 		del_timer(&evt_struct->timer);
 
@@ -708,8 +708,7 @@ static int ibmvscsi_queuecommand(struct scsi_cmnd *cmnd,
 	struct srp_cmd *srp_cmd;
 	struct srp_event_struct *evt_struct;
 	struct srp_indirect_buf *indirect;
-	struct ibmvscsi_host_data *hostdata =
-		(struct ibmvscsi_host_data *)&cmnd->device->host->hostdata;
+	struct ibmvscsi_host_data *hostdata = shost_priv(cmnd->device->host);
 	u16 lun = lun_from_dev(cmnd->device);
 	u8 out_fmt, in_fmt;
 
@@ -960,8 +959,7 @@ static void sync_completion(struct srp_event_struct *evt_struct)
  */
 static int ibmvscsi_eh_abort_handler(struct scsi_cmnd *cmd)
 {
-	struct ibmvscsi_host_data *hostdata =
-	    (struct ibmvscsi_host_data *)cmd->device->host->hostdata;
+	struct ibmvscsi_host_data *hostdata = shost_priv(cmd->device->host);
 	struct srp_tsk_mgmt *tsk_mgmt;
 	struct srp_event_struct *evt;
 	struct srp_event_struct *tmp_evt, *found_evt;
@@ -1084,9 +1082,7 @@ static int ibmvscsi_eh_abort_handler(struct scsi_cmnd *cmd)
  */
 static int ibmvscsi_eh_device_reset_handler(struct scsi_cmnd *cmd)
 {
-	struct ibmvscsi_host_data *hostdata =
-	    (struct ibmvscsi_host_data *)cmd->device->host->hostdata;
-
+	struct ibmvscsi_host_data *hostdata = shost_priv(cmd->device->host);
 	struct srp_tsk_mgmt *tsk_mgmt;
 	struct srp_event_struct *evt;
 	struct srp_event_struct *tmp_evt, *pos;
@@ -1183,8 +1179,7 @@ static int ibmvscsi_eh_device_reset_handler(struct scsi_cmnd *cmd)
 static int ibmvscsi_eh_host_reset_handler(struct scsi_cmnd *cmd)
 {
 	unsigned long wait_switch = 0;
-	struct ibmvscsi_host_data *hostdata =
-		(struct ibmvscsi_host_data *)cmd->device->host->hostdata;
+	struct ibmvscsi_host_data *hostdata = shost_priv(cmd->device->host);
 
 	dev_err(hostdata->dev, "Resetting connection due to error recovery\n");
 
@@ -1222,8 +1217,8 @@ void ibmvscsi_handle_crq(struct viosrp_crq *crq,
 		case 0x01:	/* Initialization message */
 			dev_info(hostdata->dev, "partner initialized\n");
 			/* Send back a response */
-			if ((rc = ibmvscsi_send_crq(hostdata,
-						    0xC002000000000000LL, 0)) == 0) {
+			if ((rc = ibmvscsi_ops->send_crq(hostdata,
+							 0xC002000000000000LL, 0)) == 0) {
 				/* Now login */
 				send_srp_login(hostdata);
 			} else {
@@ -1248,10 +1243,10 @@ void ibmvscsi_handle_crq(struct viosrp_crq *crq,
 			/* We need to re-setup the interpartition connection */
 			dev_info(hostdata->dev, "Re-enabling adapter!\n");
 			purge_requests(hostdata, DID_REQUEUE);
-			if ((ibmvscsi_reenable_crq_queue(&hostdata->queue,
-							hostdata)) ||
-			    (ibmvscsi_send_crq(hostdata,
-					       0xC001000000000000LL, 0))) {
+			if ((ibmvscsi_ops->reenable_crq_queue(&hostdata->queue,
+							      hostdata)) ||
+			    (ibmvscsi_ops->send_crq(hostdata,
+						    0xC001000000000000LL, 0))) {
 					atomic_set(&hostdata->request_limit,
 						   -1);
 					dev_err(hostdata->dev, "error after enable\n");
@@ -1261,10 +1256,10 @@ void ibmvscsi_handle_crq(struct viosrp_crq *crq,
 				crq->format);
 
 			purge_requests(hostdata, DID_ERROR);
-			if ((ibmvscsi_reset_crq_queue(&hostdata->queue,
-							hostdata)) ||
-			    (ibmvscsi_send_crq(hostdata,
-					       0xC001000000000000LL, 0))) {
+			if ((ibmvscsi_ops->reset_crq_queue(&hostdata->queue,
+							   hostdata)) ||
+			    (ibmvscsi_ops->send_crq(hostdata,
+						    0xC001000000000000LL, 0))) {
 					atomic_set(&hostdata->request_limit,
 						   -1);
 					dev_err(hostdata->dev, "error after reset\n");
@@ -1412,8 +1407,7 @@ static int ibmvscsi_change_queue_depth(struct scsi_device *sdev, int qdepth)
 static ssize_t show_host_srp_version(struct class_device *class_dev, char *buf)
 {
 	struct Scsi_Host *shost = class_to_shost(class_dev);
-	struct ibmvscsi_host_data *hostdata =
-	    (struct ibmvscsi_host_data *)shost->hostdata;
+	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
 	int len;
 
 	len = snprintf(buf, PAGE_SIZE, "%s\n",
@@ -1433,8 +1427,7 @@ static ssize_t show_host_partition_name(struct class_device *class_dev,
 					char *buf)
 {
 	struct Scsi_Host *shost = class_to_shost(class_dev);
-	struct ibmvscsi_host_data *hostdata =
-	    (struct ibmvscsi_host_data *)shost->hostdata;
+	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
 	int len;
 
 	len = snprintf(buf, PAGE_SIZE, "%s\n",
@@ -1454,8 +1447,7 @@ static ssize_t show_host_partition_number(struct class_device *class_dev,
 					  char *buf)
 {
 	struct Scsi_Host *shost = class_to_shost(class_dev);
-	struct ibmvscsi_host_data *hostdata =
-	    (struct ibmvscsi_host_data *)shost->hostdata;
+	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
 	int len;
 
 	len = snprintf(buf, PAGE_SIZE, "%d\n",
@@ -1474,8 +1466,7 @@ static struct class_device_attribute ibmvscsi_host_partition_number = {
 static ssize_t show_host_mad_version(struct class_device *class_dev, char *buf)
 {
 	struct Scsi_Host *shost = class_to_shost(class_dev);
-	struct ibmvscsi_host_data *hostdata =
-	    (struct ibmvscsi_host_data *)shost->hostdata;
+	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
 	int len;
 
 	len = snprintf(buf, PAGE_SIZE, "%d\n",
@@ -1494,8 +1485,7 @@ static struct class_device_attribute ibmvscsi_host_mad_version = {
 static ssize_t show_host_os_type(struct class_device *class_dev, char *buf)
 {
 	struct Scsi_Host *shost = class_to_shost(class_dev);
-	struct ibmvscsi_host_data *hostdata =
-	    (struct ibmvscsi_host_data *)shost->hostdata;
+	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
 	int len;
 
 	len = snprintf(buf, PAGE_SIZE, "%d\n", hostdata->madapter_info.os_type);
@@ -1513,8 +1503,7 @@ static struct class_device_attribute ibmvscsi_host_os_type = {
 static ssize_t show_host_config(struct class_device *class_dev, char *buf)
 {
 	struct Scsi_Host *shost = class_to_shost(class_dev);
-	struct ibmvscsi_host_data *hostdata =
-	    (struct ibmvscsi_host_data *)shost->hostdata;
+	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
 
 	/* returns null-terminated host config data */
 	if (ibmvscsi_do_host_config(hostdata, buf, PAGE_SIZE) == 0)
@@ -1570,6 +1559,8 @@ static int ibmvscsi_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 	struct ibmvscsi_host_data *hostdata;
 	struct Scsi_Host *host;
 	struct device *dev = &vdev->dev;
+	struct srp_rport_identifiers ids;
+	struct srp_rport *rport;
 	unsigned long wait_switch = 0;
 	int rc;
 
@@ -1582,7 +1573,8 @@ static int ibmvscsi_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 		goto scsi_host_alloc_failed;
 	}
 
-	hostdata = (struct ibmvscsi_host_data *)host->hostdata;
+	host->transportt = ibmvscsi_transport_template;
+	hostdata = shost_priv(host);
 	memset(hostdata, 0x00, sizeof(*hostdata));
 	INIT_LIST_HEAD(&hostdata->sent);
 	hostdata->host = host;
@@ -1590,7 +1582,7 @@ static int ibmvscsi_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 	atomic_set(&hostdata->request_limit, -1);
 	hostdata->host->max_sectors = 32 * 8; /* default max I/O 32 pages */
 
-	rc = ibmvscsi_init_crq_queue(&hostdata->queue, hostdata, max_requests);
+	rc = ibmvscsi_ops->init_crq_queue(&hostdata->queue, hostdata, max_requests);
 	if (rc != 0 && rc != H_RESOURCE) {
 		dev_err(&vdev->dev, "couldn't initialize crq. rc=%d\n", rc);
 		goto init_crq_failed;
@@ -1607,11 +1599,19 @@ static int ibmvscsi_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 	if (scsi_add_host(hostdata->host, hostdata->dev))
 		goto add_host_failed;
 
+	/* we don't have a proper target_port_id so let's use the fake one */
+	memcpy(ids.port_id, hostdata->madapter_info.partition_name,
+	       sizeof(ids.port_id));
+	ids.roles = SRP_RPORT_ROLE_TARGET;
+	rport = srp_rport_add(host, &ids);
+	if (IS_ERR(rport))
+		goto add_srp_port_failed;
+
 	/* Try to send an initialization message.  Note that this is allowed
 	 * to fail if the other end is not acive.  In that case we don't
 	 * want to scan
 	 */
-	if (ibmvscsi_send_crq(hostdata, 0xC001000000000000LL, 0) == 0
+	if (ibmvscsi_ops->send_crq(hostdata, 0xC001000000000000LL, 0) == 0
 	    || rc == H_RESOURCE) {
 		/*
 		 * Wait around max init_timeout secs for the adapter to finish
@@ -1634,10 +1634,12 @@ static int ibmvscsi_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 	vdev->dev.driver_data = hostdata;
 	return 0;
 
+      add_srp_port_failed:
+	scsi_remove_host(hostdata->host);
       add_host_failed:
 	release_event_pool(&hostdata->pool, hostdata);
       init_pool_failed:
-	ibmvscsi_release_crq_queue(&hostdata->queue, hostdata, max_requests);
+	ibmvscsi_ops->release_crq_queue(&hostdata->queue, hostdata, max_requests);
       init_crq_failed:
 	scsi_host_put(host);
       scsi_host_alloc_failed:
@@ -1648,9 +1650,10 @@ static int ibmvscsi_remove(struct vio_dev *vdev)
 {
 	struct ibmvscsi_host_data *hostdata = vdev->dev.driver_data;
 	release_event_pool(&hostdata->pool, hostdata);
-	ibmvscsi_release_crq_queue(&hostdata->queue, hostdata,
-				   max_requests);
-	
+	ibmvscsi_ops->release_crq_queue(&hostdata->queue, hostdata,
+					max_requests);
+
+	srp_remove_host(hostdata->host);
 	scsi_remove_host(hostdata->host);
 	scsi_host_put(hostdata->host);
 
@@ -1677,14 +1680,35 @@ static struct vio_driver ibmvscsi_driver = {
 	}
 };
 
+static struct srp_function_template ibmvscsi_transport_functions = {
+};
+
 int __init ibmvscsi_module_init(void)
 {
-	return vio_register_driver(&ibmvscsi_driver);
+	int ret;
+
+	if (firmware_has_feature(FW_FEATURE_ISERIES))
+		ibmvscsi_ops = &iseriesvscsi_ops;
+	else if (firmware_has_feature(FW_FEATURE_VIO))
+		ibmvscsi_ops = &rpavscsi_ops;
+	else
+		return -ENODEV;
+
+	ibmvscsi_transport_template =
+		srp_attach_transport(&ibmvscsi_transport_functions);
+	if (!ibmvscsi_transport_template)
+		return -ENOMEM;
+
+	ret = vio_register_driver(&ibmvscsi_driver);
+	if (ret)
+		srp_release_transport(ibmvscsi_transport_template);
+	return ret;
 }
 
 void __exit ibmvscsi_module_exit(void)
 {
 	vio_unregister_driver(&ibmvscsi_driver);
+	srp_release_transport(ibmvscsi_transport_template);
 }
 
 module_init(ibmvscsi_module_init);

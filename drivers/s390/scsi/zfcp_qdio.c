@@ -36,8 +36,6 @@ static void zfcp_qdio_sbale_fill
 	(struct zfcp_fsf_req *, unsigned long, void *, int);
 static int zfcp_qdio_sbals_from_segment
 	(struct zfcp_fsf_req *, unsigned long, void *, unsigned long);
-static int zfcp_qdio_sbals_from_buffer
-	(struct zfcp_fsf_req *, unsigned long, void *, unsigned long, int);
 
 static qdio_handler_t zfcp_qdio_request_handler;
 static qdio_handler_t zfcp_qdio_response_handler;
@@ -176,10 +174,9 @@ zfcp_qdio_handler_error_check(struct zfcp_adapter *adapter, unsigned int status,
                 * That is why we need to clear the link-down flag
                 * which is set again in case we have missed by a mile.
                 */
-               zfcp_erp_adapter_reopen(
-                       adapter, 
-                       ZFCP_STATUS_ADAPTER_LINK_UNPLUGGED |
-                       ZFCP_STATUS_COMMON_ERP_FAILED);
+		zfcp_erp_adapter_reopen(adapter,
+				       ZFCP_STATUS_ADAPTER_LINK_UNPLUGGED |
+				       ZFCP_STATUS_COMMON_ERP_FAILED);
 	}
 	return retval;
 }
@@ -632,28 +629,6 @@ out:
 
 
 /**
- * zfcp_qdio_sbals_from_buffer - fill SBALs from buffer
- * @fsf_req: request to be processed
- * @sbtype: SBALE flags
- * @buffer: data buffer
- * @length: length of buffer
- * @max_sbals: upper bound for number of SBALs to be used
- */
-static int
-zfcp_qdio_sbals_from_buffer(struct zfcp_fsf_req *fsf_req, unsigned long sbtype,
-			    void *buffer, unsigned long length, int max_sbals)
-{
-	struct scatterlist sg_segment;
-
-	zfcp_address_to_sg(buffer, &sg_segment);
-	sg_segment.length = length;
-
-	return zfcp_qdio_sbals_from_sg(fsf_req, sbtype, &sg_segment, 1,
-                                       max_sbals);
-}
-
-
-/**
  * zfcp_qdio_sbals_from_scsicmnd - fill SBALs from scsi command
  * @fsf_req: request to be processed
  * @sbtype: SBALE flags
@@ -664,18 +639,9 @@ int
 zfcp_qdio_sbals_from_scsicmnd(struct zfcp_fsf_req *fsf_req,
 			      unsigned long sbtype, struct scsi_cmnd *scsi_cmnd)
 {
-	if (scsi_cmnd->use_sg) {
-		return zfcp_qdio_sbals_from_sg(fsf_req,	sbtype,
-                                               (struct scatterlist *)
-                                               scsi_cmnd->request_buffer,
-                                               scsi_cmnd->use_sg,
-                                               ZFCP_MAX_SBALS_PER_REQ);
-	} else {
-                return zfcp_qdio_sbals_from_buffer(fsf_req, sbtype,
-                                                   scsi_cmnd->request_buffer,
-                                                   scsi_cmnd->request_bufflen,
-                                                   ZFCP_MAX_SBALS_PER_REQ);
-	}
+	return zfcp_qdio_sbals_from_sg(fsf_req,	sbtype, scsi_sglist(scsi_cmnd),
+				       scsi_sg_count(scsi_cmnd),
+				       ZFCP_MAX_SBALS_PER_REQ);
 }
 
 /**

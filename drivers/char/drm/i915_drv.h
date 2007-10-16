@@ -70,7 +70,7 @@ struct mem_block {
 	struct mem_block *prev;
 	int start;
 	int size;
-	DRMFILE filp;		/* 0: free, -1: heap, other: real files */
+	struct drm_file *file_priv; /* NULL: free, -1: heap, other: real files */
 };
 
 typedef struct _drm_i915_vbl_swap {
@@ -116,21 +116,24 @@ typedef struct drm_i915_private {
 	unsigned int swaps_pending;
 } drm_i915_private_t;
 
-extern drm_ioctl_desc_t i915_ioctls[];
+extern struct drm_ioctl_desc i915_ioctls[];
 extern int i915_max_ioctl;
 
 				/* i915_dma.c */
 extern void i915_kernel_lost_context(struct drm_device * dev);
 extern int i915_driver_load(struct drm_device *, unsigned long flags);
 extern void i915_driver_lastclose(struct drm_device * dev);
-extern void i915_driver_preclose(struct drm_device * dev, DRMFILE filp);
+extern void i915_driver_preclose(struct drm_device *dev,
+				 struct drm_file *file_priv);
 extern int i915_driver_device_is_agp(struct drm_device * dev);
 extern long i915_compat_ioctl(struct file *filp, unsigned int cmd,
 			      unsigned long arg);
 
 /* i915_irq.c */
-extern int i915_irq_emit(DRM_IOCTL_ARGS);
-extern int i915_irq_wait(DRM_IOCTL_ARGS);
+extern int i915_irq_emit(struct drm_device *dev, void *data,
+			 struct drm_file *file_priv);
+extern int i915_irq_wait(struct drm_device *dev, void *data,
+			 struct drm_file *file_priv);
 
 extern int i915_driver_vblank_wait(struct drm_device *dev, unsigned int *sequence);
 extern int i915_driver_vblank_wait2(struct drm_device *dev, unsigned int *sequence);
@@ -138,18 +141,25 @@ extern irqreturn_t i915_driver_irq_handler(DRM_IRQ_ARGS);
 extern void i915_driver_irq_preinstall(struct drm_device * dev);
 extern void i915_driver_irq_postinstall(struct drm_device * dev);
 extern void i915_driver_irq_uninstall(struct drm_device * dev);
-extern int i915_vblank_pipe_set(DRM_IOCTL_ARGS);
-extern int i915_vblank_pipe_get(DRM_IOCTL_ARGS);
-extern int i915_vblank_swap(DRM_IOCTL_ARGS);
+extern int i915_vblank_pipe_set(struct drm_device *dev, void *data,
+				struct drm_file *file_priv);
+extern int i915_vblank_pipe_get(struct drm_device *dev, void *data,
+				struct drm_file *file_priv);
+extern int i915_vblank_swap(struct drm_device *dev, void *data,
+			    struct drm_file *file_priv);
 
 /* i915_mem.c */
-extern int i915_mem_alloc(DRM_IOCTL_ARGS);
-extern int i915_mem_free(DRM_IOCTL_ARGS);
-extern int i915_mem_init_heap(DRM_IOCTL_ARGS);
-extern int i915_mem_destroy_heap(DRM_IOCTL_ARGS);
+extern int i915_mem_alloc(struct drm_device *dev, void *data,
+			  struct drm_file *file_priv);
+extern int i915_mem_free(struct drm_device *dev, void *data,
+			 struct drm_file *file_priv);
+extern int i915_mem_init_heap(struct drm_device *dev, void *data,
+			      struct drm_file *file_priv);
+extern int i915_mem_destroy_heap(struct drm_device *dev, void *data,
+				 struct drm_file *file_priv);
 extern void i915_mem_takedown(struct mem_block **heap);
 extern void i915_mem_release(struct drm_device * dev,
-			     DRMFILE filp, struct mem_block *heap);
+			     struct drm_file *file_priv, struct mem_block *heap);
 
 #define I915_READ(reg)          DRM_READ32(dev_priv->mmio_map, (reg))
 #define I915_WRITE(reg,val)     DRM_WRITE32(dev_priv->mmio_map, (reg), (val))
@@ -209,6 +219,12 @@ extern int i915_wait_ring(struct drm_device * dev, int n, const char *caller);
 #define I915REG_INT_IDENTITY_R	0x020a4
 #define I915REG_INT_MASK_R 	0x020a8
 #define I915REG_INT_ENABLE_R	0x020a0
+
+#define I915REG_PIPEASTAT	0x70024
+#define I915REG_PIPEBSTAT	0x71024
+
+#define I915_VBLANK_INTERRUPT_ENABLE	(1UL<<17)
+#define I915_VBLANK_CLEAR		(1UL<<1)
 
 #define SRX_INDEX		0x3c4
 #define SRX_DATA		0x3c5
@@ -282,6 +298,7 @@ extern int i915_wait_ring(struct drm_device * dev, int n, const char *caller);
 #define MI_BATCH_BUFFER_START 	(0x31<<23)
 #define MI_BATCH_BUFFER_END 	(0xA<<23)
 #define MI_BATCH_NON_SECURE	(1)
+#define MI_BATCH_NON_SECURE_I965 (1<<8)
 
 #define MI_WAIT_FOR_EVENT       ((0x3<<23))
 #define MI_WAIT_FOR_PLANE_A_FLIP      (1<<2)

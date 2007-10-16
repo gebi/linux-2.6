@@ -35,6 +35,7 @@ parameter is applicable:
 	APIC	APIC support is enabled.
 	APM	Advanced Power Management support is enabled.
 	AX25	Appropriate AX.25 support is enabled.
+	BLACKFIN Blackfin architecture is enabled.
 	DRM	Direct Rendering Management support is enabled.
 	EDD	BIOS Enhanced Disk Drive Services (EDD) is enabled
 	EFI	EFI Partitioning (GPT) is enabled
@@ -67,6 +68,7 @@ parameter is applicable:
 	PARIDE	The ParIDE (parallel port IDE) subsystem is enabled.
 	PARISC	The PA-RISC architecture is enabled.
 	PCI	PCI bus support is enabled.
+	PCIE	PCI Express support is enabled.
 	PCMCIA	The PCMCIA subsystem is enabled.
 	PNP	Plug & Play support is enabled.
 	PPC	PowerPC architecture is enabled.
@@ -162,6 +164,8 @@ and is between 256 and 4096 characters. It is defined in the file
 
 	acpi_irq_isa=	[HW,ACPI] If irq_balance, mark listed IRQs used by ISA
 			Format: <irq>,<irq>...
+
+	acpi_no_auto_ssdt	[HW,ACPI] Disable automatic loading of SSDT
 
 	acpi_os_name=	[HW,ACPI] Tell ACPI BIOS the name of the OS
 			Format: To spoof as Windows 98: ="Microsoft Windows"
@@ -466,9 +470,6 @@ and is between 256 and 4096 characters. It is defined in the file
 			Format:
 			<first_slot>,<last_slot>,<port>,<enum_bit>[,<debug>]
 
-	cpia_pp=	[HW,PPT]
-			Format: { parport<nr> | auto | none }
-
 	crashkernel=nn[KMG]@ss[KMG]
 			[KNL] Reserve a chunk of physical memory to
 			hold a kernel to switch to with kexec on panic.
@@ -551,7 +552,7 @@ and is between 256 and 4096 characters. It is defined in the file
 
 	dtc3181e=	[HW,SCSI]
 
-	earlyprintk=	[X86-32,X86-64,SH]
+	earlyprintk=	[X86-32,X86-64,SH,BLACKFIN]
 			earlyprintk=vga
 			earlyprintk=serial[,ttySn[,baudrate]]
 
@@ -864,6 +865,10 @@ and is between 256 and 4096 characters. It is defined in the file
 	lasi=		[HW,SCSI] PARISC LASI driver for the 53c700 chip
 			Format: addr:<io>,irq:<irq>
 
+	libata.noacpi	[LIBATA] Disables use of ACPI in libata suspend/resume
+			when set.
+			Format: <int>
+
 	load_ramdisk=	[RAM] List of ramdisks to load from floppy
 			See Documentation/ramdisk.txt.
 
@@ -950,14 +955,10 @@ and is between 256 and 4096 characters. It is defined in the file
 			Format: <1-256>
 
 	maxcpus=	[SMP] Maximum number of processors that	an SMP kernel
-			should make use of.
-			Using "nosmp" or "maxcpus=0" will disable SMP
-			entirely (the MPS table probe still happens, though).
-			A command-line option of "maxcpus=<NUM>", where <NUM>
-			is an integer greater than 0, limits the maximum number
-			of CPUs activated in SMP mode to <NUM>.
-			Using "maxcpus=1" on an SMP kernel is the trivial
-			case of an SMP kernel with only one CPU.
+			should make use of.  maxcpus=n : n >= 0 limits the
+			kernel to using 'n' processors.  n=0 is a special case,
+			it is equivalent to "nosmp", which also disables
+			the IO APIC.
 
 	max_addr=[KMG]	[KNL,BOOT,ia64] All physical memory greater than or
 			equal to this physical address is ignored.
@@ -1012,6 +1013,10 @@ and is between 256 and 4096 characters. It is defined in the file
 
 	meye.*=		[HW] Set MotionEye Camera parameters
 			See Documentation/video4linux/meye.txt.
+
+	mfgpt_irq=	[IA-32] Specify the IRQ to use for the
+			Multi-Function General Purpose Timers on AMD Geode
+			platforms.
 
 	mga=		[HW,DRM]
 
@@ -1078,15 +1083,18 @@ and is between 256 and 4096 characters. It is defined in the file
 			[NFS] set the maximum lifetime for idmapper cache
 			entries.
 
+	nfs.enable_ino64=
+			[NFS] enable 64-bit inode numbers.
+			If zero, the NFS client will fake up a 32-bit inode
+			number for the readdir() and stat() syscalls instead
+			of returning the full 64-bit number.
+			The default is to return 64-bit inode numbers.
+
 	nmi_watchdog=	[KNL,BUGS=X86-32] Debugging features for SMP kernels
 
 	no387		[BUGS=X86-32] Tells the kernel to use the 387 maths
 			emulation library even if a 387 maths coprocessor
 			is present.
-
-	noacpi		[LIBATA] Disables use of ACPI in libata suspend/resume
-			when set.
-			Format: <int>
 
 	noaliencache	[MM, NUMA, SLAB] Disables the allocation of alien
 			caches in the slab allocator.  Saves per-node memory,
@@ -1164,6 +1172,9 @@ and is between 256 and 4096 characters. It is defined in the file
 
 	nomce		[X86-32] Machine Check Exception
 
+	nomfgpt		[X86-32] Disable Multi-Function General Purpose
+			Timer usage (for AMD Geode machines).
+
 	noreplace-paravirt	[X86-32,PV_OPS] Don't patch paravirt_ops
 
 	noreplace-smp	[X86-32,SMP] Don't replace SMP instructions
@@ -1182,7 +1193,8 @@ and is between 256 and 4096 characters. It is defined in the file
 
 	nosep		[BUGS=X86-32] Disables x86 SYSENTER/SYSEXIT support.
 
-	nosmp		[SMP] Tells an SMP kernel to act as a UP kernel.
+	nosmp		[SMP] Tells an SMP kernel to act as a UP kernel,
+			and disable the IO APIC.  legacy for "maxcpus=0".
 
 	nosoftlockup	[KNL] Disable the soft-lockup detector.
 
@@ -1273,6 +1285,11 @@ and is between 256 and 4096 characters. It is defined in the file
 				Mechanism 1.
 		conf2		[X86-32] Force use of PCI Configuration
 				Mechanism 2.
+		noaer		[PCIE] If the PCIEAER kernel config parameter is
+				enabled, this kernel boot option can be used to
+				disable the use of PCIE advanced error reporting.
+		nodomains	[PCI] Disable support for multiple PCI
+				root domains (aka PCI segments, in ACPI-speak).
 		nommconf	[X86-32,X86_64] Disable use of MMCONFIG for PCI
 				Configuration
 		nomsi		[MSI] If the PCI_MSI kernel config parameter is
@@ -1317,6 +1334,8 @@ and is between 256 and 4096 characters. It is defined in the file
 				IRQ routing is enabled.
 		noacpi		[X86-32] Do not use ACPI for IRQ routing
 				or for PCI scanning.
+		use_crs		[X86-32] Use _CRS for PCI resource
+				allocation.
 		routeirq	Do IRQ routing for all PCI devices.
 				This is normally done in pci_enable_device(),
 				so this option is a temporary workaround
@@ -1432,6 +1451,10 @@ and is between 256 and 4096 characters. It is defined in the file
 
 	pt.		[PARIDE]
 			See Documentation/paride.txt.
+
+	pty.legacy_count=
+			[KNL] Number of legacy pty's. Overwrites compiled-in
+			default number.
 
 	quiet		[KNL] Disable most log messages
 
@@ -1820,6 +1843,30 @@ and is between 256 and 4096 characters. It is defined in the file
 	thash_entries=	[KNL,NET]
 			Set number of hash buckets for TCP connection
 
+	thermal.act=	[HW,ACPI]
+			-1: disable all active trip points in all thermal zones
+			<degrees C>: override all lowest active trip points
+
+	thermal.crt=	[HW,ACPI]
+			-1: disable all critical trip points in all thermal zones
+			<degrees C>: lower all critical trip points
+
+	thermal.nocrt=	[HW,ACPI]
+			Set to disable actions on ACPI thermal zone
+			critical and hot trip points.
+
+	thermal.off=	[HW,ACPI]
+			1: disable ACPI thermal control
+
+	thermal.psv=	[HW,ACPI]
+			-1: disable all passive trip points
+			<degrees C>: override all passive trip points to this value
+
+	thermal.tzp=	[HW,ACPI]
+			Specify global default ACPI thermal zone polling rate
+			<deci-seconds>: poll all this frequency
+			0: no polling (default)
+
 	time		Show timing data prefixed to each printk message line
 			[deprecated, see 'printk.time']
 
@@ -1842,9 +1889,6 @@ and is between 256 and 4096 characters. It is defined in the file
 	trix=		[HW,OSS] MediaTrix AudioTrix Pro
 			Format:
 			<io>,<irq>,<dma>,<dma2>,<sb_io>,<sb_irq>,<sb_dma>,<mpu_io>,<mpu_irq>
-
-	tsdev.xres=	[TS] Horizontal screen resolution.
-	tsdev.yres=	[TS] Vertical screen resolution.
 
 	turbografx.map[2|3]=	[HW,JOY]
 			TurboGraFX parallel port interface
@@ -1922,7 +1966,7 @@ and is between 256 and 4096 characters. It is defined in the file
 			See header of drivers/scsi/wd7000.c.
 
 	wdt=		[WDT] Watchdog
-			See Documentation/watchdog/watchdog.txt.
+			See Documentation/watchdog/wdt.txt.
 
 	xd=		[HW,XT] Original XT pre-IDE (RLL encoded) disks.
 	xd_geo=		See header of drivers/block/xd.c.

@@ -27,7 +27,7 @@ struct lifebook_data {
 
 static const char *desired_serio_phys;
 
-static int lifebook_set_serio_phys(struct dmi_system_id *d)
+static int lifebook_set_serio_phys(const struct dmi_system_id *d)
 {
 	desired_serio_phys = d->driver_data;
 	return 0;
@@ -35,13 +35,13 @@ static int lifebook_set_serio_phys(struct dmi_system_id *d)
 
 static unsigned char lifebook_use_6byte_proto;
 
-static int lifebook_set_6byte_proto(struct dmi_system_id *d)
+static int lifebook_set_6byte_proto(const struct dmi_system_id *d)
 {
 	lifebook_use_6byte_proto = 1;
 	return 0;
 }
 
-static struct dmi_system_id lifebook_dmi_table[] = {
+static const struct dmi_system_id lifebook_dmi_table[] = {
 	{
 		.ident = "FLORA-ie 55mi",
 		.matches = {
@@ -95,6 +95,14 @@ static struct dmi_system_id lifebook_dmi_table[] = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "CF-29"),
 		},
 		.callback = lifebook_set_6byte_proto,
+	},
+	{
+		.ident = "CF-72",
+		.matches = {
+			DMI_MATCH(DMI_PRODUCT_NAME, "CF-72"),
+		},
+		.callback = lifebook_set_serio_phys,
+		.driver_data = "isa0060/serio3",
 	},
 	{
 		.ident = "Lifebook B142",
@@ -282,7 +290,7 @@ static int lifebook_create_relative_device(struct psmouse *psmouse)
 int lifebook_init(struct psmouse *psmouse)
 {
 	struct input_dev *dev1 = psmouse->dev;
-	int max_coord = lifebook_use_6byte_proto ? 1024 : 4096;
+	int max_coord = lifebook_use_6byte_proto ? 4096 : 1024;
 
 	if (lifebook_absolute_mode(psmouse))
 		return -1;

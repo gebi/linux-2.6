@@ -36,7 +36,6 @@
 #include <asm/spu_priv1.h>
 #include <asm/xmon.h>
 #include <asm/prom.h>
-#include "spu_priv1_mmio.h"
 
 const struct spu_management_ops *spu_management_ops;
 EXPORT_SYMBOL_GPL(spu_management_ops);
@@ -169,7 +168,7 @@ static int __spu_trap_data_seg(struct spu *spu, unsigned long ea)
 #else
 		psize = mm->context.user_psize;
 #endif
-		vsid = (get_vsid(mm->context.id, ea) << SLB_VSID_SHIFT) |
+		vsid = (get_vsid(mm->context.id, ea, MMU_SEGSIZE_256M) << SLB_VSID_SHIFT) |
 				SLB_VSID_USER;
 		break;
 	case VMALLOC_REGION_ID:
@@ -177,12 +176,12 @@ static int __spu_trap_data_seg(struct spu *spu, unsigned long ea)
 			psize = mmu_vmalloc_psize;
 		else
 			psize = mmu_io_psize;
-		vsid = (get_kernel_vsid(ea) << SLB_VSID_SHIFT) |
+		vsid = (get_kernel_vsid(ea, MMU_SEGSIZE_256M) << SLB_VSID_SHIFT) |
 			SLB_VSID_KERNEL;
 		break;
 	case KERNEL_REGION_ID:
 		psize = mmu_linear_psize;
-		vsid = (get_kernel_vsid(ea) << SLB_VSID_SHIFT) |
+		vsid = (get_kernel_vsid(ea, MMU_SEGSIZE_256M) << SLB_VSID_SHIFT) |
 			SLB_VSID_KERNEL;
 		break;
 	default:
@@ -237,10 +236,21 @@ static irqreturn_t
 spu_irq_class_0(int irq, void *data)
 {
 	struct spu *spu;
+	unsigned long stat, mask;
 
 	spu = data;
-	spu->class_0_pending = 1;
+
+	mask = spu_int_mask_get(spu, 0);
+	stat = spu_int_stat_get(spu, 0);
+	stat &= mask;
+
+	spin_lock(&spu->register_lock);
+	spu->class_0_pending |= stat;
+	spin_unlock(&spu->register_lock);
+
 	spu->stop_callback(spu);
+
+	spu_int_stat_clear(spu, 0, stat);
 
 	return IRQ_HANDLED;
 }
@@ -248,16 +258,12 @@ spu_irq_class_0(int irq, void *data)
 int
 spu_irq_class_0_bottom(struct spu *spu)
 {
-	unsigned long stat, mask;
 	unsigned long flags;
-
-	spu->class_0_pending = 0;
+	unsigned long stat;
 
 	spin_lock_irqsave(&spu->register_lock, flags);
-	mask = spu_int_mask_get(spu, 0);
-	stat = spu_int_stat_get(spu, 0);
-
-	stat &= mask;
+	stat = spu->class_0_pending;
+	spu->class_0_pending = 0;
 
 	if (stat & 1) /* invalid DMA alignment */
 		__spu_trap_dma_align(spu);
@@ -268,7 +274,6 @@ spu_irq_class_0_bottom(struct spu *spu)
 	if (stat & 4) /* error on SPU */
 		__spu_trap_error(spu);
 
-	spu_int_stat_clear(spu, 0, stat);
 	spin_unlock_irqrestore(&spu->register_lock, flags);
 
 	return (stat & 0x7) ? -EIO : 0;
@@ -453,7 +458,7 @@ static int spu_shutdown(struct sys_device *sysdev)
 	return 0;
 }
 
-struct sysdev_class spu_sysdev_class = {
+static struct sysdev_class spu_sysdev_class = {
 	set_kset_name("spu"),
 	.shutdown = spu_shutdown,
 };
@@ -636,138 +641,6 @@ static ssize_t spu_stat_show(struct sys_device *sysdev, char *buf)
 
 static SYSDEV_ATTR(stat, 0644, spu_stat_show, NULL);
 
-/* Hardcoded affinity idxs for QS20 */
-#define SPES_PER_BE 8
-static int QS20_reg_idxs[SPES_PER_BE] =   { 0, 2, 4, 6, 7, 5, 3, 1 };
-static int QS20_reg_memory[SPES_PER_BE] = { 1, 1, 0, 0, 0, 0, 0, 0 };
-
-static struct spu *spu_lookup_reg(int node, u32 reg)
-{
-	struct spu *spu;
-
-	list_for_each_entry(spu, &cbe_spu_info[node].spus, cbe_list) {
-		if (*(u32 *)get_property(spu_devnode(spu), "reg", NULL) == reg)
-			return spu;
-	}
-	return NULL;
-}
-
-static void init_aff_QS20_harcoded(void)
-{
-	int node, i;
-	struct spu *last_spu, *spu;
-	u32 reg;
-
-	for (node = 0; node < MAX_NUMNODES; node++) {
-		last_spu = NULL;
-		for (i = 0; i < SPES_PER_BE; i++) {
-			reg = QS20_reg_idxs[i];
-			spu = spu_lookup_reg(node, reg);
-			if (!spu)
-				continue;
-			spu->has_mem_affinity = QS20_reg_memory[reg];
-			if (last_spu)
-				list_add_tail(&spu->aff_list,
-						&last_spu->aff_list);
-			last_spu = spu;
-		}
-	}
-}
-
-static int of_has_vicinity(void)
-{
-	struct spu* spu;
-
-	spu = list_entry(cbe_spu_info[0].spus.next, struct spu, cbe_list);
-	return of_find_property(spu_devnode(spu), "vicinity", NULL) != NULL;
-}
-
-static struct spu *aff_devnode_spu(int cbe, struct device_node *dn)
-{
-	struct spu *spu;
-
-	list_for_each_entry(spu, &cbe_spu_info[cbe].spus, cbe_list)
-		if (spu_devnode(spu) == dn)
-			return spu;
-	return NULL;
-}
-
-static struct spu *
-aff_node_next_to(int cbe, struct device_node *target, struct device_node *avoid)
-{
-	struct spu *spu;
-	const phandle *vic_handles;
-	int lenp, i;
-
-	list_for_each_entry(spu, &cbe_spu_info[cbe].spus, cbe_list) {
-		if (spu_devnode(spu) == avoid)
-			continue;
-		vic_handles = get_property(spu_devnode(spu), "vicinity", &lenp);
-		for (i=0; i < (lenp / sizeof(phandle)); i++) {
-			if (vic_handles[i] == target->linux_phandle)
-				return spu;
-		}
-	}
-	return NULL;
-}
-
-static void init_aff_fw_vicinity_node(int cbe)
-{
-	struct spu *spu, *last_spu;
-	struct device_node *vic_dn, *last_spu_dn;
-	phandle avoid_ph;
-	const phandle *vic_handles;
-	const char *name;
-	int lenp, i, added, mem_aff;
-
-	last_spu = list_entry(cbe_spu_info[cbe].spus.next, struct spu, cbe_list);
-	avoid_ph = 0;
-	for (added = 1; added < cbe_spu_info[cbe].n_spus; added++) {
-		last_spu_dn = spu_devnode(last_spu);
-		vic_handles = get_property(last_spu_dn, "vicinity", &lenp);
-
-		for (i = 0; i < (lenp / sizeof(phandle)); i++) {
-			if (vic_handles[i] == avoid_ph)
-				continue;
-
-			vic_dn = of_find_node_by_phandle(vic_handles[i]);
-			if (!vic_dn)
-				continue;
-
-			name = get_property(vic_dn, "name", NULL);
-			if (strcmp(name, "spe") == 0) {
-				spu = aff_devnode_spu(cbe, vic_dn);
-				avoid_ph = last_spu_dn->linux_phandle;
-			}
-			else {
-				mem_aff = strcmp(name, "mic-tm") == 0;
-				spu = aff_node_next_to(cbe, vic_dn, last_spu_dn);
-				if (!spu)
-					continue;
-				if (mem_aff) {
-					last_spu->has_mem_affinity = 1;
-					spu->has_mem_affinity = 1;
-				}
-				avoid_ph = vic_dn->linux_phandle;
-			}
-			list_add_tail(&spu->aff_list, &last_spu->aff_list);
-			last_spu = spu;
-			break;
-		}
-	}
-}
-
-static void init_aff_fw_vicinity(void)
-{
-	int cbe;
-
-	/* sets has_mem_affinity for each spu, as long as the
-	 * spu->aff_list list, linking each spu to its neighbors
-	 */
-	for (cbe = 0; cbe < MAX_NUMNODES; cbe++)
-		init_aff_fw_vicinity_node(cbe);
-}
-
 static int __init init_spu_base(void)
 {
 	int i, ret = 0;
@@ -811,13 +684,7 @@ static int __init init_spu_base(void)
 	mutex_unlock(&spu_full_list_mutex);
 	spu_add_sysdev_attr(&attr_stat);
 
-	if (of_has_vicinity()) {
-		init_aff_fw_vicinity();
-	} else {
-		long root = of_get_flat_dt_root();
-		if (of_flat_dt_is_compatible(root, "IBM,CPBW-1.0"))
-			init_aff_QS20_harcoded();
-	}
+	spu_init_affinity();
 
 	return 0;
 

@@ -328,6 +328,7 @@ static void atp_complete(struct urb* urb)
 {
 	int x, y, x_z, y_z, x_f, y_f;
 	int retval, i, j;
+	int key;
 	struct atp *dev = urb->context;
 
 	switch (urb->status) {
@@ -468,6 +469,7 @@ static void atp_complete(struct urb* urb)
 			      ATP_XFACT, &x_z, &x_f);
 	y = atp_calculate_abs(dev->xy_acc + ATP_XSENSORS, ATP_YSENSORS,
 			      ATP_YFACT, &y_z, &y_f);
+	key = dev->data[dev->datalen - 1] & 1;
 
 	if (x && y) {
 		if (dev->x_old != -1) {
@@ -500,21 +502,26 @@ static void atp_complete(struct urb* urb)
 
 		/* reset the accumulator on release */
 		memset(dev->xy_acc, 0, sizeof(dev->xy_acc));
+	}
 
-		/* Geyser 3 will continue to send packets continually after
-		   the first touch unless reinitialised. Do so if it's been
-		   idle for a while in order to avoid waking the kernel up
-		   several hundred times a second */
-		if (atp_is_geyser_3(dev)) {
+	/* Geyser 3 will continue to send packets continually after
+	   the first touch unless reinitialised. Do so if it's been
+	   idle for a while in order to avoid waking the kernel up
+	   several hundred times a second */
+
+	if (atp_is_geyser_3(dev)) {
+		if (!x && !y && !key) {
 			dev->idlecount++;
 			if (dev->idlecount == 10) {
 				dev->valid = 0;
 				schedule_work(&dev->work);
 			}
 		}
+		else
+			dev->idlecount = 0;
 	}
 
-	input_report_key(dev->input, BTN_LEFT, dev->data[dev->datalen - 1] & 1);
+	input_report_key(dev->input, BTN_LEFT, key);
 	input_sync(dev->input);
 
 exit:

@@ -197,17 +197,11 @@ Who:	Len Brown <len.brown@intel.com>
 
 ---------------------------
 
-What:	Compaq touchscreen device emulation
-When:	Oct 2007
-Files:	drivers/input/tsdev.c
-Why:	The code says it was obsolete when it was written in 2001.
-	tslib is a userspace library which does anything tsdev can do and
-	much more besides in userspace where this code belongs. There is no
-	longer any need for tsdev and applications should have converted to
-	use tslib by now.
-	The name "tsdev" is also extremely confusing and lots of people have
-	it loaded when they don't need/use it.
-Who:	Richard Purdie <rpurdie@rpsys.net>
+What:	/proc/acpi/event
+When:	February 2008
+Why:	/proc/acpi/event has been replaced by events via the input layer
+	and netlink since 2.6.23.
+Who:	Len Brown <len.brown@intel.com>
 
 ---------------------------
 
@@ -288,5 +282,34 @@ Why:	All mthca hardware also supports MSI-X, which provides
 	strictly more functionality than MSI.  So there is no point in
 	having both MSI-X and MSI support in the driver.
 Who:	Roland Dreier <rolandd@cisco.com>
+
+---------------------------
+
+What:   sk98lin network driver
+When:   Feburary 2008
+Why:    In kernel tree version of driver is unmaintained. Sk98lin driver
+	replaced by the skge driver. 
+Who:    Stephen Hemminger <shemminger@linux-foundation.org>
+
+---------------------------
+
+What:	i386/x86_64 bzImage symlinks
+When:	April 2008
+
+Why:	The i386/x86_64 merge provides a symlink to the old bzImage
+	location so not yet updated user space tools, e.g. package
+	scripts, do not break.
+Who:	Thomas Gleixner <tglx@linutronix.de>
+
+---------------------------
+
+What:	shaper network driver
+When:	January 2008
+Files:	drivers/net/shaper.c, include/linux/if_shaper.h
+Why:	This driver has been marked obsolete for many years.
+	It was only designed to work on lower speed links and has design
+	flaws that lead to machine crashes. The qdisc infrastructure in
+	2.4 or later kernels, provides richer features and is more robust.
+Who:	Stephen Hemminger <shemminger@linux-foundation.org>
 
 ---------------------------

@@ -19,13 +19,13 @@
 #include <linux/udp.h>
 #include <linux/icmp.h>
 #include <linux/if_arp.h>
-#include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/netfilter_arp.h>
 #include <linux/netfilter/x_tables.h>
 #include <linux/netfilter_ipv4/ip_tables.h>
 #include <linux/netfilter_ipv4/ipt_CLUSTERIP.h>
 #include <net/netfilter/nf_conntrack.h>
+#include <net/net_namespace.h>
 #include <net/checksum.h>
 
 #define CLUSTERIP_VERSION "0.8"
@@ -289,7 +289,7 @@ clusterip_responsible(const struct clusterip_config *config, u_int32_t hash)
  ***********************************************************************/
 
 static unsigned int
-target(struct sk_buff **pskb,
+target(struct sk_buff *skb,
        const struct net_device *in,
        const struct net_device *out,
        unsigned int hooknum,
@@ -305,7 +305,7 @@ target(struct sk_buff **pskb,
 	 * is only decremented by destroy() - and ip_tables guarantees
 	 * that the ->target() function isn't called after ->destroy() */
 
-	ct = nf_ct_get(*pskb, &ctinfo);
+	ct = nf_ct_get(skb, &ctinfo);
 	if (ct == NULL) {
 		printk(KERN_ERR "CLUSTERIP: no conntrack!\n");
 			/* FIXME: need to drop invalid ones, since replies
@@ -316,7 +316,7 @@ target(struct sk_buff **pskb,
 
 	/* special case: ICMP error handling. conntrack distinguishes between
 	 * error messages (RELATED) and information requests (see below) */
-	if (ip_hdr(*pskb)->protocol == IPPROTO_ICMP
+	if (ip_hdr(skb)->protocol == IPPROTO_ICMP
 	    && (ctinfo == IP_CT_RELATED
 		|| ctinfo == IP_CT_RELATED+IP_CT_IS_REPLY))
 		return XT_CONTINUE;
@@ -325,7 +325,7 @@ target(struct sk_buff **pskb,
 	 * TIMESTAMP, INFO_REQUEST or ADDRESS type icmp packets from here
 	 * on, which all have an ID field [relevant for hashing]. */
 
-	hash = clusterip_hashfn(*pskb, cipinfo->config);
+	hash = clusterip_hashfn(skb, cipinfo->config);
 
 	switch (ctinfo) {
 		case IP_CT_NEW:
@@ -355,7 +355,7 @@ target(struct sk_buff **pskb,
 
 	/* despite being received via linklayer multicast, this is
 	 * actually a unicast IP packet. TCP doesn't like PACKET_MULTICAST */
-	(*pskb)->pkt_type = PACKET_HOST;
+	skb->pkt_type = PACKET_HOST;
 
 	return XT_CONTINUE;
 }
@@ -401,7 +401,7 @@ checkentry(const char *tablename,
 				return false;
 			}
 
-			dev = dev_get_by_name(e->ip.iniface);
+			dev = dev_get_by_name(&init_net, e->ip.iniface);
 			if (!dev) {
 				printk(KERN_WARNING "CLUSTERIP: no such interface %s\n", e->ip.iniface);
 				return false;
@@ -505,12 +505,12 @@ static void arp_print(struct arp_payload *payload)
 
 static unsigned int
 arp_mangle(unsigned int hook,
-	   struct sk_buff **pskb,
+	   struct sk_buff *skb,
 	   const struct net_device *in,
 	   const struct net_device *out,
 	   int (*okfn)(struct sk_buff *))
 {
-	struct arphdr *arp = arp_hdr(*pskb);
+	struct arphdr *arp = arp_hdr(skb);
 	struct arp_payload *payload;
 	struct clusterip_config *c;
 
@@ -727,7 +727,7 @@ static int __init ipt_clusterip_init(void)
 		goto cleanup_target;
 
 #ifdef CONFIG_PROC_FS
-	clusterip_procdir = proc_mkdir("ipt_CLUSTERIP", proc_net);
+	clusterip_procdir = proc_mkdir("ipt_CLUSTERIP", init_net.proc_net);
 	if (!clusterip_procdir) {
 		printk(KERN_ERR "CLUSTERIP: Unable to proc dir entry\n");
 		ret = -ENOMEM;

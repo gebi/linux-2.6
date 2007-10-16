@@ -1146,11 +1146,14 @@ static void uart_set_termios(struct tty_struct *tty, struct ktermios *old_termio
 
 	/*
 	 * These are the bits that are used to setup various
-	 * flags in the low level driver.
+	 * flags in the low level driver. We can ignore the Bfoo
+	 * bits in c_cflag; c_[io]speed will always be set
+	 * appropriately by set_termios() in tty_ioctl.c
 	 */
 #define RELEVANT_IFLAG(iflag)	((iflag) & (IGNBRK|BRKINT|IGNPAR|PARMRK|INPCK))
-
 	if ((cflag ^ old_termios->c_cflag) == 0 &&
+	    tty->termios->c_ospeed == old_termios->c_ospeed &&
+	    tty->termios->c_ispeed == old_termios->c_ispeed &&
 	    RELEVANT_IFLAG(tty->termios->c_iflag ^ old_termios->c_iflag) == 0)
 		return;
 
@@ -2124,6 +2127,14 @@ uart_configure_port(struct uart_driver *drv, struct uart_state *state,
 		spin_unlock_irqrestore(&port->lock, flags);
 
 		/*
+		 * If this driver supports console, and it hasn't been
+		 * successfully registered yet, try to re-register it.
+		 * It may be that the port was not available.
+		 */
+		if (port->cons && !(port->cons->flags & CON_ENABLED))
+			register_console(port->cons);
+
+		/*
 		 * Power down all ports by default, except the
 		 * console if we have one.
 		 */
@@ -2283,6 +2294,7 @@ int uart_add_one_port(struct uart_driver *drv, struct uart_port *port)
 	}
 
 	state->port = port;
+	state->pm_state = -1;
 
 	port->cons = drv->cons;
 	port->info = state->info;
@@ -2303,15 +2315,6 @@ int uart_add_one_port(struct uart_driver *drv, struct uart_port *port)
 	 * setserial to be used to alter this ports parameters.
 	 */
 	tty_register_device(drv->tty_driver, port->line, port->dev);
-
-	/*
-	 * If this driver supports console, and it hasn't been
-	 * successfully registered yet, try to re-register it.
-	 * It may be that the port was not available.
-	 */
-	if (port->type != PORT_UNKNOWN &&
-	    port->cons && !(port->cons->flags & CON_ENABLED))
-		register_console(port->cons);
 
 	/*
 	 * Ensure UPF_DEAD is not set.

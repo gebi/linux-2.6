@@ -1072,19 +1072,19 @@ static char          *si_type[SI_MAX_PARMS];
 #define MAX_SI_TYPE_STR 30
 static char          si_type_str[MAX_SI_TYPE_STR];
 static unsigned long addrs[SI_MAX_PARMS];
-static int num_addrs;
+static unsigned int num_addrs;
 static unsigned int  ports[SI_MAX_PARMS];
-static int num_ports;
+static unsigned int num_ports;
 static int           irqs[SI_MAX_PARMS];
-static int num_irqs;
+static unsigned int num_irqs;
 static int           regspacings[SI_MAX_PARMS];
-static int num_regspacings;
+static unsigned int num_regspacings;
 static int           regsizes[SI_MAX_PARMS];
-static int num_regsizes;
+static unsigned int num_regsizes;
 static int           regshifts[SI_MAX_PARMS];
-static int num_regshifts;
+static unsigned int num_regshifts;
 static int slave_addrs[SI_MAX_PARMS];
-static int num_slave_addrs;
+static unsigned int num_slave_addrs;
 
 #define IPMI_IO_ADDR_SPACE  0
 #define IPMI_MEM_ADDR_SPACE 1
@@ -1106,12 +1106,12 @@ MODULE_PARM_DESC(type, "Defines the type of each interface, each"
 		 " interface separated by commas.  The types are 'kcs',"
 		 " 'smic', and 'bt'.  For example si_type=kcs,bt will set"
 		 " the first interface to kcs and the second to bt");
-module_param_array(addrs, long, &num_addrs, 0);
+module_param_array(addrs, ulong, &num_addrs, 0);
 MODULE_PARM_DESC(addrs, "Sets the memory address of each interface, the"
 		 " addresses separated by commas.  Only use if an interface"
 		 " is in memory.  Otherwise, set it to zero or leave"
 		 " it blank.");
-module_param_array(ports, int, &num_ports, 0);
+module_param_array(ports, uint, &num_ports, 0);
 MODULE_PARM_DESC(ports, "Sets the port address of each interface, the"
 		 " addresses separated by commas.  Only use if an interface"
 		 " is a port.  Otherwise, set it to zero or leave"
@@ -1965,10 +1965,10 @@ struct dmi_ipmi_data
 	u8              slave_addr;
 };
 
-static int __devinit decode_dmi(struct dmi_header *dm,
+static int __devinit decode_dmi(const struct dmi_header *dm,
 				struct dmi_ipmi_data *dmi)
 {
-	u8              *data = (u8 *)dm;
+	const u8	*data = (const u8 *)dm;
 	unsigned long  	base_addr;
 	u8		reg_spacing;
 	u8              len = dm->length;
@@ -2091,13 +2091,14 @@ static __devinit void try_init_dmi(struct dmi_ipmi_data *ipmi_data)
 
 static void __devinit dmi_find_bmc(void)
 {
-	struct dmi_device    *dev = NULL;
+	const struct dmi_device *dev = NULL;
 	struct dmi_ipmi_data data;
 	int                  rv;
 
 	while ((dev = dmi_find_device(DMI_DEV_TYPE_IPMI, NULL, dev))) {
 		memset(&data, 0, sizeof(data));
-		rv = decode_dmi((struct dmi_header *) dev->device_data, &data);
+		rv = decode_dmi((const struct dmi_header *) dev->device_data,
+				&data);
 		if (!rv)
 			try_init_dmi(&data);
 	}
@@ -2215,7 +2216,8 @@ static int ipmi_pci_resume(struct pci_dev *pdev)
 
 static struct pci_device_id ipmi_pci_devices[] = {
 	{ PCI_DEVICE(PCI_HP_VENDOR_ID, PCI_MMC_DEVICE_ID) },
-	{ PCI_DEVICE_CLASS(PCI_ERMC_CLASSCODE, PCI_ERMC_CLASSCODE_MASK) }
+	{ PCI_DEVICE_CLASS(PCI_ERMC_CLASSCODE, PCI_ERMC_CLASSCODE_MASK) },
+	{ 0, }
 };
 MODULE_DEVICE_TABLE(pci, ipmi_pci_devices);
 
@@ -2251,19 +2253,19 @@ static int __devinit ipmi_of_probe(struct of_device *dev,
 		return ret;
 	}
 
-	regsize = get_property(np, "reg-size", &proplen);
+	regsize = of_get_property(np, "reg-size", &proplen);
 	if (regsize && proplen != 4) {
 		dev_warn(&dev->dev, PFX "invalid regsize from OF\n");
 		return -EINVAL;
 	}
 
-	regspacing = get_property(np, "reg-spacing", &proplen);
+	regspacing = of_get_property(np, "reg-spacing", &proplen);
 	if (regspacing && proplen != 4) {
 		dev_warn(&dev->dev, PFX "invalid regspacing from OF\n");
 		return -EINVAL;
 	}
 
-	regshift = get_property(np, "reg-shift", &proplen);
+	regshift = of_get_property(np, "reg-shift", &proplen);
 	if (regshift && proplen != 4) {
 		dev_warn(&dev->dev, PFX "invalid regshift from OF\n");
 		return -EINVAL;
@@ -2292,7 +2294,7 @@ static int __devinit ipmi_of_probe(struct of_device *dev,
 	info->irq		= irq_of_parse_and_map(dev->node, 0);
 	info->dev		= &dev->dev;
 
-	dev_dbg(&dev->dev, "addr 0x%lx regsize %ld spacing %ld irq %x\n",
+	dev_dbg(&dev->dev, "addr 0x%lx regsize %d spacing %d irq %x\n",
 		info->io.addr_data, info->io.regsize, info->io.regspacing,
 		info->irq);
 

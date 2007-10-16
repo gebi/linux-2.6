@@ -206,10 +206,10 @@ static void flush_cond_wait(struct cond_wait **head);
  */
 struct slgt_desc
 {
-	unsigned short count;
-	unsigned short status;
-	unsigned int pbuf;  /* physical address of data buffer */
-	unsigned int next;  /* physical address of next descriptor */
+	__le16 count;
+	__le16 status;
+	__le32 pbuf;  /* physical address of data buffer */
+	__le32 next;  /* physical address of next descriptor */
 
 	/* driver book keeping */
 	char *buf;          /* virtual  address of data buffer */
@@ -1565,6 +1565,9 @@ static int hdlcdev_open(struct net_device *dev)
 	int rc;
 	unsigned long flags;
 
+	if (!try_module_get(THIS_MODULE))
+		return -EBUSY;
+
 	DBGINFO(("%s hdlcdev_open\n", dev->name));
 
 	/* generic HDLC layer open processing */
@@ -1634,6 +1637,7 @@ static int hdlcdev_close(struct net_device *dev)
 	info->netcount=0;
 	spin_unlock_irqrestore(&info->netlock, flags);
 
+	module_put(THIS_MODULE);
 	return 0;
 }
 

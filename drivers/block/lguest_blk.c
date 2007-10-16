@@ -142,25 +142,23 @@ static irqreturn_t lgb_irq(int irq, void *_bd)
  * return the total length. */
 static unsigned int req_to_dma(struct request *req, struct lguest_dma *dma)
 {
-	unsigned int i = 0, idx, len = 0;
-	struct bio *bio;
+	unsigned int i = 0, len = 0;
+	struct req_iterator iter;
+	struct bio_vec *bvec;
 
-	rq_for_each_bio(bio, req) {
-		struct bio_vec *bvec;
-		bio_for_each_segment(bvec, bio, idx) {
-			/* We told the block layer not to give us too many. */
-			BUG_ON(i == LGUEST_MAX_DMA_SECTIONS);
-			/* If we had a zero-length segment, it would look like
-			 * the end of the data referred to by the "struct
-			 * lguest_dma", so make sure that doesn't happen. */
-			BUG_ON(!bvec->bv_len);
-			/* Convert page & offset to a physical address */
-			dma->addr[i] = page_to_phys(bvec->bv_page)
-				+ bvec->bv_offset;
-			dma->len[i] = bvec->bv_len;
-			len += bvec->bv_len;
-			i++;
-		}
+	rq_for_each_segment(bvec, req, iter) {
+		/* We told the block layer not to give us too many. */
+		BUG_ON(i == LGUEST_MAX_DMA_SECTIONS);
+		/* If we had a zero-length segment, it would look like
+		 * the end of the data referred to by the "struct
+		 * lguest_dma", so make sure that doesn't happen. */
+		BUG_ON(!bvec->bv_len);
+		/* Convert page & offset to a physical address */
+		dma->addr[i] = page_to_phys(bvec->bv_page)
+			+ bvec->bv_offset;
+		dma->len[i] = bvec->bv_len;
+		len += bvec->bv_len;
+		i++;
 	}
 	/* If the array isn't full, we mark the end with a 0 length */
 	if (i < LGUEST_MAX_DMA_SECTIONS)
@@ -308,9 +306,12 @@ static int lguestblk_probe(struct lguest_device *lgdev)
 	}
 
 	/* This allocates a "struct gendisk" where we pack all the information
-	 * about the disk which the rest of Linux sees.  We ask for one minor
-	 * number; I do wonder if we should be asking for more. */
-	bd->disk = alloc_disk(1);
+	 * about the disk which the rest of Linux sees.  The argument is the
+	 * number of minor devices desired: we need one minor for the main
+	 * disk, and one for each partition.  Of course, we can't possibly know
+	 * how many partitions are on the disk (add_disk does that).
+	 */
+	bd->disk = alloc_disk(16);
 	if (!bd->disk) {
 		err = -ENOMEM;
 		goto out_unregister_blkdev;

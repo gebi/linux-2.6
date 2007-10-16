@@ -1,6 +1,6 @@
 /*
  *
- * Version 3.46
+ * Version 3.49
  *
  * VIA IDE driver for Linux. Supported southbridges:
  *
@@ -74,6 +74,7 @@ static struct via_isa_bridge {
 	u8 udma_mask;
 	u8 flags;
 } via_isa_bridges[] = {
+	{ "vx800",	PCI_DEVICE_ID_VIA_VX800,    0x00, 0x2f, ATA_UDMA6, VIA_BAD_AST },
 	{ "cx700",	PCI_DEVICE_ID_VIA_CX700,    0x00, 0x2f, ATA_UDMA6, VIA_BAD_AST },
 	{ "vt8237s",	PCI_DEVICE_ID_VIA_8237S,    0x00, 0x2f, ATA_UDMA6, VIA_BAD_AST },
 	{ "vt6410",	PCI_DEVICE_ID_VIA_6410,     0x00, 0x2f, ATA_UDMA6, VIA_BAD_AST },
@@ -152,20 +153,16 @@ static void via_set_speed(ide_hwif_t *hwif, u8 dn, struct ide_timing *timing)
  *	@drive: Drive to set up
  *	@speed: desired speed
  *
- *	via_set_drive() computes timing values configures the drive and
- *	the chipset to a desired transfer mode. It also can be called
- *	by upper layers.
+ *	via_set_drive() computes timing values configures the chipset to
+ *	a desired transfer mode.  It also can be called by upper layers.
  */
 
-static int via_set_drive(ide_drive_t *drive, u8 speed)
+static void via_set_drive(ide_drive_t *drive, const u8 speed)
 {
 	ide_drive_t *peer = HWIF(drive)->drives + (~drive->dn & 1);
 	struct via82cxxx_dev *vdev = pci_get_drvdata(drive->hwif->pci_dev);
 	struct ide_timing t, p;
 	unsigned int T, UT;
-
-	if (speed != XFER_PIO_SLOW)
-		ide_config_drive_speed(drive, speed);
 
 	T = 1000000000 / via_clock;
 
@@ -185,28 +182,19 @@ static int via_set_drive(ide_drive_t *drive, u8 speed)
 	}
 
 	via_set_speed(HWIF(drive), drive->dn, &t);
-
-	if (!drive->init_speed)
-		drive->init_speed = speed;
-	drive->current_speed = speed;
-
-	return 0;
 }
 
 /**
- *	via82cxxx_tune_drive	-	PIO setup
- *	@drive: drive to set up
- *	@pio: mode to use (255 for 'best possible')
+ *	via_set_pio_mode	-	set host controller for PIO mode
+ *	@drive: drive
+ *	@pio: PIO mode number
  *
  *	A callback from the upper layers for PIO-only tuning.
  */
 
-static void via82cxxx_tune_drive(ide_drive_t *drive, u8 pio)
+static void via_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
-	if (pio == 255)
-		pio = ide_get_best_pio_mode(drive, 255, 5);
-
-	via_set_drive(drive, XFER_PIO_0 + min_t(u8, pio, 5));
+	via_set_drive(drive, XFER_PIO_0 + pio);
 }
 
 /**
@@ -219,17 +207,10 @@ static void via82cxxx_tune_drive(ide_drive_t *drive, u8 pio)
  
 static int via82cxxx_ide_dma_check (ide_drive_t *drive)
 {
-	u8 speed = ide_max_dma_mode(drive);
-
-	if (speed == 0) {
-		via82cxxx_tune_drive(drive, 255);
-		return -1;
-	}
-
-	via_set_drive(drive, speed);
-
-	if (drive->autodma)
+	if (ide_tune_dma(drive))
 		return 0;
+
+	ide_set_max_pio(drive);
 
 	return -1;
 }
@@ -418,7 +399,7 @@ static unsigned int __devinit init_chipset_via82cxxx(struct pci_dev *dev, const 
  *	Cable special cases
  */
 
-static struct dmi_system_id cable_dmi_table[] = {
+static const struct dmi_system_id cable_dmi_table[] = {
 	{
 		.ident = "Acer Ferrari 3400",
 		.matches = {
@@ -429,19 +410,26 @@ static struct dmi_system_id cable_dmi_table[] = {
 	{ }
 };
 
-static int via_cable_override(void)
+static int via_cable_override(struct pci_dev *pdev)
 {
 	/* Systems by DMI */
 	if (dmi_check_system(cable_dmi_table))
 		return 1;
+
+	/* Arima W730-K8/Targa Visionary 811/... */
+	if (pdev->subsystem_vendor == 0x161F &&
+	    pdev->subsystem_device == 0x2032)
+		return 1;
+
 	return 0;
 }
 
 static u8 __devinit via82cxxx_cable_detect(ide_hwif_t *hwif)
 {
-	struct via82cxxx_dev *vdev = pci_get_drvdata(hwif->pci_dev);
+	struct pci_dev *pdev = hwif->pci_dev;
+	struct via82cxxx_dev *vdev = pci_get_drvdata(pdev);
 
-	if (via_cable_override())
+	if (via_cable_override(pdev))
 		return ATA_CBL_PATA40_SHORT;
 
 	if ((vdev->via_80w >> hwif->channel) & 1)
@@ -457,9 +445,8 @@ static void __devinit init_hwif_via82cxxx(ide_hwif_t *hwif)
 
 	hwif->autodma = 0;
 
-	hwif->tuneproc = &via82cxxx_tune_drive;
-	hwif->speedproc = &via_set_drive;
-
+	hwif->set_pio_mode = &via_set_pio_mode;
+	hwif->set_dma_mode = &via_set_drive;
 
 #ifdef CONFIG_PPC_CHRP
 	if(machine_is(chrp) && _chrp_type == _CHRP_Pegasos) {
@@ -502,7 +489,8 @@ static ide_pci_device_t via82cxxx_chipsets[] __devinitdata = {
 		.enablebits	= {{0x40,0x02,0x02}, {0x40,0x01,0x01}},
 		.bootable	= ON_BOARD,
 		.host_flags	= IDE_HFLAG_PIO_NO_BLACKLIST
-				| IDE_HFLAG_PIO_NO_DOWNGRADE,
+				| IDE_HFLAG_PIO_NO_DOWNGRADE
+				| IDE_HFLAG_POST_SET_MODE,
 		.pio_mask	= ATA_PIO5,
 	},{	/* 1 */
 		.name		= "VP_IDE",
@@ -512,7 +500,8 @@ static ide_pci_device_t via82cxxx_chipsets[] __devinitdata = {
 		.enablebits	= {{0x00,0x00,0x00}, {0x00,0x00,0x00}},
 		.bootable	= ON_BOARD,
 		.host_flags	= IDE_HFLAG_PIO_NO_BLACKLIST
-				| IDE_HFLAG_PIO_NO_DOWNGRADE,
+				| IDE_HFLAG_PIO_NO_DOWNGRADE
+				| IDE_HFLAG_POST_SET_MODE,
 		.pio_mask	= ATA_PIO5,
 	}
 };

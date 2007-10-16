@@ -159,15 +159,14 @@
 	.imbalance_pct		= 125,			\
 	.cache_nice_tries	= 1,			\
 	.busy_idx		= 2,			\
-	.idle_idx		= 0,			\
-	.newidle_idx		= 0,			\
+	.idle_idx		= 1,			\
+	.newidle_idx		= 2,			\
 	.wake_idx		= 1,			\
 	.forkexec_idx		= 1,			\
 	.flags			= SD_LOAD_BALANCE	\
 				| SD_BALANCE_NEWIDLE	\
 				| SD_BALANCE_EXEC	\
 				| SD_WAKE_AFFINE	\
-				| SD_WAKE_IDLE		\
 				| BALANCE_FOR_PKG_POWER,\
 	.last_balance		= jiffies,		\
 	.balance_interval	= 1,			\
@@ -185,7 +184,6 @@
 	.max_interval		= 64*num_online_cpus(),	\
 	.busy_factor		= 128,			\
 	.imbalance_pct		= 133,			\
-	.cache_hot_time		= (10*1000000),		\
 	.cache_nice_tries	= 1,			\
 	.busy_idx		= 3,			\
 	.idle_idx		= 3,			\

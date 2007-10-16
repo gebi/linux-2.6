@@ -171,7 +171,7 @@ static int parse_strtoul(const char *buf, unsigned long max,
 
 /* Device model */
 static struct platform_device *tpacpi_pdev;
-static struct class_device *tpacpi_hwmon;
+static struct device *tpacpi_hwmon;
 static struct platform_driver tpacpi_pdriver;
 static struct input_dev *tpacpi_inputdev;
 static int tpacpi_create_driver_attributes(struct device_driver *drv);
@@ -181,6 +181,7 @@ static void tpacpi_remove_driver_attributes(struct device_driver *drv);
 static int experimental;
 static u32 dbg_level;
 static int force_load;
+static unsigned int hotkey_report_mode;
 
 static int thinkpad_acpi_module_init(void);
 static void thinkpad_acpi_module_exit(void);
@@ -246,6 +247,8 @@ static struct {
 	u16 wan:1;
 	u16 fan_ctrl_status_undef:1;
 	u16 input_device_registered:1;
+	u16 platform_drv_registered:1;
+	u16 platform_drv_attrs_registered:1;
 } tp_features;
 
 struct thinkpad_id_data {

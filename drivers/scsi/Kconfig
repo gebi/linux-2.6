@@ -272,6 +272,13 @@ config SCSI_FC_ATTRS
 	  each attached FiberChannel device to sysfs, say Y.
 	  Otherwise, say N.
 
+config SCSI_FC_TGT_ATTRS
+	bool "SCSI target support for FiberChannel Transport Attributes"
+	depends on SCSI_FC_ATTRS
+	depends on SCSI_TGT = y || SCSI_TGT = SCSI_FC_ATTRS
+	help
+		If you want to use SCSI target mode drivers enable this option.
+
 config SCSI_ISCSI_ATTRS
 	tristate "iSCSI Transport Attributes"
 	depends on SCSI && NET
@@ -288,6 +295,20 @@ config SCSI_SAS_ATTRS
 	  each attached SAS device to sysfs, say Y.
 
 source "drivers/scsi/libsas/Kconfig"
+
+config SCSI_SRP_ATTRS
+	tristate "SRP Transport Attributes"
+	depends on SCSI
+	help
+	  If you wish to export transport-specific information about
+	  each attached SRP device to sysfs, say Y.
+
+config SCSI_SRP_TGT_ATTRS
+	bool "SCSI target support for SRP Transport Attributes"
+	depends on SCSI_SRP_ATTRS
+	depends on SCSI_TGT = y || SCSI_TGT = SCSI_SRP_ATTRS
+	help
+		If you want to use SCSI target mode drivers enable this option.
 
 endmenu
 
@@ -367,6 +388,7 @@ config SCSI_3W_9XXX
 config SCSI_7000FASST
 	tristate "7000FASST SCSI support"
 	depends on ISA && SCSI && ISA_DMA_API
+	select CHECK_SIGNATURE
 	help
 	  This driver supports the Western Digital 7000 SCSI host adapter
 	  family.  Some information is in the source:
@@ -388,6 +410,7 @@ config SCSI_AHA152X
 	tristate "Adaptec AHA152X/2825 support"
 	depends on ISA && SCSI && !64BIT
 	select SCSI_SPI_ATTRS
+	select CHECK_SIGNATURE
 	---help---
 	  This is a driver for the AHA-1510, AHA-1520, AHA-1522, and AHA-2825
 	  SCSI host adapters. It also works for the AVA-1505, but the IRQ etc.
@@ -500,7 +523,6 @@ config SCSI_ADVANSYS
 	tristate "AdvanSys SCSI support"
 	depends on SCSI
 	depends on ISA || EISA || PCI
-	depends on BROKEN || X86_32
 	help
 	  This is a driver for all SCSI host adapters manufactured by
 	  AdvanSys. It is documented in the kernel source in
@@ -522,18 +544,31 @@ config SCSI_IN2000
 	  module will be called in2000.
 
 config SCSI_ARCMSR
-	tristate "ARECA ARC11X0[PCI-X]/ARC12X0[PCI-EXPRESS] SATA-RAID support"
+	tristate "ARECA (ARC11xx/12xx/13xx/16xx) SATA/SAS RAID Host Adapter"
 	depends on PCI && SCSI
 	help
-	  This driver supports all of ARECA's SATA RAID controller cards.
+	  This driver supports all of ARECA's SATA/SAS RAID controller cards.
 	  This is an ARECA-maintained driver by Erich Chen.
-	  If you have any problems, please mail to: < erich@areca.com.tw >
+	  If you have any problems, please mail to: <erich@areca.com.tw>.
 	  Areca supports Linux RAID config tools.
-
-	  < http://www.areca.com.tw >
+	  Please link <http://www.areca.com.tw>
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called arcmsr (modprobe arcmsr).
+
+config SCSI_ARCMSR_AER
+	bool "Enable PCI Error Recovery Capability in Areca Driver(ARCMSR)"
+	depends on SCSI_ARCMSR && PCIEAER
+	default n
+	help
+	  The advanced error reporting(AER) capability is "NOT" provided by
+	  ARC1200/1201/1202 SATA RAID controllers cards.
+	  If your card is one of ARC1200/1201/1202, please use the default setting, n.
+	  If your card is other models, you could pick it
+	  on condition that the kernel version is greater than 2.6.19.
+	  This function is maintained driver by Nick Cheng. If you have any
+	  problems or suggestion, you are welcome to contact with <nick.cheng@areca.com.tw>.
+	  To enable this function, choose Y here.
 
 source "drivers/scsi/megaraid/Kconfig.megaraid"
 
@@ -583,6 +618,7 @@ config SCSI_DTC3280
 	tristate "DTC3180/3280 SCSI support"
 	depends on ISA && SCSI
 	select SCSI_SPI_ATTRS
+	select CHECK_SIGNATURE
 	help
 	  This is support for DTC 3180/3280 SCSI Host Adapters.  Please read
 	  the SCSI-HOWTO, available from
@@ -657,6 +693,7 @@ config SCSI_EATA_PIO
 config SCSI_FUTURE_DOMAIN
 	tristate "Future Domain 16xx SCSI/AHA-2920A support"
 	depends on (ISA || PCI) && SCSI
+	select CHECK_SIGNATURE
 	---help---
 	  This is support for Future Domain's 16-bit SCSI host adapters
 	  (TMC-1660/1680, TMC-1650/1670, TMC-3260, TMC-1610M/MER/MEX) and
@@ -832,6 +869,7 @@ config SCSI_IPS
 config SCSI_IBMVSCSI
 	tristate "IBM Virtual SCSI support"
 	depends on PPC_PSERIES || PPC_ISERIES
+	select SCSI_SRP_ATTRS
 	help
 	  This is the IBM POWER Virtual SCSI Client
 
@@ -840,7 +878,7 @@ config SCSI_IBMVSCSI
 
 config SCSI_IBMVSCSIS
 	tristate "IBM Virtual SCSI Server support"
-	depends on PPC_PSERIES && SCSI_TGT && SCSI_SRP
+	depends on PPC_PSERIES && SCSI_SRP && SCSI_SRP_TGT_ATTRS
 	help
 	  This is the SRP target driver for IBM pSeries virtual environments.
 
@@ -1324,6 +1362,7 @@ config SCSI_LPFC
 config SCSI_SEAGATE
 	tristate "Seagate ST-02 and Future Domain TMC-8xx SCSI support"
 	depends on X86 && ISA && SCSI
+	select CHECK_SIGNATURE
 	---help---
 	  These are 8-bit SCSI controllers; the ST-01 is also supported by
 	  this driver.  It is explained in section 3.9 of the SCSI-HOWTO,
@@ -1397,6 +1436,7 @@ config SCSI_T128
 	tristate "Trantor T128/T128F/T228 SCSI support"
 	depends on ISA && SCSI
 	select SCSI_SPI_ATTRS
+	select CHECK_SIGNATURE
 	---help---
 	  This is support for a SCSI host adapter. It is explained in section
 	  3.11 of the SCSI-HOWTO, available from
@@ -1561,7 +1601,7 @@ config A3000_SCSI
 	  built-in SCSI controller, say Y. Otherwise, say N.
 
 	  To compile this driver as a module, choose M here: the
-	  module will be called wd33c93.
+	  module will be called a3000.
 
 config A2091_SCSI
 	tristate "A2091/A590 WD33C93A support"
@@ -1571,7 +1611,7 @@ config A2091_SCSI
 	  say N.
 
 	  To compile this driver as a module, choose M here: the
-	  module will be called wd33c93.
+	  module will be called a2091.
 
 config GVP11_SCSI
 	tristate "GVP Series II WD33C93A support"

@@ -108,12 +108,11 @@ static void return_io(struct bio *return_bi)
 {
 	struct bio *bi = return_bi;
 	while (bi) {
-		int bytes = bi->bi_size;
 
 		return_bi = bi->bi_next;
 		bi->bi_next = NULL;
 		bi->bi_size = 0;
-		bi->bi_end_io(bi, bytes,
+		bi->bi_end_io(bi,
 			      test_bit(BIO_UPTODATE, &bi->bi_flags)
 			        ? 0 : -EIO);
 		bi = return_bi;
@@ -382,10 +381,10 @@ static unsigned long get_stripe_work(struct stripe_head *sh)
 	return pending;
 }
 
-static int
-raid5_end_read_request(struct bio *bi, unsigned int bytes_done, int error);
-static int
-raid5_end_write_request (struct bio *bi, unsigned int bytes_done, int error);
+static void
+raid5_end_read_request(struct bio *bi, int error);
+static void
+raid5_end_write_request(struct bio *bi, int error);
 
 static void ops_run_io(struct stripe_head *sh)
 {
@@ -514,7 +513,7 @@ static void ops_complete_biofill(void *stripe_head_ref)
 	struct stripe_head *sh = stripe_head_ref;
 	struct bio *return_bi = NULL;
 	raid5_conf_t *conf = sh->raid_conf;
-	int i, more_to_read = 0;
+	int i;
 
 	pr_debug("%s: stripe %llu\n", __FUNCTION__,
 		(unsigned long long)sh->sector);
@@ -522,16 +521,14 @@ static void ops_complete_biofill(void *stripe_head_ref)
 	/* clear completed biofills */
 	for (i = sh->disks; i--; ) {
 		struct r5dev *dev = &sh->dev[i];
-		/* check if this stripe has new incoming reads */
-		if (dev->toread)
-			more_to_read++;
 
 		/* acknowledge completion of a biofill operation */
-		/* and check if we need to reply to a read request
-		*/
-		if (test_bit(R5_Wantfill, &dev->flags) && !dev->toread) {
+		/* and check if we need to reply to a read request,
+		 * new R5_Wantfill requests are held off until
+		 * !test_bit(STRIPE_OP_BIOFILL, &sh->ops.pending)
+		 */
+		if (test_and_clear_bit(R5_Wantfill, &dev->flags)) {
 			struct bio *rbi, *rbi2;
-			clear_bit(R5_Wantfill, &dev->flags);
 
 			/* The access to dev->read is outside of the
 			 * spin_lock_irq(&conf->device_lock), but is protected
@@ -558,8 +555,7 @@ static void ops_complete_biofill(void *stripe_head_ref)
 
 	return_io(return_bi);
 
-	if (more_to_read)
-		set_bit(STRIPE_HANDLE, &sh->state);
+	set_bit(STRIPE_HANDLE, &sh->state);
 	release_stripe(sh);
 }
 
@@ -1113,8 +1109,7 @@ static void shrink_stripes(raid5_conf_t *conf)
 	conf->slab_cache = NULL;
 }
 
-static int raid5_end_read_request(struct bio * bi, unsigned int bytes_done,
-				   int error)
+static void raid5_end_read_request(struct bio * bi, int error)
 {
  	struct stripe_head *sh = bi->bi_private;
 	raid5_conf_t *conf = sh->raid_conf;
@@ -1123,8 +1118,6 @@ static int raid5_end_read_request(struct bio * bi, unsigned int bytes_done,
 	char b[BDEVNAME_SIZE];
 	mdk_rdev_t *rdev;
 
-	if (bi->bi_size)
-		return 1;
 
 	for (i=0 ; i<disks; i++)
 		if (bi == &sh->dev[i].req)
@@ -1135,7 +1128,7 @@ static int raid5_end_read_request(struct bio * bi, unsigned int bytes_done,
 		uptodate);
 	if (i == disks) {
 		BUG();
-		return 0;
+		return;
 	}
 
 	if (uptodate) {
@@ -1188,19 +1181,14 @@ static int raid5_end_read_request(struct bio * bi, unsigned int bytes_done,
 	clear_bit(R5_LOCKED, &sh->dev[i].flags);
 	set_bit(STRIPE_HANDLE, &sh->state);
 	release_stripe(sh);
-	return 0;
 }
 
-static int raid5_end_write_request (struct bio *bi, unsigned int bytes_done,
-				    int error)
+static void raid5_end_write_request (struct bio *bi, int error)
 {
  	struct stripe_head *sh = bi->bi_private;
 	raid5_conf_t *conf = sh->raid_conf;
 	int disks = sh->disks, i;
 	int uptodate = test_bit(BIO_UPTODATE, &bi->bi_flags);
-
-	if (bi->bi_size)
-		return 1;
 
 	for (i=0 ; i<disks; i++)
 		if (bi == &sh->dev[i].req)
@@ -1211,7 +1199,7 @@ static int raid5_end_write_request (struct bio *bi, unsigned int bytes_done,
 		uptodate);
 	if (i == disks) {
 		BUG();
-		return 0;
+		return;
 	}
 
 	if (!uptodate)
@@ -1222,7 +1210,6 @@ static int raid5_end_write_request (struct bio *bi, unsigned int bytes_done,
 	clear_bit(R5_LOCKED, &sh->dev[i].flags);
 	set_bit(STRIPE_HANDLE, &sh->state);
 	release_stripe(sh);
-	return 0;
 }
 
 
@@ -2541,7 +2528,7 @@ static void handle_stripe_expansion(raid5_conf_t *conf, struct stripe_head *sh,
 	struct dma_async_tx_descriptor *tx = NULL;
 	clear_bit(STRIPE_EXPAND_SOURCE, &sh->state);
 	for (i = 0; i < sh->disks; i++)
-		if (i != sh->pd_idx && (r6s && i != r6s->qd_idx)) {
+		if (i != sh->pd_idx && (!r6s || i != r6s->qd_idx)) {
 			int dd_idx, pd_idx, j;
 			struct stripe_head *sh2;
 
@@ -2574,7 +2561,8 @@ static void handle_stripe_expansion(raid5_conf_t *conf, struct stripe_head *sh,
 			set_bit(R5_UPTODATE, &sh2->dev[dd_idx].flags);
 			for (j = 0; j < conf->raid_disks; j++)
 				if (j != sh2->pd_idx &&
-				    (r6s && j != r6s->qd_idx) &&
+				    (!r6s || j != raid6_next_disk(sh2->pd_idx,
+								 sh2->disks)) &&
 				    !test_bit(R5_Expanded, &sh2->dev[j].flags))
 					break;
 			if (j == conf->raid_disks) {
@@ -2583,12 +2571,12 @@ static void handle_stripe_expansion(raid5_conf_t *conf, struct stripe_head *sh,
 			}
 			release_stripe(sh2);
 
-			/* done submitting copies, wait for them to complete */
-			if (i + 1 >= sh->disks) {
-				async_tx_ack(tx);
-				dma_wait_for_async_tx(tx);
-			}
 		}
+	/* done submitting copies, wait for them to complete */
+	if (tx) {
+		async_tx_ack(tx);
+		dma_wait_for_async_tx(tx);
+	}
 }
 
 /*
@@ -2855,7 +2843,7 @@ static void handle_stripe5(struct stripe_head *sh)
 		sh->disks = conf->raid_disks;
 		sh->pd_idx = stripe_to_pdidx(sh->sector, conf,
 			conf->raid_disks);
-		s.locked += handle_write_operations5(sh, 0, 1);
+		s.locked += handle_write_operations5(sh, 1, 1);
 	} else if (s.expanded &&
 		!test_bit(STRIPE_OP_POSTXOR, &sh->ops.pending)) {
 		clear_bit(STRIPE_EXPAND_READY, &sh->state);
@@ -3342,7 +3330,7 @@ static struct bio *remove_bio_from_retry(raid5_conf_t *conf)
  *  first).
  *  If the read failed..
  */
-static int raid5_align_endio(struct bio *bi, unsigned int bytes, int error)
+static void raid5_align_endio(struct bio *bi, int error)
 {
 	struct bio* raid_bi  = bi->bi_private;
 	mddev_t *mddev;
@@ -3350,8 +3338,6 @@ static int raid5_align_endio(struct bio *bi, unsigned int bytes, int error)
 	int uptodate = test_bit(BIO_UPTODATE, &bi->bi_flags);
 	mdk_rdev_t *rdev;
 
-	if (bi->bi_size)
-		return 1;
 	bio_put(bi);
 
 	mddev = raid_bi->bi_bdev->bd_disk->queue->queuedata;
@@ -3362,17 +3348,16 @@ static int raid5_align_endio(struct bio *bi, unsigned int bytes, int error)
 	rdev_dec_pending(rdev, conf->mddev);
 
 	if (!error && uptodate) {
-		bio_endio(raid_bi, bytes, 0);
+		bio_endio(raid_bi, 0);
 		if (atomic_dec_and_test(&conf->active_aligned_reads))
 			wake_up(&conf->wait_for_stripe);
-		return 0;
+		return;
 	}
 
 
 	pr_debug("raid5_align_endio : io error...handing IO for a retry\n");
 
 	add_bio_to_retry(raid_bi, conf);
-	return 0;
 }
 
 static int bio_fits_rdev(struct bio *bi)
@@ -3478,7 +3463,7 @@ static int make_request(struct request_queue *q, struct bio * bi)
 	int remaining;
 
 	if (unlikely(bio_barrier(bi))) {
-		bio_endio(bi, bi->bi_size, -EOPNOTSUPP);
+		bio_endio(bi, -EOPNOTSUPP);
 		return 0;
 	}
 
@@ -3594,12 +3579,11 @@ static int make_request(struct request_queue *q, struct bio * bi)
 	remaining = --bi->bi_phys_segments;
 	spin_unlock_irq(&conf->device_lock);
 	if (remaining == 0) {
-		int bytes = bi->bi_size;
 
 		if ( rw == WRITE )
 			md_write_end(mddev);
-		bi->bi_size = 0;
-		bi->bi_end_io(bi, bytes,
+
+		bi->bi_end_io(bi,
 			      test_bit(BIO_UPTODATE, &bi->bi_flags)
 			        ? 0 : -EIO);
 	}
@@ -3877,10 +3861,8 @@ static int  retry_aligned_read(raid5_conf_t *conf, struct bio *raid_bio)
 	remaining = --raid_bio->bi_phys_segments;
 	spin_unlock_irq(&conf->device_lock);
 	if (remaining == 0) {
-		int bytes = raid_bio->bi_size;
 
-		raid_bio->bi_size = 0;
-		raid_bio->bi_end_io(raid_bio, bytes,
+		raid_bio->bi_end_io(raid_bio,
 			      test_bit(BIO_UPTODATE, &raid_bio->bi_flags)
 			        ? 0 : -EIO);
 	}

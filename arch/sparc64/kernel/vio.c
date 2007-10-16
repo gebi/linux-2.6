@@ -16,21 +16,6 @@
 #include <asm/mdesc.h>
 #include <asm/vio.h>
 
-static inline int find_in_proplist(const char *list, const char *match,
-				   int len)
-{
-	while (len > 0) {
-		int l;
-
-		if (!strcmp(list, match))
-			return 1;
-		l = strlen(list) + 1;
-		list += l;
-		len -= l;
-	}
-	return 0;
-}
-
 static const struct vio_device_id *vio_match_device(
 	const struct vio_device_id *matches,
 	const struct vio_dev *dev)
@@ -49,7 +34,7 @@ static const struct vio_device_id *vio_match_device(
 
 		if (matches->compat[0]) {
 			match &= len &&
-				find_in_proplist(compat, matches->compat, len);
+				of_find_in_proplist(compat, matches->compat, len);
 		}
 		if (match)
 			return matches;
@@ -307,7 +292,7 @@ static struct vio_dev *vio_create_one(struct mdesc_handle *hp, u64 mp,
 	}
 	vdev->dp = dp;
 
-	printk(KERN_ERR "VIO: Adding device %s\n", vdev->dev.bus_id);
+	printk(KERN_INFO "VIO: Adding device %s\n", vdev->dev.bus_id);
 
 	err = device_register(&vdev->dev);
 	if (err) {
@@ -357,8 +342,33 @@ static struct mdesc_notifier_client vio_device_notifier = {
 	.node_name	= "virtual-device-port",
 };
 
+/* We are only interested in domain service ports under the
+ * "domain-services" node.  On control nodes there is another port
+ * under "openboot" that we should not mess with as aparently that is
+ * reserved exclusively for OBP use.
+ */
+static void vio_add_ds(struct mdesc_handle *hp, u64 node)
+{
+	int found;
+	u64 a;
+
+	found = 0;
+	mdesc_for_each_arc(a, hp, node, MDESC_ARC_TYPE_BACK) {
+		u64 target = mdesc_arc_target(hp, a);
+		const char *name = mdesc_node_name(hp, target);
+
+		if (!strcmp(name, "domain-services")) {
+			found = 1;
+			break;
+		}
+	}
+
+	if (found)
+		(void) vio_create_one(hp, node, &root_vdev->dev);
+}
+
 static struct mdesc_notifier_client vio_ds_notifier = {
-	.add		= vio_add,
+	.add		= vio_add_ds,
 	.remove		= vio_remove,
 	.node_name	= "domain-services-port",
 };
@@ -406,7 +416,7 @@ static int __init vio_init(void)
 		       "property\n");
 		goto out_release;
 	}
-	if (!find_in_proplist(compat, channel_devices_compat, len)) {
+	if (!of_find_in_proplist(compat, channel_devices_compat, len)) {
 		printk(KERN_ERR "VIO: Channel devices node lacks (%s) "
 		       "compat entry.\n", channel_devices_compat);
 		goto out_release;

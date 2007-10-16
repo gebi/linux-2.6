@@ -223,7 +223,7 @@ temp1_from_reg(s8 reg)
 }
 
 static inline s8
-temp1_to_reg(int temp, int min, int max)
+temp1_to_reg(long temp, int min, int max)
 {
 	if (temp <= min)
 		return min / 1000;
@@ -256,7 +256,7 @@ struct w83627ehf_data {
 	int addr;	/* IO base of hw monitor block */
 	const char *name;
 
-	struct class_device *class_dev;
+	struct device *hwmon_dev;
 	struct mutex lock;
 
 	struct mutex update_lock;
@@ -309,18 +309,16 @@ static inline int is_word_sized(u16 reg)
 	      || (reg & 0x00ff) == 0x55));
 }
 
-/* We assume that the default bank is 0, thus the following two functions do
-   nothing for registers which live in bank 0. For others, they respectively
-   set the bank register to the correct value (before the register is
-   accessed), and back to 0 (afterwards). */
+/* Registers 0x50-0x5f are banked */
 static inline void w83627ehf_set_bank(struct w83627ehf_data *data, u16 reg)
 {
-	if (reg & 0xff00) {
+	if ((reg & 0x00f0) == 0x50) {
 		outb_p(W83627EHF_REG_BANK, data->addr + ADDR_REG_OFFSET);
 		outb_p(reg >> 8, data->addr + DATA_REG_OFFSET);
 	}
 }
 
+/* Not strictly necessary, but play it safe for now */
 static inline void w83627ehf_reset_bank(struct w83627ehf_data *data, u16 reg)
 {
 	if (reg & 0xff00) {
@@ -421,6 +419,31 @@ static void w83627ehf_write_fan_div(struct w83627ehf_data *data, int nr)
 	}
 }
 
+static void w83627ehf_update_fan_div(struct w83627ehf_data *data)
+{
+	int i;
+
+	i = w83627ehf_read_value(data, W83627EHF_REG_FANDIV1);
+	data->fan_div[0] = (i >> 4) & 0x03;
+	data->fan_div[1] = (i >> 6) & 0x03;
+	i = w83627ehf_read_value(data, W83627EHF_REG_FANDIV2);
+	data->fan_div[2] = (i >> 6) & 0x03;
+	i = w83627ehf_read_value(data, W83627EHF_REG_VBAT);
+	data->fan_div[0] |= (i >> 3) & 0x04;
+	data->fan_div[1] |= (i >> 4) & 0x04;
+	data->fan_div[2] |= (i >> 5) & 0x04;
+	if (data->has_fan & ((1 << 3) | (1 << 4))) {
+		i = w83627ehf_read_value(data, W83627EHF_REG_DIODE);
+		data->fan_div[3] = i & 0x03;
+		data->fan_div[4] = ((i >> 2) & 0x03)
+				 | ((i >> 5) & 0x04);
+	}
+	if (data->has_fan & (1 << 3)) {
+		i = w83627ehf_read_value(data, W83627EHF_REG_SMI_OVT);
+		data->fan_div[3] |= (i >> 5) & 0x04;
+	}
+}
+
 static struct w83627ehf_data *w83627ehf_update_device(struct device *dev)
 {
 	struct w83627ehf_data *data = dev_get_drvdata(dev);
@@ -432,25 +455,7 @@ static struct w83627ehf_data *w83627ehf_update_device(struct device *dev)
 	if (time_after(jiffies, data->last_updated + HZ + HZ/2)
 	 || !data->valid) {
 		/* Fan clock dividers */
-		i = w83627ehf_read_value(data, W83627EHF_REG_FANDIV1);
-		data->fan_div[0] = (i >> 4) & 0x03;
-		data->fan_div[1] = (i >> 6) & 0x03;
-		i = w83627ehf_read_value(data, W83627EHF_REG_FANDIV2);
-		data->fan_div[2] = (i >> 6) & 0x03;
-		i = w83627ehf_read_value(data, W83627EHF_REG_VBAT);
-		data->fan_div[0] |= (i >> 3) & 0x04;
-		data->fan_div[1] |= (i >> 4) & 0x04;
-		data->fan_div[2] |= (i >> 5) & 0x04;
-		if (data->has_fan & ((1 << 3) | (1 << 4))) {
-			i = w83627ehf_read_value(data, W83627EHF_REG_DIODE);
-			data->fan_div[3] = i & 0x03;
-			data->fan_div[4] = ((i >> 2) & 0x03)
-					 | ((i >> 5) & 0x04);
-		}
-		if (data->has_fan & (1 << 3)) {
-			i = w83627ehf_read_value(data, W83627EHF_REG_SMI_OVT);
-			data->fan_div[3] |= (i >> 5) & 0x04;
-		}
+		w83627ehf_update_fan_div(data);
 
 		/* Measured voltages and limits */
 		for (i = 0; i < data->in_num; i++) {
@@ -800,7 +805,7 @@ store_temp1_##reg(struct device *dev, struct device_attribute *attr, \
 		  const char *buf, size_t count) \
 { \
 	struct w83627ehf_data *data = dev_get_drvdata(dev); \
-	u32 val = simple_strtoul(buf, NULL, 10); \
+	long val = simple_strtol(buf, NULL, 10); \
  \
 	mutex_lock(&data->update_lock); \
 	data->temp1_##reg = temp1_to_reg(val, -128000, 127000); \
@@ -835,7 +840,7 @@ store_##reg(struct device *dev, struct device_attribute *attr, \
 	struct w83627ehf_data *data = dev_get_drvdata(dev); \
 	struct sensor_device_attribute *sensor_attr = to_sensor_dev_attr(attr); \
 	int nr = sensor_attr->index; \
-	u32 val = simple_strtoul(buf, NULL, 10); \
+	long val = simple_strtol(buf, NULL, 10); \
  \
 	mutex_lock(&data->update_lock); \
 	data->reg[nr] = LM75_TEMP_TO_REG(val); \
@@ -1312,6 +1317,9 @@ static int __devinit w83627ehf_probe(struct platform_device *pdev)
 	if (!(i & (1 << 1)) && (!fan5pin))
 		data->has_fan |= (1 << 4);
 
+	/* Read fan clock dividers immediately */
+	w83627ehf_update_fan_div(data);
+
 	/* Register sysfs hooks */
   	for (i = 0; i < ARRAY_SIZE(sda_sf3_arrays); i++)
 		if ((err = device_create_file(dev,
@@ -1376,9 +1384,9 @@ static int __devinit w83627ehf_probe(struct platform_device *pdev)
 			goto exit_remove;
 	}
 
-	data->class_dev = hwmon_device_register(dev);
-	if (IS_ERR(data->class_dev)) {
-		err = PTR_ERR(data->class_dev);
+	data->hwmon_dev = hwmon_device_register(dev);
+	if (IS_ERR(data->hwmon_dev)) {
+		err = PTR_ERR(data->hwmon_dev);
 		goto exit_remove;
 	}
 
@@ -1398,7 +1406,7 @@ static int __devexit w83627ehf_remove(struct platform_device *pdev)
 {
 	struct w83627ehf_data *data = platform_get_drvdata(pdev);
 
-	hwmon_device_unregister(data->class_dev);
+	hwmon_device_unregister(data->hwmon_dev);
 	w83627ehf_device_remove_files(&pdev->dev);
 	release_region(data->addr, IOREGION_LENGTH);
 	platform_set_drvdata(pdev, NULL);

@@ -34,6 +34,8 @@ isa-y			:= $(isa-y)-nofpu
 endif
 endif
 
+isa-y			:= $(isa-y)-up
+
 cflags-$(CONFIG_CPU_SH2)		:= $(call cc-option,-m2,)
 cflags-$(CONFIG_CPU_SH2A)		+= $(call cc-option,-m2a,) \
 					   $(call cc-option,-m2a-nofpu,)
@@ -46,7 +48,20 @@ cflags-$(CONFIG_CPU_SH4A)		+= $(call cc-option,-m4a,) \
 cflags-$(CONFIG_CPU_BIG_ENDIAN)		+= -mb
 cflags-$(CONFIG_CPU_LITTLE_ENDIAN)	+= -ml
 
-cflags-y	+= $(call as-option,-Wa$(comma)-isa=$(isa-y),) -ffreestanding
+#
+# -Wa,-isa= tuning implies -Wa,-dsp for the versions of binutils that
+# support it, while -Wa,-dsp by itself limits the range of usable opcodes
+# on certain CPU subtypes. Try the ISA variant first, and if that fails,
+# fall back on -Wa,-dsp for the old binutils versions. Even without DSP
+# opcodes, we always want the best ISA tuning the version of binutils
+# will provide.
+#
+isaflags-y	:= $(call as-option,-Wa$(comma)-isa=$(isa-y),)
+
+isaflags-$(CONFIG_SH_DSP)		:= \
+	$(call as-option,-Wa$(comma)-isa=$(isa-y),-Wa$(comma)-dsp)
+
+cflags-y	+= $(isaflags-y) -ffreestanding
 
 cflags-$(CONFIG_MORE_COMPILE_OPTIONS)	+= \
 	$(shell echo $(CONFIG_COMPILE_OPTIONS) | sed -e 's/"//g')
@@ -103,6 +118,7 @@ machdir-$(CONFIG_SH_7751_SYSTEMH)		+= renesas/systemh
 machdir-$(CONFIG_SH_EDOSK7705)			+= renesas/edosk7705
 machdir-$(CONFIG_SH_HIGHLANDER)			+= renesas/r7780rp
 machdir-$(CONFIG_SH_7710VOIPGW)			+= renesas/sh7710voipgw
+machdir-$(CONFIG_SH_X3PROTO)			+= renesas/x3proto
 machdir-$(CONFIG_SH_SH4202_MICRODEV)		+= superh/microdev
 machdir-$(CONFIG_SH_LANDISK)			+= landisk
 machdir-$(CONFIG_SH_TITAN)			+= titan
@@ -110,6 +126,7 @@ machdir-$(CONFIG_SH_SHMIN)			+= shmin
 machdir-$(CONFIG_SH_7206_SOLUTION_ENGINE)	+= se/7206
 machdir-$(CONFIG_SH_7619_SOLUTION_ENGINE)	+= se/7619
 machdir-$(CONFIG_SH_LBOX_RE2)			+= lboxre2
+machdir-$(CONFIG_SH_MAGIC_PANEL_R2)		+= magicpanelr2
 
 incdir-y	:= $(notdir $(machdir-y))
 
@@ -120,7 +137,7 @@ endif
 
 # Companion chips
 core-$(CONFIG_HD6446X_SERIES)	+= arch/sh/cchips/hd6446x/
-core-$(CONFIG_VOYAGERGX)	+= arch/sh/cchips/voyagergx/
+core-$(CONFIG_MFD_SM501)	+= arch/sh/cchips/voyagergx/
 
 cpuincdir-$(CONFIG_CPU_SH2)	:= cpu-sh2
 cpuincdir-$(CONFIG_CPU_SH2A)	:= cpu-sh2a

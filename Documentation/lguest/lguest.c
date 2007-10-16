@@ -46,7 +46,7 @@ typedef uint32_t u32;
 typedef uint16_t u16;
 typedef uint8_t u8;
 #include "../../include/linux/lguest_launcher.h"
-#include "../../include/asm-i386/e820.h"
+#include "../../include/asm-x86/e820_32.h"
 /*:*/
 
 #define PAGE_PRESENT 0x7 	/* Present, RW, Execute */
@@ -882,7 +882,7 @@ static u32 handle_block_output(int fd, const struct iovec *iov,
 		 * of the block file (possibly extending it). */
 		if (off + len > device_len) {
 			/* Trim it back to the correct length */
-			ftruncate(dev->fd, device_len);
+			ftruncate64(dev->fd, device_len);
 			/* Die, bad Guest, die. */
 			errx(1, "Write past end %llu+%u", off, len);
 		}

@@ -232,7 +232,7 @@ struct acpi_processor_errata {
 
 extern int acpi_processor_preregister_performance(struct
 						  acpi_processor_performance
-						  **performance);
+						  *performance);
 
 extern int acpi_processor_register_performance(struct acpi_processor_performance
 					       *performance, unsigned int cpu);
@@ -320,6 +320,8 @@ int acpi_processor_power_init(struct acpi_processor *pr,
 int acpi_processor_cst_has_changed(struct acpi_processor *pr);
 int acpi_processor_power_exit(struct acpi_processor *pr,
 			      struct acpi_device *device);
+int acpi_processor_suspend(struct acpi_device * device, pm_message_t state);
+int acpi_processor_resume(struct acpi_device * device);
 
 /* in processor_thermal.c */
 int acpi_processor_get_limit_info(struct acpi_processor *pr);

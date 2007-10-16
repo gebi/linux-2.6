@@ -35,8 +35,9 @@ struct acpi_device_bus_id{
  * e.g. on a device with hid:IBM0001 and cid:ACPI0001 you get:
  * char *modalias: "acpi:IBM0001:ACPI0001"
 */
-int create_modalias(struct acpi_device *acpi_dev, char *modalias, int size){
-
+static int create_modalias(struct acpi_device *acpi_dev, char *modalias,
+			   int size)
+{
 	int len;
 
 	if (!acpi_dev->flags.hardware_id)
@@ -318,16 +319,18 @@ static int acpi_bus_match(struct device *dev, struct device_driver *drv)
 	return !acpi_match_device_ids(acpi_dev, acpi_drv->ids);
 }
 
-static int acpi_device_uevent(struct device *dev, char **envp, int num_envp,
-			      char *buffer, int buffer_size)
+static int acpi_device_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
 	struct acpi_device *acpi_dev = to_acpi_device(dev);
+	int len;
 
-	strcpy(buffer, "MODALIAS=");
-	if (create_modalias(acpi_dev, buffer + 9, buffer_size - 9) > 0) {
-		envp[0] = buffer;
-		envp[1] = NULL;
-	}
+	if (add_uevent_var(env, "MODALIAS="))
+		return -ENOMEM;
+	len = create_modalias(acpi_dev, &env->buf[env->buflen - 1],
+			      sizeof(env->buf) - env->buflen);
+	if (len >= (sizeof(env->buf) - env->buflen))
+		return -ENOMEM;
+	env->buflen += len;
 	return 0;
 }
 

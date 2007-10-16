@@ -1194,7 +1194,7 @@ static inline void complete_buffers(struct bio *bio, int status)
 		int nr_sectors = bio_sectors(bio);
 
 		bio->bi_next = NULL;
-		bio_endio(bio, nr_sectors << 9, status ? 0 : -EIO);
+		bio_endio(bio, status ? 0 : -EIO);
 		bio = xbh;
 	}
 }
@@ -1977,12 +1977,13 @@ cciss_read_capacity(int ctlr, int logvol, int withirq, sector_t *total_size,
 {
 	ReadCapdata_struct *buf;
 	int return_code;
-	buf = kmalloc(sizeof(ReadCapdata_struct), GFP_KERNEL);
-	if (buf == NULL) {
+
+	buf = kzalloc(sizeof(ReadCapdata_struct), GFP_KERNEL);
+	if (!buf) {
 		printk(KERN_WARNING "cciss: out of memory\n");
 		return;
 	}
-	memset(buf, 0, sizeof(ReadCapdata_struct));
+
 	if (withirq)
 		return_code = sendcmd_withirq(CCISS_READ_CAPACITY,
 				ctlr, buf, sizeof(ReadCapdata_struct),
@@ -2003,7 +2004,6 @@ cciss_read_capacity(int ctlr, int logvol, int withirq, sector_t *total_size,
 		printk(KERN_INFO "      blocks= %llu block_size= %d\n",
 		(unsigned long long)*total_size+1, *block_size);
 	kfree(buf);
-	return;
 }
 
 static void
@@ -2011,12 +2011,13 @@ cciss_read_capacity_16(int ctlr, int logvol, int withirq, sector_t *total_size, 
 {
 	ReadCapdata_struct_16 *buf;
 	int return_code;
-	buf = kmalloc(sizeof(ReadCapdata_struct_16), GFP_KERNEL);
-	if (buf == NULL) {
+
+	buf = kzalloc(sizeof(ReadCapdata_struct_16), GFP_KERNEL);
+	if (!buf) {
 		printk(KERN_WARNING "cciss: out of memory\n");
 		return;
 	}
-	memset(buf, 0, sizeof(ReadCapdata_struct_16));
+
 	if (withirq) {
 		return_code = sendcmd_withirq(CCISS_READ_CAPACITY_16,
 			ctlr, buf, sizeof(ReadCapdata_struct_16),
@@ -2038,7 +2039,6 @@ cciss_read_capacity_16(int ctlr, int logvol, int withirq, sector_t *total_size, 
 	printk(KERN_INFO "      blocks= %llu block_size= %d\n",
 	       (unsigned long long)*total_size+1, *block_size);
 	kfree(buf);
-	return;
 }
 
 static int cciss_revalidate(struct gendisk *disk)
@@ -3101,7 +3101,7 @@ static void cciss_getgeometry(int cntl_num)
 	int i;
 	int listlength = 0;
 	__u32 lunid = 0;
-	int block_size;
+	unsigned block_size;
 	sector_t total_size;
 
 	ld_buff = kzalloc(sizeof(ReportLunData_struct), GFP_KERNEL);

@@ -357,6 +357,7 @@ static inline struct sk_buff *alloc_skb_fclone(unsigned int size,
 }
 
 extern void	       kfree_skbmem(struct sk_buff *skb);
+extern struct sk_buff *skb_morph(struct sk_buff *dst, struct sk_buff *src);
 extern struct sk_buff *skb_clone(struct sk_buff *skb,
 				 gfp_t priority);
 extern struct sk_buff *skb_copy(const struct sk_buff *skb,
@@ -1352,6 +1353,22 @@ static inline int skb_clone_writable(struct sk_buff *skb, int len)
 	       skb_headroom(skb) + len <= skb->hdr_len;
 }
 
+static inline int __skb_cow(struct sk_buff *skb, unsigned int headroom,
+			    int cloned)
+{
+	int delta = 0;
+
+	if (headroom < NET_SKB_PAD)
+		headroom = NET_SKB_PAD;
+	if (headroom > skb_headroom(skb))
+		delta = headroom - skb_headroom(skb);
+
+	if (delta || cloned)
+		return pskb_expand_head(skb, ALIGN(delta, NET_SKB_PAD), 0,
+					GFP_ATOMIC);
+	return 0;
+}
+
 /**
  *	skb_cow - copy header of skb when it is required
  *	@skb: buffer to cow
@@ -1366,16 +1383,22 @@ static inline int skb_clone_writable(struct sk_buff *skb, int len)
  */
 static inline int skb_cow(struct sk_buff *skb, unsigned int headroom)
 {
-	int delta = (headroom > NET_SKB_PAD ? headroom : NET_SKB_PAD) -
-			skb_headroom(skb);
+	return __skb_cow(skb, headroom, skb_cloned(skb));
+}
 
-	if (delta < 0)
-		delta = 0;
-
-	if (delta || skb_cloned(skb))
-		return pskb_expand_head(skb, (delta + (NET_SKB_PAD-1)) &
-				~(NET_SKB_PAD-1), 0, GFP_ATOMIC);
-	return 0;
+/**
+ *	skb_cow_head - skb_cow but only making the head writable
+ *	@skb: buffer to cow
+ *	@headroom: needed headroom
+ *
+ *	This function is identical to skb_cow except that we replace the
+ *	skb_cloned check by skb_header_cloned.  It should be used when
+ *	you only need to push on some header and do not need to modify
+ *	the data.
+ */
+static inline int skb_cow_head(struct sk_buff *skb, unsigned int headroom)
+{
+	return __skb_cow(skb, headroom, skb_header_cloned(skb));
 }
 
 /**
@@ -1757,6 +1780,11 @@ static inline void skb_copy_queue_mapping(struct sk_buff *to, const struct sk_bu
 static inline int skb_is_gso(const struct sk_buff *skb)
 {
 	return skb_shinfo(skb)->gso_size;
+}
+
+static inline int skb_is_gso_v6(const struct sk_buff *skb)
+{
+	return skb_shinfo(skb)->gso_type & SKB_GSO_TCPV6;
 }
 
 static inline void skb_forward_csum(struct sk_buff *skb)
