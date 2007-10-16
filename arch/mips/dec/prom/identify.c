@@ -26,9 +26,6 @@
 
 #include "dectypes.h"
 
-extern unsigned long mips_machgroup;
-extern unsigned long mips_machtype;
-
 static const char *dec_system_strings[] = {
 	[MACH_DSUNKNOWN]	"unknown DECstation",
 	[MACH_DS23100]		"DECstation 2100/3100",
@@ -135,9 +132,6 @@ void __init prom_identify_arch(u32 magic)
 	dec_systype = (dec_sysid & 0xff0000) >> 16;
 	dec_firmrev = (dec_sysid & 0xff00) >> 8;
 	dec_etc = dec_sysid & 0xff;
-
-	/* We're obviously one of the DEC machines */
-	mips_machgroup = MACH_GROUP_DEC;
 
 	/*
 	 * FIXME: This may not be an exhaustive list of DECStations/Servers!

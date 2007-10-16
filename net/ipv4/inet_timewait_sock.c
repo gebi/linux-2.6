@@ -8,13 +8,14 @@
  *		From code orinally in TCP
  */
 
-
+#include <linux/kernel.h>
 #include <net/inet_hashtables.h>
 #include <net/inet_timewait_sock.h>
 #include <net/ip.h>
 
 /* Must be called with locally disabled BHs. */
-void __inet_twsk_kill(struct inet_timewait_sock *tw, struct inet_hashinfo *hashinfo)
+static void __inet_twsk_kill(struct inet_timewait_sock *tw,
+			     struct inet_hashinfo *hashinfo)
 {
 	struct inet_bind_hashbucket *bhead;
 	struct inet_bind_bucket *tb;
@@ -46,8 +47,6 @@ void __inet_twsk_kill(struct inet_timewait_sock *tw, struct inet_hashinfo *hashi
 #endif
 	inet_twsk_put(tw);
 }
-
-EXPORT_SYMBOL_GPL(__inet_twsk_kill);
 
 /*
  * Enter the time wait state. This is called with locally disabled BH.
@@ -293,7 +292,7 @@ void inet_twsk_schedule(struct inet_timewait_sock *tw,
 		if (timeo >= timewait_len) {
 			slot = INET_TWDR_TWKILL_SLOTS - 1;
 		} else {
-			slot = (timeo + twdr->period - 1) / twdr->period;
+			slot = DIV_ROUND_UP(timeo, twdr->period);
 			if (slot >= INET_TWDR_TWKILL_SLOTS)
 				slot = INET_TWDR_TWKILL_SLOTS - 1;
 		}

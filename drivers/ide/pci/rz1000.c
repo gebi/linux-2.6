@@ -15,8 +15,6 @@
  *  Dunno if this fixes both ports, or only the primary port (?).
  */
 
-#undef REALLY_SLOW_IO		/* most systems can safely undef this */
-
 #include <linux/types.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -54,7 +52,6 @@ static void __devinit init_hwif_rz1000 (ide_hwif_t *hwif)
 static ide_pci_device_t rz1000_chipset __devinitdata = {
 	.name		= "RZ100x",
 	.init_hwif	= init_hwif_rz1000,
-	.channels	= 2,
 	.autodma	= NODMA,
 	.bootable	= ON_BOARD,
 };

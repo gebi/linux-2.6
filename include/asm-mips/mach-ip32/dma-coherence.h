@@ -6,8 +6,8 @@
  * Copyright (C) 2006  Ralf Baechle <ralf@linux-mips.org>
  *
  */
-#ifndef __ASM_MACH_IP35_DMA_COHERENCE_H
-#define __ASM_MACH_IP35_DMA_COHERENCE_H
+#ifndef __ASM_MACH_IP32_DMA_COHERENCE_H
+#define __ASM_MACH_IP32_DMA_COHERENCE_H
 
 #include <asm/ip32/crime.h>
 
@@ -26,7 +26,8 @@ struct device;
 
 #define RAM_OFFSET_MASK 0x3fffffffUL
 
-static dma_addr_t plat_map_dma_mem(struct device *dev, void *addr, size_t size)
+static inline dma_addr_t plat_map_dma_mem(struct device *dev, void *addr,
+	size_t size)
 {
 	dma_addr_t pa = virt_to_phys(addr) & RAM_OFFSET_MASK;
 
@@ -59,7 +60,7 @@ static unsigned long plat_dma_addr_to_phys(dma_addr_t dma_addr)
 	return addr;
 }
 
-static void plat_unmap_dma_mem(dma_addr_t dma_addr)
+static inline void plat_unmap_dma_mem(dma_addr_t dma_addr)
 {
 }
 
@@ -68,4 +69,4 @@ static inline int plat_device_is_coherent(struct device *dev)
 	return 0;		/* IP32 is non-cohernet */
 }
 
-#endif /* __ASM_MACH_IP35_DMA_COHERENCE_H */
+#endif /* __ASM_MACH_IP32_DMA_COHERENCE_H */

@@ -37,6 +37,7 @@
 #include <linux/skbuff.h>
 #include <linux/workqueue.h>
 #include <linux/interrupt.h>
+#include <linux/compat.h>
 #include <linux/socket.h>
 #include <linux/ioctl.h>
 #include <net/sock.h>
@@ -70,15 +71,15 @@ static struct hci_sec_filter hci_sec_filter = {
 	{
 		{ 0x0 },
 		/* OGF_LINK_CTL */
-		{ 0xbe000006, 0x00000001, 0x000000, 0x00 },
+		{ 0xbe000006, 0x00000001, 0x00000000, 0x00 },
 		/* OGF_LINK_POLICY */
-		{ 0x00005200, 0x00000000, 0x000000, 0x00 },
+		{ 0x00005200, 0x00000000, 0x00000000, 0x00 },
 		/* OGF_HOST_CTL */
-		{ 0xaab00200, 0x2b402aaa, 0x020154, 0x00 },
+		{ 0xaab00200, 0x2b402aaa, 0x05220154, 0x00 },
 		/* OGF_INFO_PARAM */
-		{ 0x000002be, 0x00000000, 0x000000, 0x00 },
+		{ 0x000002be, 0x00000000, 0x00000000, 0x00 },
 		/* OGF_STATUS_PARAM */
-		{ 0x000000ea, 0x00000000, 0x000000, 0x00 }
+		{ 0x000000ea, 0x00000000, 0x00000000, 0x00 }
 	}
 };
 
@@ -342,9 +343,24 @@ static inline void hci_sock_cmsg(struct sock *sk, struct msghdr *msg, struct sk_
 
 	if (mask & HCI_CMSG_TSTAMP) {
 		struct timeval tv;
+		void *data;
+		int len;
 
 		skb_get_timestamp(skb, &tv);
-		put_cmsg(msg, SOL_HCI, HCI_CMSG_TSTAMP, sizeof(tv), &tv);
+
+		data = &tv;
+		len = sizeof(tv);
+#ifdef CONFIG_COMPAT
+		if (msg->msg_flags & MSG_CMSG_COMPAT) {
+			struct compat_timeval ctv;
+			ctv.tv_sec = tv.tv_sec;
+			ctv.tv_usec = tv.tv_usec;
+			data = &ctv;
+			len = sizeof(ctv);
+		}
+#endif
+
+		put_cmsg(msg, SOL_HCI, HCI_CMSG_TSTAMP, len, data);
 	}
 }
 
@@ -375,7 +391,7 @@ static int hci_sock_recvmsg(struct kiocb *iocb, struct socket *sock,
 		copied = len;
 	}
 
-	skb->h.raw = skb->data;
+	skb_reset_transport_header(skb);
 	err = skb_copy_datagram_iovec(skb, 0, msg->msg_iov, copied);
 
 	hci_sock_cmsg(sk, msg, skb);
@@ -499,6 +515,15 @@ static int hci_sock_setsockopt(struct socket *sock, int level, int optname, char
 		break;
 
 	case HCI_FILTER:
+		{
+			struct hci_filter *f = &hci_pi(sk)->filter;
+
+			uf.type_mask = f->type_mask;
+			uf.opcode    = f->opcode;
+			uf.event_mask[0] = *((u32 *) f->event_mask + 0);
+			uf.event_mask[1] = *((u32 *) f->event_mask + 1);
+		}
+
 		len = min_t(unsigned int, len, sizeof(uf));
 		if (copy_from_user(&uf, optval, len)) {
 			err = -EFAULT;
@@ -609,7 +634,7 @@ static struct proto hci_sk_proto = {
 	.obj_size	= sizeof(struct hci_pinfo)
 };
 
-static int hci_sock_create(struct socket *sock, int protocol)
+static int hci_sock_create(struct net *net, struct socket *sock, int protocol)
 {
 	struct sock *sk;
 
@@ -620,7 +645,7 @@ static int hci_sock_create(struct socket *sock, int protocol)
 
 	sock->ops = &hci_sock_ops;
 
-	sk = sk_alloc(PF_BLUETOOTH, GFP_ATOMIC, &hci_sk_proto, 1);
+	sk = sk_alloc(net, PF_BLUETOOTH, GFP_ATOMIC, &hci_sk_proto, 1);
 	if (!sk)
 		return -ENOMEM;
 
@@ -656,7 +681,8 @@ static int hci_sock_dev_event(struct notifier_block *this, unsigned long event, 
 		/* Detach sockets from device */
 		read_lock(&hci_sk_list.lock);
 		sk_for_each(sk, node, &hci_sk_list.head) {
-			bh_lock_sock(sk);
+			local_bh_disable();
+			bh_lock_sock_nested(sk);
 			if (hci_pi(sk)->hdev == hdev) {
 				hci_pi(sk)->hdev = NULL;
 				sk->sk_err = EPIPE;
@@ -666,6 +692,7 @@ static int hci_sock_dev_event(struct notifier_block *this, unsigned long event, 
 				hci_dev_put(hdev);
 			}
 			bh_unlock_sock(sk);
+			local_bh_enable();
 		}
 		read_unlock(&hci_sk_list.lock);
 	}

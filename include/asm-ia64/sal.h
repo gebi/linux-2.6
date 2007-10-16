@@ -46,25 +46,28 @@
 extern spinlock_t sal_lock;
 
 /* SAL spec _requires_ eight args for each call. */
-#define __SAL_CALL(result,a0,a1,a2,a3,a4,a5,a6,a7)	\
-	result = (*ia64_sal)(a0,a1,a2,a3,a4,a5,a6,a7)
+#define __IA64_FW_CALL(entry,result,a0,a1,a2,a3,a4,a5,a6,a7)	\
+	result = (*entry)(a0,a1,a2,a3,a4,a5,a6,a7)
 
-# define SAL_CALL(result,args...) do {				\
+# define IA64_FW_CALL(entry,result,args...) do {		\
 	unsigned long __ia64_sc_flags;				\
 	struct ia64_fpreg __ia64_sc_fr[6];			\
 	ia64_save_scratch_fpregs(__ia64_sc_fr);			\
 	spin_lock_irqsave(&sal_lock, __ia64_sc_flags);		\
-	__SAL_CALL(result, args);				\
+	__IA64_FW_CALL(entry, result, args);			\
 	spin_unlock_irqrestore(&sal_lock, __ia64_sc_flags);	\
 	ia64_load_scratch_fpregs(__ia64_sc_fr);			\
 } while (0)
+
+# define SAL_CALL(result,args...)			\
+	IA64_FW_CALL(ia64_sal, result, args);
 
 # define SAL_CALL_NOLOCK(result,args...) do {		\
 	unsigned long __ia64_scn_flags;			\
 	struct ia64_fpreg __ia64_scn_fr[6];		\
 	ia64_save_scratch_fpregs(__ia64_scn_fr);	\
 	local_irq_save(__ia64_scn_flags);		\
-	__SAL_CALL(result, args);			\
+	__IA64_FW_CALL(ia64_sal, result, args);		\
 	local_irq_restore(__ia64_scn_flags);		\
 	ia64_load_scratch_fpregs(__ia64_scn_fr);	\
 } while (0)
@@ -73,7 +76,7 @@ extern spinlock_t sal_lock;
 	struct ia64_fpreg __ia64_scs_fr[6];		\
 	ia64_save_scratch_fpregs(__ia64_scs_fr);	\
 	preempt_disable();				\
-	__SAL_CALL(result, args);			\
+	__IA64_FW_CALL(ia64_sal, result, args);		\
 	preempt_enable();				\
 	ia64_load_scratch_fpregs(__ia64_scs_fr);	\
 } while (0)
@@ -847,12 +850,13 @@ extern int ia64_sal_oemcall_reentrant(struct ia64_sal_retval *, u64, u64, u64,
  */
 struct sal_to_os_boot {
 	u64 rr[8];		/* Region Registers */
-	u64	br[6];		/* br0: return addr into SAL boot rendez routine */
+	u64 br[6];		/* br0:
+				 * return addr into SAL boot rendez routine */
 	u64 gr1;		/* SAL:GP */
 	u64 gr12;		/* SAL:SP */
 	u64 gr13;		/* SAL: Task Pointer */
 	u64 fpsr;
-	u64	pfs;
+	u64 pfs;
 	u64 rnat;
 	u64 unat;
 	u64 bspstore;

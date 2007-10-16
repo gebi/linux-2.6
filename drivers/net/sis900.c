@@ -158,7 +158,6 @@ typedef struct _BufferDesc {
 } BufferDesc;
 
 struct sis900_private {
-	struct net_device_stats stats;
 	struct pci_dev * pci_dev;
 
 	spinlock_t lock;
@@ -221,7 +220,6 @@ static void sis900_finish_xmit (struct net_device *net_dev);
 static irqreturn_t sis900_interrupt(int irq, void *dev_instance);
 static int sis900_close(struct net_device *net_dev);
 static int mii_ioctl(struct net_device *net_dev, struct ifreq *rq, int cmd);
-static struct net_device_stats *sis900_get_stats(struct net_device *net_dev);
 static u16 sis900_mcast_bitnr(u8 *addr, u8 revision);
 static void set_rx_mode(struct net_device *net_dev);
 static void sis900_reset(struct net_device *net_dev);
@@ -406,6 +404,7 @@ static int __devinit sis900_probe(struct pci_dev *pci_dev,
 	int i, ret;
 	const char *card_name = card_names[pci_id->driver_data];
 	const char *dev_name = pci_name(pci_dev);
+	DECLARE_MAC_BUF(mac);
 
 /* when built into the kernel, we only print version if device is found */
 #ifndef MODULE
@@ -430,7 +429,6 @@ static int __devinit sis900_probe(struct pci_dev *pci_dev,
 	net_dev = alloc_etherdev(sizeof(struct sis900_private));
 	if (!net_dev)
 		return -ENOMEM;
-	SET_MODULE_OWNER(net_dev);
 	SET_NETDEV_DEV(net_dev, &pci_dev->dev);
 
 	/* We do a request_region() to register /proc/ioports info. */
@@ -467,7 +465,6 @@ static int __devinit sis900_probe(struct pci_dev *pci_dev,
 	net_dev->open = &sis900_open;
 	net_dev->hard_start_xmit = &sis900_start_xmit;
 	net_dev->stop = &sis900_close;
-	net_dev->get_stats = &sis900_get_stats;
 	net_dev->set_config = &sis900_set_config;
 	net_dev->set_multicast_list = &set_rx_mode;
 	net_dev->do_ioctl = &mii_ioctl;
@@ -537,11 +534,9 @@ static int __devinit sis900_probe(struct pci_dev *pci_dev,
 		goto err_unmap_rx;
 
 	/* print some information about our NIC */
-	printk(KERN_INFO "%s: %s at %#lx, IRQ %d, ", net_dev->name,
-	       card_name, ioaddr, net_dev->irq);
-	for (i = 0; i < 5; i++)
-		printk("%2.2x:", (u8)net_dev->dev_addr[i]);
-	printk("%2.2x.\n", net_dev->dev_addr[i]);
+	printk(KERN_INFO "%s: %s at %#lx, IRQ %d, %s\n",
+	       net_dev->name, card_name, ioaddr, net_dev->irq,
+	       print_mac(mac, net_dev->dev_addr));
 
 	/* Detect Wake on Lan support */
 	ret = (inl(net_dev->base_addr + CFGPMC) & PMESP) >> 27;
@@ -573,7 +568,7 @@ static int __devinit sis900_probe(struct pci_dev *pci_dev,
  *	return error if it failed to found.
  */
 
-static int __init sis900_mii_probe(struct net_device * net_dev)
+static int __devinit sis900_mii_probe(struct net_device * net_dev)
 {
 	struct sis900_private * sis_priv = net_dev->priv;
 	const char *dev_name = pci_name(sis_priv->pci_dev);
@@ -968,10 +963,10 @@ static void mdio_write(struct net_device *net_dev, int phy_id, int location,
 
 static u16 sis900_reset_phy(struct net_device *net_dev, int phy_addr)
 {
-	int i = 0;
+	int i;
 	u16 status;
 
-	while (i++ < 2)
+	for (i = 0; i < 2; i++)
 		status = mdio_read(net_dev, phy_addr, MII_STATUS);
 
 	mdio_write( net_dev, phy_addr, MII_CONTROL, MII_CNTL_RESET );
@@ -1160,7 +1155,6 @@ sis900_init_rx_ring(struct net_device *net_dev)
 			   buffer */
 			break;
 		}
-		skb->dev = net_dev;
 		sis_priv->rx_skbuff[i] = skb;
 		sis_priv->rx_ring[i].cmdsts = RX_BUF_SIZE;
                 sis_priv->rx_ring[i].bufptr = pci_map_single(sis_priv->pci_dev,
@@ -1430,7 +1424,7 @@ static void sis900_auto_negotiate(struct net_device *net_dev, int phy_addr)
 	int i = 0;
 	u32 status;
 
-	while (i++ < 2)
+	for (i = 0; i < 2; i++)
 		status = mdio_read(net_dev, phy_addr, MII_STATUS);
 
 	if (!(status & MII_STAT_LINK)){
@@ -1466,9 +1460,9 @@ static void sis900_read_mode(struct net_device *net_dev, int *speed, int *duplex
 	int phy_addr = sis_priv->cur_phy;
 	u32 status;
 	u16 autoadv, autorec;
-	int i = 0;
+	int i;
 
-	while (i++ < 2)
+	for (i = 0; i < 2; i++)
 		status = mdio_read(net_dev, phy_addr, MII_STATUS);
 
 	if (!(status & MII_STAT_LINK))
@@ -1544,7 +1538,7 @@ static void sis900_tx_timeout(struct net_device *net_dev)
 			sis_priv->tx_skbuff[i] = NULL;
 			sis_priv->tx_ring[i].cmdsts = 0;
 			sis_priv->tx_ring[i].bufptr = 0;
-			sis_priv->stats.tx_dropped++;
+			net_dev->stats.tx_dropped++;
 		}
 	}
 	sis_priv->tx_full = 0;
@@ -1741,19 +1735,38 @@ static int sis900_rx(struct net_device *net_dev)
 				printk(KERN_DEBUG "%s: Corrupted packet "
 				       "received, buffer status = 0x%8.8x/%d.\n",
 				       net_dev->name, rx_status, data_size);
-			sis_priv->stats.rx_errors++;
+			net_dev->stats.rx_errors++;
 			if (rx_status & OVERRUN)
-				sis_priv->stats.rx_over_errors++;
+				net_dev->stats.rx_over_errors++;
 			if (rx_status & (TOOLONG|RUNT))
-				sis_priv->stats.rx_length_errors++;
+				net_dev->stats.rx_length_errors++;
 			if (rx_status & (RXISERR | FAERR))
-				sis_priv->stats.rx_frame_errors++;
+				net_dev->stats.rx_frame_errors++;
 			if (rx_status & CRCERR)
-				sis_priv->stats.rx_crc_errors++;
+				net_dev->stats.rx_crc_errors++;
 			/* reset buffer descriptor state */
 			sis_priv->rx_ring[entry].cmdsts = RX_BUF_SIZE;
 		} else {
 			struct sk_buff * skb;
+			struct sk_buff * rx_skb;
+
+			pci_unmap_single(sis_priv->pci_dev,
+				sis_priv->rx_ring[entry].bufptr, RX_BUF_SIZE,
+				PCI_DMA_FROMDEVICE);
+
+			/* refill the Rx buffer, what if there is not enought
+			 * memory for new socket buffer ?? */
+			if ((skb = dev_alloc_skb(RX_BUF_SIZE)) == NULL) {
+				/*
+				 * Not enough memory to refill the buffer
+				 * so we need to recycle the old one so
+				 * as to avoid creating a memory hole
+				 * in the rx ring
+				 */
+				skb = sis_priv->rx_skbuff[entry];
+				net_dev->stats.rx_dropped++;
+				goto refill_rx_ring;
+			}	
 
 			/* This situation should never happen, but due to
 			   some unknow bugs, it is possible that
@@ -1768,48 +1781,25 @@ static int sis900_rx(struct net_device *net_dev)
 				break;
 			}
 
-			pci_unmap_single(sis_priv->pci_dev,
-				sis_priv->rx_ring[entry].bufptr, RX_BUF_SIZE,
-				PCI_DMA_FROMDEVICE);
 			/* give the socket buffer to upper layers */
-			skb = sis_priv->rx_skbuff[entry];
-			skb_put(skb, rx_size);
-			skb->protocol = eth_type_trans(skb, net_dev);
-			netif_rx(skb);
+			rx_skb = sis_priv->rx_skbuff[entry];
+			skb_put(rx_skb, rx_size);
+			rx_skb->protocol = eth_type_trans(rx_skb, net_dev);
+			netif_rx(rx_skb);
 
 			/* some network statistics */
 			if ((rx_status & BCAST) == MCAST)
-				sis_priv->stats.multicast++;
+				net_dev->stats.multicast++;
 			net_dev->last_rx = jiffies;
-			sis_priv->stats.rx_bytes += rx_size;
-			sis_priv->stats.rx_packets++;
-
-			/* refill the Rx buffer, what if there is not enought
-			 * memory for new socket buffer ?? */
-			if ((skb = dev_alloc_skb(RX_BUF_SIZE)) == NULL) {
-				/* not enough memory for skbuff, this makes a
-				 * "hole" on the buffer ring, it is not clear
-				 * how the hardware will react to this kind
-				 * of degenerated buffer */
-				if (netif_msg_rx_status(sis_priv))
-					printk(KERN_INFO "%s: Memory squeeze,"
-						"deferring packet.\n",
-						net_dev->name);
-				sis_priv->rx_skbuff[entry] = NULL;
-				/* reset buffer descriptor state */
-				sis_priv->rx_ring[entry].cmdsts = 0;
-				sis_priv->rx_ring[entry].bufptr = 0;
-				sis_priv->stats.rx_dropped++;
-				sis_priv->cur_rx++;
-				break;
-			}
-			skb->dev = net_dev;
+			net_dev->stats.rx_bytes += rx_size;
+			net_dev->stats.rx_packets++;
+			sis_priv->dirty_rx++;
+refill_rx_ring:
 			sis_priv->rx_skbuff[entry] = skb;
 			sis_priv->rx_ring[entry].cmdsts = RX_BUF_SIZE;
                 	sis_priv->rx_ring[entry].bufptr =
 				pci_map_single(sis_priv->pci_dev, skb->data,
 					RX_BUF_SIZE, PCI_DMA_FROMDEVICE);
-			sis_priv->dirty_rx++;
 		}
 		sis_priv->cur_rx++;
 		entry = sis_priv->cur_rx % NUM_RX_DESC;
@@ -1833,10 +1823,9 @@ static int sis900_rx(struct net_device *net_dev)
 					printk(KERN_INFO "%s: Memory squeeze,"
 						"deferring packet.\n",
 						net_dev->name);
-				sis_priv->stats.rx_dropped++;
+				net_dev->stats.rx_dropped++;
 				break;
 			}
-			skb->dev = net_dev;
 			sis_priv->rx_skbuff[entry] = skb;
 			sis_priv->rx_ring[entry].cmdsts = RX_BUF_SIZE;
                 	sis_priv->rx_ring[entry].bufptr =
@@ -1885,20 +1874,20 @@ static void sis900_finish_xmit (struct net_device *net_dev)
 				printk(KERN_DEBUG "%s: Transmit "
 				       "error, Tx status %8.8x.\n",
 				       net_dev->name, tx_status);
-			sis_priv->stats.tx_errors++;
+			net_dev->stats.tx_errors++;
 			if (tx_status & UNDERRUN)
-				sis_priv->stats.tx_fifo_errors++;
+				net_dev->stats.tx_fifo_errors++;
 			if (tx_status & ABORT)
-				sis_priv->stats.tx_aborted_errors++;
+				net_dev->stats.tx_aborted_errors++;
 			if (tx_status & NOCARRIER)
-				sis_priv->stats.tx_carrier_errors++;
+				net_dev->stats.tx_carrier_errors++;
 			if (tx_status & OWCOLL)
-				sis_priv->stats.tx_window_errors++;
+				net_dev->stats.tx_window_errors++;
 		} else {
 			/* packet successfully transmitted */
-			sis_priv->stats.collisions += (tx_status & COLCNT) >> 16;
-			sis_priv->stats.tx_bytes += tx_status & DSIZE;
-			sis_priv->stats.tx_packets++;
+			net_dev->stats.collisions += (tx_status & COLCNT) >> 16;
+			net_dev->stats.tx_bytes += tx_status & DSIZE;
+			net_dev->stats.tx_packets++;
 		}
 		/* Free the original skb. */
 		skb = sis_priv->tx_skbuff[entry];
@@ -2142,21 +2131,6 @@ static int mii_ioctl(struct net_device *net_dev, struct ifreq *rq, int cmd)
 	default:
 		return -EOPNOTSUPP;
 	}
-}
-
-/**
- *	sis900_get_stats - Get sis900 read/write statistics
- *	@net_dev: the net device to get statistics for
- *
- *	get tx/rx statistics for sis900
- */
-
-static struct net_device_stats *
-sis900_get_stats(struct net_device *net_dev)
-{
-	struct sis900_private *sis_priv = net_dev->priv;
-
-	return &sis_priv->stats;
 }
 
 /**

@@ -23,7 +23,6 @@
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/interrupt.h>
-#include <linux/smp_lock.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/init.h>
@@ -592,13 +591,13 @@ pfm_set_task_notify(struct task_struct *task)
 	struct thread_info *info;
 
 	info = (struct thread_info *) ((char *) task + IA64_TASK_SIZE);
-	set_bit(TIF_NOTIFY_RESUME, &info->flags);
+	set_bit(TIF_PERFMON_WORK, &info->flags);
 }
 
 static inline void
 pfm_clear_task_notify(void)
 {
-	clear_thread_flag(TIF_NOTIFY_RESUME);
+	clear_thread_flag(TIF_PERFMON_WORK);
 }
 
 static inline void
@@ -1319,7 +1318,7 @@ pfm_reserve_session(struct task_struct *task, int is_syswide, unsigned int cpu)
 {
 	unsigned long flags;
 	/*
-	 * validy checks on cpu_mask have been done upstream
+	 * validity checks on cpu_mask have been done upstream
 	 */
 	LOCK_PFS(flags);
 
@@ -1385,7 +1384,7 @@ pfm_unreserve_session(pfm_context_t *ctx, int is_syswide, unsigned int cpu)
 {
 	unsigned long flags;
 	/*
-	 * validy checks on cpu_mask have been done upstream
+	 * validity checks on cpu_mask have been done upstream
 	 */
 	LOCK_PFS(flags);
 
@@ -1537,13 +1536,6 @@ init_pfm_fs(void)
 			err = 0;
 	}
 	return err;
-}
-
-static void __exit
-exit_pfm_fs(void)
-{
-	unregister_filesystem(&pfm_fs_type);
-	mntput(pfmfs_mnt);
 }
 
 static ssize_t
@@ -1836,7 +1828,7 @@ pfm_flush(struct file *filp, fl_owner_t id)
 	/*
 	 * remove our file from the async queue, if we use this mode.
 	 * This can be done without the context being protected. We come
-	 * here when the context has become unreacheable by other tasks.
+	 * here when the context has become unreachable by other tasks.
 	 *
 	 * We may still have active monitoring at this point and we may
 	 * end up in pfm_overflow_handler(). However, fasync_helper()
@@ -2133,7 +2125,7 @@ doit:
 	filp->private_data = NULL;
 
 	/*
-	 * if we free on the spot, the context is now completely unreacheable
+	 * if we free on the spot, the context is now completely unreachable
 	 * from the callers side. The monitored task side is also cut, so we
 	 * can freely cut.
 	 *
@@ -2299,7 +2291,7 @@ pfm_remap_buffer(struct vm_area_struct *vma, unsigned long buf, unsigned long ad
  * allocate a sampling buffer and remaps it into the user address space of the task
  */
 static int
-pfm_smpl_buffer_alloc(struct task_struct *task, pfm_context_t *ctx, unsigned long rsize, void **user_vaddr)
+pfm_smpl_buffer_alloc(struct task_struct *task, struct file *filp, pfm_context_t *ctx, unsigned long rsize, void **user_vaddr)
 {
 	struct mm_struct *mm = task->mm;
 	struct vm_area_struct *vma = NULL;
@@ -2349,6 +2341,7 @@ pfm_smpl_buffer_alloc(struct task_struct *task, pfm_context_t *ctx, unsigned lon
 	 * partially initialize the vma for the sampling buffer
 	 */
 	vma->vm_mm	     = mm;
+	vma->vm_file	     = filp;
 	vma->vm_flags	     = VM_READ| VM_MAYREAD |VM_RESERVED;
 	vma->vm_page_prot    = PAGE_READONLY; /* XXX may need to change */
 
@@ -2386,6 +2379,8 @@ pfm_smpl_buffer_alloc(struct task_struct *task, pfm_context_t *ctx, unsigned lon
 		up_write(&task->mm->mmap_sem);
 		goto error;
 	}
+
+	get_file(filp);
 
 	/*
 	 * now insert the vma in the vm list for the process, must be
@@ -2464,7 +2459,7 @@ pfarg_is_sane(struct task_struct *task, pfarg_context_t *pfx)
 }
 
 static int
-pfm_setup_buffer_fmt(struct task_struct *task, pfm_context_t *ctx, unsigned int ctx_flags,
+pfm_setup_buffer_fmt(struct task_struct *task, struct file *filp, pfm_context_t *ctx, unsigned int ctx_flags,
 		     unsigned int cpu, pfarg_context_t *arg)
 {
 	pfm_buffer_fmt_t *fmt = NULL;
@@ -2505,7 +2500,7 @@ pfm_setup_buffer_fmt(struct task_struct *task, pfm_context_t *ctx, unsigned int 
 		/*
 		 * buffer is always remapped into the caller's address space
 		 */
-		ret = pfm_smpl_buffer_alloc(current, ctx, size, &uaddr);
+		ret = pfm_smpl_buffer_alloc(current, filp, ctx, size, &uaddr);
 		if (ret) goto error;
 
 		/* keep track of user address of buffer */
@@ -2560,7 +2555,7 @@ pfm_reset_pmu_state(pfm_context_t *ctx)
 	ctx->ctx_all_pmcs[0] = pmu_conf->impl_pmcs[0] & ~0x1;
 
 	/*
-	 * bitmask of all PMDs that are accesible to this context
+	 * bitmask of all PMDs that are accessible to this context
 	 */
 	ctx->ctx_all_pmds[0] = pmu_conf->impl_pmds[0];
 
@@ -2716,7 +2711,7 @@ pfm_context_create(pfm_context_t *ctx, void *arg, int count, struct pt_regs *reg
 	 * does the user want to sample?
 	 */
 	if (pfm_uuid_cmp(req->ctx_smpl_buf_id, pfm_null_uuid)) {
-		ret = pfm_setup_buffer_fmt(current, ctx, ctx_flags, 0, req);
+		ret = pfm_setup_buffer_fmt(current, filp, ctx, ctx_flags, 0, req);
 		if (ret) goto buffer_error;
 	}
 
@@ -3393,7 +3388,7 @@ pfm_read_pmds(pfm_context_t *ctx, void *arg, int count, struct pt_regs *regs)
 		if (unlikely(!PMD_IS_IMPL(cnum))) goto error;
 		/*
 		 * we can only read the register that we use. That includes
-		 * the one we explicitely initialize AND the one we want included
+		 * the one we explicitly initialize AND the one we want included
 		 * in the sampling buffer (smpl_regs).
 		 *
 		 * Having this restriction allows optimization in the ctxsw routine
@@ -3713,7 +3708,7 @@ pfm_restart(pfm_context_t *ctx, void *arg, int count, struct pt_regs *regs)
 	 * if non-blocking, then we ensure that the task will go into
 	 * pfm_handle_work() before returning to user mode.
 	 *
-	 * We cannot explicitely reset another task, it MUST always
+	 * We cannot explicitly reset another task, it MUST always
 	 * be done by the task itself. This works for system wide because
 	 * the tool that is controlling the session is logically doing 
 	 * "self-monitoring".
@@ -4642,7 +4637,7 @@ pfm_exit_thread(struct task_struct *task)
 	switch(state) {
 		case PFM_CTX_UNLOADED:
 			/*
-	 		 * only comes to thios function if pfm_context is not NULL, i.e., cannot
+	 		 * only comes to this function if pfm_context is not NULL, i.e., cannot
 			 * be in unloaded state
 	 		 */
 			printk(KERN_ERR "perfmon: pfm_exit_thread [%d] ctx unloaded\n", task->pid);
@@ -5245,7 +5240,7 @@ pfm_end_notify_user(pfm_context_t *ctx)
 
 /*
  * main overflow processing routine.
- * it can be called from the interrupt path or explicitely during the context switch code
+ * it can be called from the interrupt path or explicitly during the context switch code
  */
 static void
 pfm_overflow_handler(struct task_struct *task, pfm_context_t *ctx, u64 pmc0, struct pt_regs *regs)

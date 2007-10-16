@@ -12,7 +12,7 @@
 #include <asm/bootinfo.h>
 
 extern struct pci_ops nile4_pci_ops;
-extern struct pci_ops gt64120_pci_ops;
+extern struct pci_ops gt64xxx_pci0_ops;
 static struct resource lasat_pci_mem_resource = {
 	.name	= "LASAT PCI MEM",
 	.start	= 0x18000000,
@@ -34,18 +34,18 @@ static struct pci_controller lasat_pci_controller = {
 
 static int __init lasat_pci_setup(void)
 {
-	printk("PCI: starting\n");
+	printk(KERN_DEBUG "PCI: starting\n");
 
 	switch (mips_machtype) {
 	case MACH_LASAT_100:
-                lasat_pci_controller.pci_ops = &gt64120_pci_ops;
-                break;
+		lasat_pci_controller.pci_ops = &gt64xxx_pci0_ops;
+		break;
 	case MACH_LASAT_200:
-                lasat_pci_controller.pci_ops = &nile4_pci_ops;
-                break;
+		lasat_pci_controller.pci_ops = &nile4_pci_ops;
+		break;
 	default:
-                panic("pcibios_init: mips_machtype incorrect");
-        }
+		panic("pcibios_init: mips_machtype incorrect");
+	}
 
 	register_pci_controller(&lasat_pci_controller);
 
@@ -64,7 +64,7 @@ arch_initcall(lasat_pci_setup);
 #define LASATINT_PCIC   7
 #define LASATINT_PCID   8
 
-int __init pcibios_map_irq(struct pci_dev *dev, u8 slot, u8 pin)
+int __init pcibios_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
 {
 	switch (slot) {
 	case 1:

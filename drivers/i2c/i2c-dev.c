@@ -30,7 +30,6 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/slab.h>
-#include <linux/smp_lock.h>
 #include <linux/init.h>
 #include <linux/list.h>
 #include <linux/i2c.h>
@@ -227,8 +226,10 @@ static int i2cdev_ioctl(struct inode *inode, struct file *file,
 
 		res = 0;
 		for( i=0; i<rdwr_arg.nmsgs; i++ ) {
-			/* Limit the size of the message to a sane amount */
-			if (rdwr_pa[i].len > 8192) {
+			/* Limit the size of the message to a sane amount;
+			 * and don't let length change either. */
+			if ((rdwr_pa[i].len > 8192) ||
+			    (rdwr_pa[i].flags & I2C_M_RECV_LEN)) {
 				res = -EINVAL;
 				break;
 			}
@@ -284,6 +285,7 @@ static int i2cdev_ioctl(struct inode *inode, struct file *file,
 		    (data_arg.size != I2C_SMBUS_WORD_DATA) &&
 		    (data_arg.size != I2C_SMBUS_PROC_CALL) &&
 		    (data_arg.size != I2C_SMBUS_BLOCK_DATA) &&
+		    (data_arg.size != I2C_SMBUS_I2C_BLOCK_BROKEN) &&
 		    (data_arg.size != I2C_SMBUS_I2C_BLOCK_DATA) &&
 		    (data_arg.size != I2C_SMBUS_BLOCK_PROC_CALL)) {
 			dev_dbg(&client->adapter->dev,
@@ -330,9 +332,17 @@ static int i2cdev_ioctl(struct inode *inode, struct file *file,
 
 		if ((data_arg.size == I2C_SMBUS_PROC_CALL) ||
 		    (data_arg.size == I2C_SMBUS_BLOCK_PROC_CALL) ||
+		    (data_arg.size == I2C_SMBUS_I2C_BLOCK_DATA) ||
 		    (data_arg.read_write == I2C_SMBUS_WRITE)) {
 			if (copy_from_user(&temp, data_arg.data, datasize))
 				return -EFAULT;
+		}
+		if (data_arg.size == I2C_SMBUS_I2C_BLOCK_BROKEN) {
+			/* Convert old I2C block commands to the new
+			   convention. This preserves binary compatibility. */
+			data_arg.size = I2C_SMBUS_I2C_BLOCK_DATA;
+			if (data_arg.read_write == I2C_SMBUS_READ)
+				temp.block[0] = I2C_SMBUS_BLOCK_MAX;
 		}
 		res = i2c_smbus_xfer(client->adapter,client->addr,client->flags,
 		      data_arg.read_write,
@@ -344,9 +354,19 @@ static int i2cdev_ioctl(struct inode *inode, struct file *file,
 				return -EFAULT;
 		}
 		return res;
-
+	case I2C_RETRIES:
+		client->adapter->retries = arg;
+		break;
+	case I2C_TIMEOUT:
+		client->adapter->timeout = arg;
+		break;
 	default:
-		return i2c_control(client,cmd,arg);
+		/* NOTE:  returning a fault code here could cause trouble
+		 * in buggy userspace code.  Some old kernel bugs returned
+		 * zero in this case, and userspace code might accidentally
+		 * have depended on that bug.
+		 */
+		return -ENOTTY;
 	}
 	return 0;
 }

@@ -19,6 +19,7 @@
  * Copyright (C) 1995, 1996 Olaf Kirch <okir@monad.swb.de>
  */
 
+#include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/errno.h>
 #include <linux/fcntl.h>
@@ -53,7 +54,8 @@
  * 	svc_serv->sv_lock protects sv_tempsocks, sv_permsocks, sv_tmpcnt.
  *	when both need to be taken (rare), svc_serv->sv_lock is first.
  *	BKL protects svc_serv->sv_nrthread.
- *	svc_sock->sk_defer_lock protects the svc_sock->sk_deferred list
+ *	svc_sock->sk_lock protects the svc_sock->sk_deferred list
+ *             and the ->sk_info_authunix cache.
  *	svc_sock->sk_flags.SK_BUSY prevents a svc_sock being enqueued multiply.
  *
  *	Some flags can be set to certain values at any time
@@ -82,6 +84,7 @@ static void		svc_delete_socket(struct svc_sock *svsk);
 static void		svc_udp_data_ready(struct sock *, int);
 static int		svc_udp_recvfrom(struct svc_rqst *);
 static int		svc_udp_sendto(struct svc_rqst *);
+static void		svc_close_socket(struct svc_sock *svsk);
 
 static struct svc_deferred_req *svc_deferred_dequeue(struct svc_sock *svsk);
 static int svc_deferred_recv(struct svc_rqst *rqstp);
@@ -101,7 +104,7 @@ static struct lock_class_key svc_slock_key[2];
 static inline void svc_reclassify_socket(struct socket *sock)
 {
 	struct sock *sk = sock->sk;
-	BUG_ON(sk->sk_lock.owner != NULL);
+	BUG_ON(sock_owned_by_user(sk));
 	switch (sk->sk_family) {
 	case AF_INET:
 		sock_lock_init_class_and_name(sk, "slock-AF_INET-NFSD",
@@ -129,15 +132,15 @@ static char *__svc_print_addr(struct sockaddr *addr, char *buf, size_t len)
 	case AF_INET:
 		snprintf(buf, len, "%u.%u.%u.%u, port=%u",
 			NIPQUAD(((struct sockaddr_in *) addr)->sin_addr),
-			htons(((struct sockaddr_in *) addr)->sin_port));
+			ntohs(((struct sockaddr_in *) addr)->sin_port));
 		break;
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+
 	case AF_INET6:
 		snprintf(buf, len, "%x:%x:%x:%x:%x:%x:%x:%x, port=%u",
 			NIP6(((struct sockaddr_in6 *) addr)->sin6_addr),
-			htons(((struct sockaddr_in6 *) addr)->sin6_port));
+			ntohs(((struct sockaddr_in6 *) addr)->sin6_port));
 		break;
-#endif
+
 	default:
 		snprintf(buf, len, "unknown address type: %d", addr->sa_family);
 		break;
@@ -449,10 +452,10 @@ svc_wake_up(struct svc_serv *serv)
 
 union svc_pktinfo_u {
 	struct in_pktinfo pkti;
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 	struct in6_pktinfo pkti6;
-#endif
 };
+#define SVC_PKTINFO_SPACE \
+	CMSG_SPACE(sizeof(union svc_pktinfo_u))
 
 static void svc_set_cmsg_data(struct svc_rqst *rqstp, struct cmsghdr *cmh)
 {
@@ -467,7 +470,7 @@ static void svc_set_cmsg_data(struct svc_rqst *rqstp, struct cmsghdr *cmh)
 			cmh->cmsg_len = CMSG_LEN(sizeof(*pki));
 		}
 		break;
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+
 	case AF_INET6: {
 			struct in6_pktinfo *pki = CMSG_DATA(cmh);
 
@@ -479,7 +482,6 @@ static void svc_set_cmsg_data(struct svc_rqst *rqstp, struct cmsghdr *cmh)
 			cmh->cmsg_len = CMSG_LEN(sizeof(*pki));
 		}
 		break;
-#endif
 	}
 	return;
 }
@@ -493,8 +495,11 @@ svc_sendto(struct svc_rqst *rqstp, struct xdr_buf *xdr)
 	struct svc_sock	*svsk = rqstp->rq_sock;
 	struct socket	*sock = svsk->sk_sock;
 	int		slen;
-	char 		buffer[CMSG_SPACE(sizeof(union svc_pktinfo_u))];
-	struct cmsghdr *cmh = (struct cmsghdr *)buffer;
+	union {
+		struct cmsghdr	hdr;
+		long		all[SVC_PKTINFO_SPACE / sizeof(long)];
+	} buffer;
+	struct cmsghdr *cmh = &buffer.hdr;
 	int		len = 0;
 	int		result;
 	int		size;
@@ -640,6 +645,7 @@ svc_recvfrom(struct svc_rqst *rqstp, struct kvec *iov, int nr, int buflen)
 	struct msghdr msg = {
 		.msg_flags	= MSG_DONTWAIT,
 	};
+	struct sockaddr *sin;
 	int len;
 
 	len = kernel_recvmsg(svsk->sk_sock, &msg, iov, nr, buflen,
@@ -649,6 +655,19 @@ svc_recvfrom(struct svc_rqst *rqstp, struct kvec *iov, int nr, int buflen)
 	 */
 	memcpy(&rqstp->rq_addr, &svsk->sk_remote, svsk->sk_remotelen);
 	rqstp->rq_addrlen = svsk->sk_remotelen;
+
+	/* Destination address in request is needed for binding the
+	 * source address in RPC callbacks later.
+	 */
+	sin = (struct sockaddr *)&svsk->sk_local;
+	switch (sin->sa_family) {
+	case AF_INET:
+		rqstp->rq_daddr.addr = ((struct sockaddr_in *)sin)->sin_addr;
+		break;
+	case AF_INET6:
+		rqstp->rq_daddr.addr6 = ((struct sockaddr_in6 *)sin)->sin6_addr;
+		break;
+	}
 
 	dprintk("svc: socket %p recvfrom(%p, %Zu) = %d\n",
 		svsk, iov[0].iov_base, iov[0].iov_len, len);
@@ -721,45 +740,21 @@ svc_write_space(struct sock *sk)
 	}
 }
 
-static void svc_udp_get_sender_address(struct svc_rqst *rqstp,
-					struct sk_buff *skb)
+static inline void svc_udp_get_dest_address(struct svc_rqst *rqstp,
+					    struct cmsghdr *cmh)
 {
 	switch (rqstp->rq_sock->sk_sk->sk_family) {
 	case AF_INET: {
-		/* this seems to come from net/ipv4/udp.c:udp_recvmsg */
-			struct sockaddr_in *sin = svc_addr_in(rqstp);
-
-			sin->sin_family = AF_INET;
-			sin->sin_port = skb->h.uh->source;
-			sin->sin_addr.s_addr = skb->nh.iph->saddr;
-			rqstp->rq_addrlen = sizeof(struct sockaddr_in);
-			/* Remember which interface received this request */
-			rqstp->rq_daddr.addr.s_addr = skb->nh.iph->daddr;
-		}
+		struct in_pktinfo *pki = CMSG_DATA(cmh);
+		rqstp->rq_daddr.addr.s_addr = pki->ipi_spec_dst.s_addr;
 		break;
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+		}
 	case AF_INET6: {
-		/* this is derived from net/ipv6/udp.c:udpv6_recvmesg */
-			struct sockaddr_in6 *sin6 = svc_addr_in6(rqstp);
-
-			sin6->sin6_family = AF_INET6;
-			sin6->sin6_port = skb->h.uh->source;
-			sin6->sin6_flowinfo = 0;
-			sin6->sin6_scope_id = 0;
-			if (ipv6_addr_type(&sin6->sin6_addr) &
-							IPV6_ADDR_LINKLOCAL)
-				sin6->sin6_scope_id = IP6CB(skb)->iif;
-			ipv6_addr_copy(&sin6->sin6_addr,
-							&skb->nh.ipv6h->saddr);
-			rqstp->rq_addrlen = sizeof(struct sockaddr_in);
-			/* Remember which interface received this request */
-			ipv6_addr_copy(&rqstp->rq_daddr.addr6,
-							&skb->nh.ipv6h->saddr);
-		}
+		struct in6_pktinfo *pki = CMSG_DATA(cmh);
+		ipv6_addr_copy(&rqstp->rq_daddr.addr6, &pki->ipi6_addr);
 		break;
-#endif
+		}
 	}
-	return;
 }
 
 /*
@@ -771,7 +766,18 @@ svc_udp_recvfrom(struct svc_rqst *rqstp)
 	struct svc_sock	*svsk = rqstp->rq_sock;
 	struct svc_serv	*serv = svsk->sk_server;
 	struct sk_buff	*skb;
+	union {
+		struct cmsghdr	hdr;
+		long		all[SVC_PKTINFO_SPACE / sizeof(long)];
+	} buffer;
+	struct cmsghdr *cmh = &buffer.hdr;
 	int		err, len;
+	struct msghdr msg = {
+		.msg_name = svc_addr(rqstp),
+		.msg_control = cmh,
+		.msg_controllen = sizeof(buffer),
+		.msg_flags = MSG_DONTWAIT,
+	};
 
 	if (test_and_clear_bit(SK_CHNGBUF, &svsk->sk_flags))
 	    /* udp sockets need large rcvbuf as all pending
@@ -797,24 +803,28 @@ svc_udp_recvfrom(struct svc_rqst *rqstp)
 	}
 
 	clear_bit(SK_DATA, &svsk->sk_flags);
-	while ((skb = skb_recv_datagram(svsk->sk_sk, 0, 1, &err)) == NULL) {
-		if (err == -EAGAIN) {
-			svc_sock_received(svsk);
-			return err;
-		}
-		/* possibly an icmp error */
-		dprintk("svc: recvfrom returned error %d\n", -err);
-	}
-	if (skb->tstamp.off_sec == 0) {
-		struct timeval tv;
+	skb = NULL;
+	err = kernel_recvmsg(svsk->sk_sock, &msg, NULL,
+			     0, 0, MSG_PEEK | MSG_DONTWAIT);
+	if (err >= 0)
+		skb = skb_recv_datagram(svsk->sk_sk, 0, 1, &err);
 
-		tv.tv_sec = xtime.tv_sec;
-		tv.tv_usec = xtime.tv_nsec / NSEC_PER_USEC;
-		skb_set_timestamp(skb, &tv);
+	if (skb == NULL) {
+		if (err != -EAGAIN) {
+			/* possibly an icmp error */
+			dprintk("svc: recvfrom returned error %d\n", -err);
+			set_bit(SK_DATA, &svsk->sk_flags);
+		}
+		svc_sock_received(svsk);
+		return -EAGAIN;
+	}
+	rqstp->rq_addrlen = sizeof(rqstp->rq_addr);
+	if (skb->tstamp.tv64 == 0) {
+		skb->tstamp = ktime_get_real();
 		/* Don't enable netstamp, sunrpc doesn't
 		   need that much accuracy */
 	}
-	skb_get_timestamp(skb, &svsk->sk_sk->sk_stamp);
+	svsk->sk_sk->sk_stamp = skb->tstamp;
 	set_bit(SK_DATA, &svsk->sk_flags); /* there may be more data... */
 
 	/*
@@ -827,7 +837,16 @@ svc_udp_recvfrom(struct svc_rqst *rqstp)
 
 	rqstp->rq_prot = IPPROTO_UDP;
 
-	svc_udp_get_sender_address(rqstp, skb);
+	if (cmh->cmsg_level != IPPROTO_IP ||
+	    cmh->cmsg_type != IP_PKTINFO) {
+		if (net_ratelimit())
+			printk("rpcsvc: received unknown control message:"
+			       "%d/%d\n",
+			       cmh->cmsg_level, cmh->cmsg_type);
+		skb_free_datagram(svsk->sk_sk, skb);
+		return 0;
+	}
+	svc_udp_get_dest_address(rqstp, cmh);
 
 	if (skb_is_nonlinear(skb)) {
 		/* we have to copy */
@@ -859,7 +878,7 @@ svc_udp_recvfrom(struct svc_rqst *rqstp)
 	} else {
 		rqstp->rq_arg.page_len = len - rqstp->rq_arg.head[0].iov_len;
 		rqstp->rq_respages = rqstp->rq_pages + 1 +
-			(rqstp->rq_arg.page_len + PAGE_SIZE - 1)/ PAGE_SIZE;
+			DIV_ROUND_UP(rqstp->rq_arg.page_len, PAGE_SIZE);
 	}
 
 	if (serv->sv_stats)
@@ -884,6 +903,9 @@ svc_udp_sendto(struct svc_rqst *rqstp)
 static void
 svc_udp_init(struct svc_sock *svsk)
 {
+	int one = 1;
+	mm_segment_t oldfs;
+
 	svsk->sk_sk->sk_data_ready = svc_udp_data_ready;
 	svsk->sk_sk->sk_write_space = svc_write_space;
 	svsk->sk_recvfrom = svc_udp_recvfrom;
@@ -899,6 +921,13 @@ svc_udp_init(struct svc_sock *svsk)
 
 	set_bit(SK_DATA, &svsk->sk_flags); /* might have come in before data_ready set up */
 	set_bit(SK_CHNGBUF, &svsk->sk_flags);
+
+	oldfs = get_fs();
+	set_fs(KERNEL_DS);
+	/* make sure we get destination address info */
+	svsk->sk_sock->ops->setsockopt(svsk->sk_sock, IPPROTO_IP, IP_PKTINFO,
+				       (char __user *)&one, sizeof(one));
+	set_fs(oldfs);
 }
 
 /*
@@ -977,11 +1006,9 @@ static inline int svc_port_is_privileged(struct sockaddr *sin)
 	case AF_INET:
 		return ntohs(((struct sockaddr_in *)sin)->sin_port)
 			< PROT_SOCK;
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 	case AF_INET6:
 		return ntohs(((struct sockaddr_in6 *)sin)->sin6_port)
 			< PROT_SOCK;
-#endif
 	default:
 		return 0;
 	}
@@ -1052,6 +1079,12 @@ svc_tcp_accept(struct svc_sock *svsk)
 		goto failed;
 	memcpy(&newsvsk->sk_remote, sin, slen);
 	newsvsk->sk_remotelen = slen;
+	err = kernel_getsockname(newsock, sin, &slen);
+	if (unlikely(err < 0)) {
+		dprintk("svc_tcp_accept: kernel_getsockname error %d\n", -err);
+		slen = offsetof(struct sockaddr, sa_data);
+	}
+	memcpy(&newsvsk->sk_local, sin, slen);
 
 	svc_sock_received(newsvsk);
 
@@ -1078,7 +1111,8 @@ svc_tcp_accept(struct svc_sock *svsk)
 						   serv->sv_name);
 				printk(KERN_NOTICE
 				       "%s: last TCP connect from %s\n",
-				       serv->sv_name, buf);
+				       serv->sv_name, __svc_print_addr(sin,
+							buf, sizeof(buf)));
 			}
 			/*
 			 * Always select the oldest socket. It's not fair,
@@ -1560,7 +1594,7 @@ svc_age_temp_sockets(unsigned long closure)
 
 		if (!test_and_set_bit(SK_OLD, &svsk->sk_flags))
 			continue;
-		if (atomic_read(&svsk->sk_inuse) || test_bit(SK_BUSY, &svsk->sk_flags))
+		if (atomic_read(&svsk->sk_inuse) > 1 || test_bit(SK_BUSY, &svsk->sk_flags))
 			continue;
 		atomic_inc(&svsk->sk_inuse);
 		list_move(le, &to_be_aged);
@@ -1627,7 +1661,7 @@ static struct svc_sock *svc_setup_socket(struct svc_serv *serv,
 	svsk->sk_server = serv;
 	atomic_set(&svsk->sk_inuse, 1);
 	svsk->sk_lastrecv = get_seconds();
-	spin_lock_init(&svsk->sk_defer_lock);
+	spin_lock_init(&svsk->sk_lock);
 	INIT_LIST_HEAD(&svsk->sk_deferred);
 	INIT_LIST_HEAD(&svsk->sk_ready);
 	mutex_init(&svsk->sk_mutex);
@@ -1786,7 +1820,7 @@ svc_delete_socket(struct svc_sock *svsk)
 	spin_unlock_bh(&serv->sv_lock);
 }
 
-void svc_close_socket(struct svc_sock *svsk)
+static void svc_close_socket(struct svc_sock *svsk)
 {
 	set_bit(SK_CLOSE, &svsk->sk_flags);
 	if (test_and_set_bit(SK_BUSY, &svsk->sk_flags))
@@ -1797,6 +1831,19 @@ void svc_close_socket(struct svc_sock *svsk)
 	svc_delete_socket(svsk);
 	clear_bit(SK_BUSY, &svsk->sk_flags);
 	svc_sock_put(svsk);
+}
+
+void svc_force_close_socket(struct svc_sock *svsk)
+{
+	set_bit(SK_CLOSE, &svsk->sk_flags);
+	if (test_bit(SK_BUSY, &svsk->sk_flags)) {
+		/* Waiting to be processed, but no threads left,
+		 * So just remove it from the waiting list
+		 */
+		list_del_init(&svsk->sk_ready);
+		clear_bit(SK_BUSY, &svsk->sk_flags);
+	}
+	svc_close_socket(svsk);
 }
 
 /**
@@ -1838,9 +1885,9 @@ static void svc_revisit(struct cache_deferred_req *dreq, int too_many)
 	dprintk("revisit queued\n");
 	svsk = dr->svsk;
 	dr->svsk = NULL;
-	spin_lock_bh(&svsk->sk_defer_lock);
+	spin_lock(&svsk->sk_lock);
 	list_add(&dr->handle.recent, &svsk->sk_deferred);
-	spin_unlock_bh(&svsk->sk_defer_lock);
+	spin_unlock(&svsk->sk_lock);
 	set_bit(SK_DEFERRED, &svsk->sk_flags);
 	svc_sock_enqueue(svsk);
 	svc_sock_put(svsk);
@@ -1906,7 +1953,7 @@ static struct svc_deferred_req *svc_deferred_dequeue(struct svc_sock *svsk)
 
 	if (!test_bit(SK_DEFERRED, &svsk->sk_flags))
 		return NULL;
-	spin_lock_bh(&svsk->sk_defer_lock);
+	spin_lock(&svsk->sk_lock);
 	clear_bit(SK_DEFERRED, &svsk->sk_flags);
 	if (!list_empty(&svsk->sk_deferred)) {
 		dr = list_entry(svsk->sk_deferred.next,
@@ -1915,6 +1962,6 @@ static struct svc_deferred_req *svc_deferred_dequeue(struct svc_sock *svsk)
 		list_del_init(&dr->handle.recent);
 		set_bit(SK_DEFERRED, &svsk->sk_flags);
 	}
-	spin_unlock_bh(&svsk->sk_defer_lock);
+	spin_unlock(&svsk->sk_lock);
 	return dr;
 }

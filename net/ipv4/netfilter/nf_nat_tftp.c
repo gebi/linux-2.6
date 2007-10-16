@@ -20,7 +20,7 @@ MODULE_DESCRIPTION("TFTP NAT helper");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("ip_nat_tftp");
 
-static unsigned int help(struct sk_buff **pskb,
+static unsigned int help(struct sk_buff *skb,
 			 enum ip_conntrack_info ctinfo,
 			 struct nf_conntrack_expect *exp)
 {
@@ -30,7 +30,7 @@ static unsigned int help(struct sk_buff **pskb,
 		= ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.udp.port;
 	exp->dir = IP_CT_DIR_REPLY;
 	exp->expectfn = nf_nat_follow_master;
-	if (nf_conntrack_expect_related(exp) != 0)
+	if (nf_ct_expect_related(exp) != 0)
 		return NF_DROP;
 	return NF_ACCEPT;
 }

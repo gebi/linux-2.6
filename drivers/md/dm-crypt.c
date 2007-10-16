@@ -30,10 +30,9 @@
 /*
  * per bio private data
  */
-struct crypt_io {
+struct dm_crypt_io {
 	struct dm_target *target;
 	struct bio *base_bio;
-	struct bio *first_clone;
 	struct work_struct work;
 	atomic_t pending;
 	int error;
@@ -107,6 +106,8 @@ struct crypt_config {
 
 static struct kmem_cache *_crypt_io_pool;
 
+static void clone_init(struct dm_crypt_io *, struct bio *);
+
 /*
  * Different IV generation algorithms:
  *
@@ -119,6 +120,9 @@ static struct kmem_cache *_crypt_io_pool;
  *
  * benbi: the 64-bit "big-endian 'narrow block'-count", starting at 1
  *        (needed for LRW-32-AES and possible other narrow block modes)
+ *
+ * null: the initial vector is always zero.  Provides compatibility with
+ *       obsolete loop_fish2 devices.  Do not use for new devices.
  *
  * plumb: unimplemented, see:
  * http://article.gmane.org/gmane.linux.kernel.device-mapper.dm-crypt/454
@@ -256,6 +260,13 @@ static int crypt_iv_benbi_gen(struct crypt_config *cc, u8 *iv, sector_t sector)
 	return 0;
 }
 
+static int crypt_iv_null_gen(struct crypt_config *cc, u8 *iv, sector_t sector)
+{
+	memset(iv, 0, cc->iv_size);
+
+	return 0;
+}
+
 static struct crypt_iv_operations crypt_iv_plain_ops = {
 	.generator = crypt_iv_plain_gen
 };
@@ -270,6 +281,10 @@ static struct crypt_iv_operations crypt_iv_benbi_ops = {
 	.ctr	   = crypt_iv_benbi_ctr,
 	.dtr	   = crypt_iv_benbi_dtr,
 	.generator = crypt_iv_benbi_gen
+};
+
+static struct crypt_iv_operations crypt_iv_null_ops = {
+	.generator = crypt_iv_null_gen
 };
 
 static int
@@ -367,7 +382,7 @@ static int crypt_convert(struct crypt_config *cc,
 
  static void dm_crypt_bio_destructor(struct bio *bio)
  {
-	struct crypt_io *io = bio->bi_private;
+	struct dm_crypt_io *io = bio->bi_private;
 	struct crypt_config *cc = io->target->private;
 
 	bio_free(bio, cc->bs);
@@ -378,36 +393,21 @@ static int crypt_convert(struct crypt_config *cc,
  * This should never violate the device limitations
  * May return a smaller bio when running out of pages
  */
-static struct bio *
-crypt_alloc_buffer(struct crypt_config *cc, unsigned int size,
-                   struct bio *base_bio, unsigned int *bio_vec_idx)
+static struct bio *crypt_alloc_buffer(struct dm_crypt_io *io, unsigned size)
 {
+	struct crypt_config *cc = io->target->private;
 	struct bio *clone;
 	unsigned int nr_iovecs = (size + PAGE_SIZE - 1) >> PAGE_SHIFT;
 	gfp_t gfp_mask = GFP_NOIO | __GFP_HIGHMEM;
 	unsigned int i;
 
-	if (base_bio) {
-		clone = bio_alloc_bioset(GFP_NOIO, base_bio->bi_max_vecs, cc->bs);
-		__bio_clone(clone, base_bio);
-	} else
-		clone = bio_alloc_bioset(GFP_NOIO, nr_iovecs, cc->bs);
-
+	clone = bio_alloc_bioset(GFP_NOIO, nr_iovecs, cc->bs);
 	if (!clone)
 		return NULL;
 
-	clone->bi_destructor = dm_crypt_bio_destructor;
+	clone_init(io, clone);
 
-	/* if the last bio was not complete, continue where that one ended */
-	clone->bi_idx = *bio_vec_idx;
-	clone->bi_vcnt = *bio_vec_idx;
-	clone->bi_size = 0;
-	clone->bi_flags &= ~(1 << BIO_SEG_VALID);
-
-	/* clone->bi_idx pages have already been allocated */
-	size -= clone->bi_idx * PAGE_SIZE;
-
-	for (i = clone->bi_idx; i < nr_iovecs; i++) {
+	for (i = 0; i < nr_iovecs; i++) {
 		struct bio_vec *bv = bio_iovec_idx(clone, i);
 
 		bv->bv_page = mempool_alloc(cc->page_pool, gfp_mask);
@@ -419,7 +419,7 @@ crypt_alloc_buffer(struct crypt_config *cc, unsigned int size,
 		 * return a partially allocated bio, the caller will then try
 		 * to allocate additional bios while submitting this partial bio
 		 */
-		if ((i - clone->bi_idx) == (MIN_BIO_PAGES - 1))
+		if (i == (MIN_BIO_PAGES - 1))
 			gfp_mask = (gfp_mask | __GFP_NOWARN) & ~__GFP_WAIT;
 
 		bv->bv_offset = 0;
@@ -437,12 +437,6 @@ crypt_alloc_buffer(struct crypt_config *cc, unsigned int size,
 		bio_put(clone);
 		return NULL;
 	}
-
-	/*
-	 * Remember the last bio_vec allocated to be able
-	 * to correctly continue after the splitting.
-	 */
-	*bio_vec_idx = clone->bi_vcnt;
 
 	return clone;
 }
@@ -485,7 +479,7 @@ static void crypt_free_buffer_pages(struct crypt_config *cc,
  * One of the bios was finished. Check for completion of
  * the whole request and correctly clean up the buffer.
  */
-static void dec_pending(struct crypt_io *io, int error)
+static void dec_pending(struct dm_crypt_io *io, int error)
 {
 	struct crypt_config *cc = (struct crypt_config *) io->target->private;
 
@@ -495,10 +489,7 @@ static void dec_pending(struct crypt_io *io, int error)
 	if (!atomic_dec_and_test(&io->pending))
 		return;
 
-	if (io->first_clone)
-		bio_put(io->first_clone);
-
-	bio_endio(io->base_bio, io->base_bio->bi_size, io->error);
+	bio_endio(io->base_bio, io->error);
 
 	mempool_free(io, cc->io_pool);
 }
@@ -512,31 +503,25 @@ static void dec_pending(struct crypt_io *io, int error)
 static struct workqueue_struct *_kcryptd_workqueue;
 static void kcryptd_do_work(struct work_struct *work);
 
-static void kcryptd_queue_io(struct crypt_io *io)
+static void kcryptd_queue_io(struct dm_crypt_io *io)
 {
 	INIT_WORK(&io->work, kcryptd_do_work);
 	queue_work(_kcryptd_workqueue, &io->work);
 }
 
-static int crypt_endio(struct bio *clone, unsigned int done, int error)
+static void crypt_endio(struct bio *clone, int error)
 {
-	struct crypt_io *io = clone->bi_private;
+	struct dm_crypt_io *io = clone->bi_private;
 	struct crypt_config *cc = io->target->private;
 	unsigned read_io = bio_data_dir(clone) == READ;
 
 	/*
-	 * free the processed pages, even if
-	 * it's only a partially completed write
+	 * free the processed pages
 	 */
-	if (!read_io)
-		crypt_free_buffer_pages(cc, clone, done);
-
-	/* keep going - not finished yet */
-	if (unlikely(clone->bi_size))
-		return 1;
-
-	if (!read_io)
+	if (!read_io) {
+		crypt_free_buffer_pages(cc, clone, clone->bi_size);
 		goto out;
+	}
 
 	if (unlikely(!bio_flagged(clone, BIO_UPTODATE))) {
 		error = -EIO;
@@ -546,15 +531,14 @@ static int crypt_endio(struct bio *clone, unsigned int done, int error)
 	bio_put(clone);
 	io->post_process = 1;
 	kcryptd_queue_io(io);
-	return 0;
+	return;
 
 out:
 	bio_put(clone);
 	dec_pending(io, error);
-	return error;
 }
 
-static void clone_init(struct crypt_io *io, struct bio *clone)
+static void clone_init(struct dm_crypt_io *io, struct bio *clone)
 {
 	struct crypt_config *cc = io->target->private;
 
@@ -562,9 +546,10 @@ static void clone_init(struct crypt_io *io, struct bio *clone)
 	clone->bi_end_io  = crypt_endio;
 	clone->bi_bdev    = cc->dev->bdev;
 	clone->bi_rw      = io->base_bio->bi_rw;
+	clone->bi_destructor = dm_crypt_bio_destructor;
 }
 
-static void process_read(struct crypt_io *io)
+static void process_read(struct dm_crypt_io *io)
 {
 	struct crypt_config *cc = io->target->private;
 	struct bio *base_bio = io->base_bio;
@@ -585,7 +570,6 @@ static void process_read(struct crypt_io *io)
 	}
 
 	clone_init(io, clone);
-	clone->bi_destructor = dm_crypt_bio_destructor;
 	clone->bi_idx = 0;
 	clone->bi_vcnt = bio_segments(base_bio);
 	clone->bi_size = base_bio->bi_size;
@@ -596,7 +580,7 @@ static void process_read(struct crypt_io *io)
 	generic_make_request(clone);
 }
 
-static void process_write(struct crypt_io *io)
+static void process_write(struct dm_crypt_io *io)
 {
 	struct crypt_config *cc = io->target->private;
 	struct bio *base_bio = io->base_bio;
@@ -604,7 +588,6 @@ static void process_write(struct crypt_io *io)
 	struct convert_context ctx;
 	unsigned remaining = base_bio->bi_size;
 	sector_t sector = base_bio->bi_sector - io->target->begin;
-	unsigned bvec_idx = 0;
 
 	atomic_inc(&io->pending);
 
@@ -615,14 +598,14 @@ static void process_write(struct crypt_io *io)
 	 * so repeat the whole process until all the data can be handled.
 	 */
 	while (remaining) {
-		clone = crypt_alloc_buffer(cc, base_bio->bi_size,
-					   io->first_clone, &bvec_idx);
+		clone = crypt_alloc_buffer(io, remaining);
 		if (unlikely(!clone)) {
 			dec_pending(io, -ENOMEM);
 			return;
 		}
 
 		ctx.bio_out = clone;
+		ctx.idx_out = 0;
 
 		if (unlikely(crypt_convert(cc, &ctx) < 0)) {
 			crypt_free_buffer_pages(cc, clone, clone->bi_size);
@@ -631,35 +614,30 @@ static void process_write(struct crypt_io *io)
 			return;
 		}
 
-		clone_init(io, clone);
+		/* crypt_convert should have filled the clone bio */
+		BUG_ON(ctx.idx_out < clone->bi_vcnt);
+
 		clone->bi_sector = cc->start + sector;
-
-		if (!io->first_clone) {
-			/*
-			 * hold a reference to the first clone, because it
-			 * holds the bio_vec array and that can't be freed
-			 * before all other clones are released
-			 */
-			bio_get(clone);
-			io->first_clone = clone;
-		}
-
 		remaining -= clone->bi_size;
 		sector += bio_sectors(clone);
 
-		/* prevent bio_put of first_clone */
+		/* Grab another reference to the io struct
+		 * before we kick off the request */
 		if (remaining)
 			atomic_inc(&io->pending);
 
 		generic_make_request(clone);
 
+		/* Do not reference clone after this - it
+		 * may be gone already. */
+
 		/* out of memory -> run queues */
 		if (remaining)
-			congestion_wait(bio_data_dir(clone), HZ/100);
+			congestion_wait(WRITE, HZ/100);
 	}
 }
 
-static void process_read_endio(struct crypt_io *io)
+static void process_read_endio(struct dm_crypt_io *io)
 {
 	struct crypt_config *cc = io->target->private;
 	struct convert_context ctx;
@@ -672,7 +650,7 @@ static void process_read_endio(struct crypt_io *io)
 
 static void kcryptd_do_work(struct work_struct *work)
 {
-	struct crypt_io *io = container_of(work, struct crypt_io, work);
+	struct dm_crypt_io *io = container_of(work, struct dm_crypt_io, work);
 
 	if (io->post_process)
 		process_read_endio(io);
@@ -832,6 +810,8 @@ static int crypt_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		cc->iv_gen_ops = &crypt_iv_essiv_ops;
 	else if (strcmp(ivmode, "benbi") == 0)
 		cc->iv_gen_ops = &crypt_iv_benbi_ops;
+	else if (strcmp(ivmode, "null") == 0)
+		cc->iv_gen_ops = &crypt_iv_null_ops;
 	else {
 		ti->error = "Invalid IV mode";
 		goto bad2;
@@ -867,7 +847,7 @@ static int crypt_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		goto bad4;
 	}
 
-	cc->bs = bioset_create(MIN_IOS, MIN_IOS, 4);
+	cc->bs = bioset_create(MIN_IOS, MIN_IOS);
 	if (!cc->bs) {
 		ti->error = "Cannot allocate crypt bioset";
 		goto bad_bs;
@@ -933,6 +913,8 @@ static void crypt_dtr(struct dm_target *ti)
 {
 	struct crypt_config *cc = (struct crypt_config *) ti->private;
 
+	flush_workqueue(_kcryptd_workqueue);
+
 	bioset_free(cc->bs);
 	mempool_destroy(cc->page_pool);
 	mempool_destroy(cc->io_pool);
@@ -952,12 +934,11 @@ static int crypt_map(struct dm_target *ti, struct bio *bio,
 		     union map_info *map_context)
 {
 	struct crypt_config *cc = ti->private;
-	struct crypt_io *io;
+	struct dm_crypt_io *io;
 
 	io = mempool_alloc(cc->io_pool, GFP_NOIO);
 	io->target = ti;
 	io->base_bio = bio;
-	io->first_clone = NULL;
 	io->error = io->post_process = 0;
 	atomic_set(&io->pending, 0);
 	kcryptd_queue_io(io);
@@ -1057,7 +1038,7 @@ error:
 
 static struct target_type crypt_target = {
 	.name   = "crypt",
-	.version= {1, 3, 0},
+	.version= {1, 5, 0},
 	.module = THIS_MODULE,
 	.ctr    = crypt_ctr,
 	.dtr    = crypt_dtr,
@@ -1073,9 +1054,7 @@ static int __init dm_crypt_init(void)
 {
 	int r;
 
-	_crypt_io_pool = kmem_cache_create("dm-crypt_io",
-	                                   sizeof(struct crypt_io),
-	                                   0, 0, NULL, NULL);
+	_crypt_io_pool = KMEM_CACHE(dm_crypt_io, 0);
 	if (!_crypt_io_pool)
 		return -ENOMEM;
 

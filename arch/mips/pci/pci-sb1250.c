@@ -49,8 +49,8 @@
  * Macros for calculating offsets into config space given a device
  * structure or dev/fun/reg
  */
-#define CFGOFFSET(bus,devfn,where) (((bus)<<16) + ((devfn)<<8) + (where))
-#define CFGADDR(bus,devfn,where)   CFGOFFSET((bus)->number,(devfn),where)
+#define CFGOFFSET(bus, devfn, where) (((bus)<<16) + ((devfn)<<8) + (where))
+#define CFGADDR(bus, devfn, where)   CFGOFFSET((bus)->number, (devfn), where)
 
 static void *cfg_space;
 
@@ -84,7 +84,7 @@ static inline void WRITECFG32(u32 addr, u32 data)
 	*(u32 *) (cfg_space + (addr & ~3)) = data;
 }
 
-int pcibios_map_irq(struct pci_dev *dev, u8 slot, u8 pin)
+int pcibios_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
 {
 	return dev->irq;
 }
@@ -228,7 +228,7 @@ static int __init sb1250_pcibios_init(void)
 	/*
 	 * See if the PCI bus has been configured by the firmware.
 	 */
-	reg = *((volatile uint64_t *) IOADDR(A_SCD_SYSTEM_CFG));
+	reg = __raw_readq(IOADDR(A_SCD_SYSTEM_CFG));
 	if (!(reg & M_SYS_PCI_HOST)) {
 		sb1250_bus_status |= PCI_DEVICE_MODE;
 	} else {

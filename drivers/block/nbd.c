@@ -100,7 +100,7 @@ static const char *nbdcmd_to_ascii(int cmd)
 static void nbd_end_request(struct request *req)
 {
 	int uptodate = (req->errors == 0) ? 1 : 0;
-	request_queue_t *q = req->q;
+	struct request_queue *q = req->q;
 	unsigned long flags;
 
 	dprintk(DBG_BLKDEV, "%s: request %p: %s\n", req->rq_disk->disk_name,
@@ -122,17 +122,12 @@ static int sock_xmit(struct socket *sock, int send, void *buf, int size,
 	int result;
 	struct msghdr msg;
 	struct kvec iov;
-	unsigned long flags;
-	sigset_t oldset;
+	sigset_t blocked, oldset;
 
 	/* Allow interception of SIGKILL only
 	 * Don't allow other signals to interrupt the transmission */
-	spin_lock_irqsave(&current->sighand->siglock, flags);
-	oldset = current->blocked;
-	sigfillset(&current->blocked);
-	sigdelsetmask(&current->blocked, sigmask(SIGKILL));
-	recalc_sigpending();
-	spin_unlock_irqrestore(&current->sighand->siglock, flags);
+	siginitsetinv(&blocked, sigmask(SIGKILL));
+	sigprocmask(SIG_SETMASK, &blocked, &oldset);
 
 	do {
 		sock->sk->sk_allocation = GFP_NOIO;
@@ -151,11 +146,9 @@ static int sock_xmit(struct socket *sock, int send, void *buf, int size,
 
 		if (signal_pending(current)) {
 			siginfo_t info;
-			spin_lock_irqsave(&current->sighand->siglock, flags);
 			printk(KERN_WARNING "nbd (pid %d: %s) got signal %d\n",
-				current->pid, current->comm, 
-				dequeue_signal(current, &current->blocked, &info));
-			spin_unlock_irqrestore(&current->sighand->siglock, flags);
+				current->pid, current->comm,
+				dequeue_signal_lock(current, &current->blocked, &info));
 			result = -EINTR;
 			break;
 		}
@@ -169,10 +162,7 @@ static int sock_xmit(struct socket *sock, int send, void *buf, int size,
 		buf += result;
 	} while (size > 0);
 
-	spin_lock_irqsave(&current->sighand->siglock, flags);
-	current->blocked = oldset;
-	recalc_sigpending();
-	spin_unlock_irqrestore(&current->sighand->siglock, flags);
+	sigprocmask(SIG_SETMASK, &oldset, NULL);
 
 	return result;
 }
@@ -190,7 +180,7 @@ static inline int sock_send_bvec(struct socket *sock, struct bio_vec *bvec,
 
 static int nbd_send_req(struct nbd_device *lo, struct request *req)
 {
-	int result, i, flags;
+	int result, flags;
 	struct nbd_request request;
 	unsigned long size = req->nr_sectors << 9;
 	struct socket *sock = lo->sock;
@@ -215,27 +205,23 @@ static int nbd_send_req(struct nbd_device *lo, struct request *req)
 	}
 
 	if (nbd_cmd(req) == NBD_CMD_WRITE) {
-		struct bio *bio;
+		struct req_iterator iter;
+		struct bio_vec *bvec;
 		/*
 		 * we are really probing at internals to determine
 		 * whether to set MSG_MORE or not...
 		 */
-		rq_for_each_bio(bio, req) {
-			struct bio_vec *bvec;
-			bio_for_each_segment(bvec, bio, i) {
-				flags = 0;
-				if ((i < (bio->bi_vcnt - 1)) || bio->bi_next)
-					flags = MSG_MORE;
-				dprintk(DBG_TX, "%s: request %p: sending %d bytes data\n",
-						lo->disk->disk_name, req,
-						bvec->bv_len);
-				result = sock_send_bvec(sock, bvec, flags);
-				if (result <= 0) {
-					printk(KERN_ERR "%s: Send data failed (result %d)\n",
-							lo->disk->disk_name,
-							result);
-					goto error_out;
-				}
+		rq_for_each_segment(bvec, req, iter) {
+			flags = 0;
+			if (!rq_iter_last(req, iter))
+				flags = MSG_MORE;
+			dprintk(DBG_TX, "%s: request %p: sending %d bytes data\n",
+					lo->disk->disk_name, req, bvec->bv_len);
+			result = sock_send_bvec(sock, bvec, flags);
+			if (result <= 0) {
+				printk(KERN_ERR "%s: Send data failed (result %d)\n",
+						lo->disk->disk_name, result);
+				goto error_out;
 			}
 		}
 	}
@@ -331,22 +317,19 @@ static struct request *nbd_read_stat(struct nbd_device *lo)
 	dprintk(DBG_RX, "%s: request %p: got reply\n",
 			lo->disk->disk_name, req);
 	if (nbd_cmd(req) == NBD_CMD_READ) {
-		int i;
-		struct bio *bio;
-		rq_for_each_bio(bio, req) {
-			struct bio_vec *bvec;
-			bio_for_each_segment(bvec, bio, i) {
-				result = sock_recv_bvec(sock, bvec);
-				if (result <= 0) {
-					printk(KERN_ERR "%s: Receive data failed (result %d)\n",
-							lo->disk->disk_name,
-							result);
-					req->errors++;
-					return req;
-				}
-				dprintk(DBG_RX, "%s: request %p: got %d bytes data\n",
-					lo->disk->disk_name, req, bvec->bv_len);
+		struct req_iterator iter;
+		struct bio_vec *bvec;
+
+		rq_for_each_segment(bvec, req, iter) {
+			result = sock_recv_bvec(sock, bvec);
+			if (result <= 0) {
+				printk(KERN_ERR "%s: Receive data failed (result %d)\n",
+						lo->disk->disk_name, result);
+				req->errors++;
+				return req;
 			}
+			dprintk(DBG_RX, "%s: request %p: got %d bytes data\n",
+				lo->disk->disk_name, req, bvec->bv_len);
 		}
 	}
 	return req;
@@ -366,20 +349,25 @@ static struct disk_attribute pid_attr = {
 	.show = pid_show,
 };
 
-static void nbd_do_it(struct nbd_device *lo)
+static int nbd_do_it(struct nbd_device *lo)
 {
 	struct request *req;
+	int ret;
 
 	BUG_ON(lo->magic != LO_MAGIC);
 
 	lo->pid = current->pid;
-	sysfs_create_file(&lo->disk->kobj, &pid_attr.attr);
+	ret = sysfs_create_file(&lo->disk->kobj, &pid_attr.attr);
+	if (ret) {
+		printk(KERN_ERR "nbd: sysfs_create_file failed!");
+		return ret;
+	}
 
 	while ((req = nbd_read_stat(lo)) != NULL)
 		nbd_end_request(req);
 
 	sysfs_remove_file(&lo->disk->kobj, &pid_attr.attr);
-	return;
+	return 0;
 }
 
 static void nbd_clear_que(struct nbd_device *lo)
@@ -411,11 +399,11 @@ static void nbd_clear_que(struct nbd_device *lo)
 /*
  * We always wait for result of write, for now. It would be nice to make it optional
  * in future
- * if ((req->cmd == WRITE) && (lo->flags & NBD_WRITE_NOCHK)) 
+ * if ((rq_data_dir(req) == WRITE) && (lo->flags & NBD_WRITE_NOCHK))
  *   { printk( "Warning: Ignoring result!\n"); nbd_end_request( req ); }
  */
 
-static void do_nbd_request(request_queue_t * q)
+static void do_nbd_request(struct request_queue * q)
 {
 	struct request *req;
 	
@@ -569,7 +557,9 @@ static int nbd_ioctl(struct inode *inode, struct file *file,
 	case NBD_DO_IT:
 		if (!lo->file)
 			return -EINVAL;
-		nbd_do_it(lo);
+		error = nbd_do_it(lo);
+		if (error)
+			return error;
 		/* on return tidy up in case we have a signal */
 		/* Forcibly shutdown the socket causing all listeners
 		 * to error

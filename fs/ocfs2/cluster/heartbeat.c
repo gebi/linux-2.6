@@ -216,8 +216,7 @@ static void o2hb_wait_on_io(struct o2hb_region *reg,
 	wait_for_completion(&wc->wc_io_complete);
 }
 
-static int o2hb_bio_end_io(struct bio *bio,
-			   unsigned int bytes_done,
+static void o2hb_bio_end_io(struct bio *bio,
 			   int error)
 {
 	struct o2hb_bio_wait_ctxt *wc = bio->bi_private;
@@ -227,12 +226,8 @@ static int o2hb_bio_end_io(struct bio *bio,
 		wc->wc_error = error;
 	}
 
-	if (bio->bi_size)
-		return 1;
-
 	o2hb_bio_wait_dec(wc, 1);
 	bio_put(bio);
-	return 0;
 }
 
 /* Setup a Bio to cover I/O against num_slots slots starting at
@@ -438,7 +433,7 @@ static inline void o2hb_prepare_block(struct o2hb_region *reg,
 								   hb_block));
 
 	mlog(ML_HB_BIO, "our node generation = 0x%llx, cksum = 0x%x\n",
-	     (long long)cpu_to_le64(generation),
+	     (long long)generation,
 	     le32_to_cpu(hb_block->hb_cksum));
 }
 
@@ -1234,6 +1229,7 @@ static ssize_t o2hb_region_dev_write(struct o2hb_region *reg,
 				     const char *page,
 				     size_t count)
 {
+	struct task_struct *hb_task;
 	long fd;
 	int sectsize;
 	char *p = (char *)page;
@@ -1319,24 +1315,42 @@ static ssize_t o2hb_region_dev_write(struct o2hb_region *reg,
 	 */
 	atomic_set(&reg->hr_steady_iterations, O2HB_LIVE_THRESHOLD + 1);
 
-	reg->hr_task = kthread_run(o2hb_thread, reg, "o2hb-%s",
-				   reg->hr_item.ci_name);
-	if (IS_ERR(reg->hr_task)) {
-		ret = PTR_ERR(reg->hr_task);
+	hb_task = kthread_run(o2hb_thread, reg, "o2hb-%s",
+			      reg->hr_item.ci_name);
+	if (IS_ERR(hb_task)) {
+		ret = PTR_ERR(hb_task);
 		mlog_errno(ret);
-		reg->hr_task = NULL;
 		goto out;
 	}
+
+	spin_lock(&o2hb_live_lock);
+	reg->hr_task = hb_task;
+	spin_unlock(&o2hb_live_lock);
 
 	ret = wait_event_interruptible(o2hb_steady_queue,
 				atomic_read(&reg->hr_steady_iterations) == 0);
 	if (ret) {
-		kthread_stop(reg->hr_task);
+		/* We got interrupted (hello ptrace!).  Clean up */
+		spin_lock(&o2hb_live_lock);
+		hb_task = reg->hr_task;
 		reg->hr_task = NULL;
+		spin_unlock(&o2hb_live_lock);
+
+		if (hb_task)
+			kthread_stop(hb_task);
 		goto out;
 	}
 
-	ret = count;
+	/* Ok, we were woken.  Make sure it wasn't by drop_item() */
+	spin_lock(&o2hb_live_lock);
+	hb_task = reg->hr_task;
+	spin_unlock(&o2hb_live_lock);
+
+	if (hb_task)
+		ret = count;
+	else
+		ret = -EIO;
+
 out:
 	if (filp)
 		fput(filp);
@@ -1354,10 +1368,17 @@ out:
 static ssize_t o2hb_region_pid_read(struct o2hb_region *reg,
                                       char *page)
 {
-	if (!reg->hr_task)
+	pid_t pid = 0;
+
+	spin_lock(&o2hb_live_lock);
+	if (reg->hr_task)
+		pid = reg->hr_task->pid;
+	spin_unlock(&o2hb_live_lock);
+
+	if (!pid)
 		return 0;
 
-	return sprintf(page, "%u\n", reg->hr_task->pid);
+	return sprintf(page, "%u\n", pid);
 }
 
 struct o2hb_region_attribute {
@@ -1495,12 +1516,25 @@ out:
 static void o2hb_heartbeat_group_drop_item(struct config_group *group,
 					   struct config_item *item)
 {
+	struct task_struct *hb_task;
 	struct o2hb_region *reg = to_o2hb_region(item);
 
 	/* stop the thread when the user removes the region dir */
-	if (reg->hr_task) {
-		kthread_stop(reg->hr_task);
-		reg->hr_task = NULL;
+	spin_lock(&o2hb_live_lock);
+	hb_task = reg->hr_task;
+	reg->hr_task = NULL;
+	spin_unlock(&o2hb_live_lock);
+
+	if (hb_task)
+		kthread_stop(hb_task);
+
+	/*
+	 * If we're racing a dev_write(), we need to wake them.  They will
+	 * check reg->hr_task
+	 */
+	if (atomic_read(&reg->hr_steady_iterations) != 0) {
+		atomic_set(&reg->hr_steady_iterations, 0);
+		wake_up(&o2hb_steady_queue);
 	}
 
 	config_item_put(item);
@@ -1645,7 +1679,67 @@ void o2hb_setup_callback(struct o2hb_callback_func *hc,
 }
 EXPORT_SYMBOL_GPL(o2hb_setup_callback);
 
-int o2hb_register_callback(struct o2hb_callback_func *hc)
+static struct o2hb_region *o2hb_find_region(const char *region_uuid)
+{
+	struct o2hb_region *p, *reg = NULL;
+
+	assert_spin_locked(&o2hb_live_lock);
+
+	list_for_each_entry(p, &o2hb_all_regions, hr_all_item) {
+		if (!strcmp(region_uuid, config_item_name(&p->hr_item))) {
+			reg = p;
+			break;
+		}
+	}
+
+	return reg;
+}
+
+static int o2hb_region_get(const char *region_uuid)
+{
+	int ret = 0;
+	struct o2hb_region *reg;
+
+	spin_lock(&o2hb_live_lock);
+
+	reg = o2hb_find_region(region_uuid);
+	if (!reg)
+		ret = -ENOENT;
+	spin_unlock(&o2hb_live_lock);
+
+	if (ret)
+		goto out;
+
+	ret = o2nm_depend_this_node();
+	if (ret)
+		goto out;
+
+	ret = o2nm_depend_item(&reg->hr_item);
+	if (ret)
+		o2nm_undepend_this_node();
+
+out:
+	return ret;
+}
+
+static void o2hb_region_put(const char *region_uuid)
+{
+	struct o2hb_region *reg;
+
+	spin_lock(&o2hb_live_lock);
+
+	reg = o2hb_find_region(region_uuid);
+
+	spin_unlock(&o2hb_live_lock);
+
+	if (reg) {
+		o2nm_undepend_item(&reg->hr_item);
+		o2nm_undepend_this_node();
+	}
+}
+
+int o2hb_register_callback(const char *region_uuid,
+			   struct o2hb_callback_func *hc)
 {
 	struct o2hb_callback_func *tmp;
 	struct list_head *iter;
@@ -1659,6 +1753,12 @@ int o2hb_register_callback(struct o2hb_callback_func *hc)
 	if (IS_ERR(hbcall)) {
 		ret = PTR_ERR(hbcall);
 		goto out;
+	}
+
+	if (region_uuid) {
+		ret = o2hb_region_get(region_uuid);
+		if (ret)
+			goto out;
 	}
 
 	down_write(&o2hb_callback_sem);
@@ -1682,23 +1782,26 @@ out:
 }
 EXPORT_SYMBOL_GPL(o2hb_register_callback);
 
-int o2hb_unregister_callback(struct o2hb_callback_func *hc)
+void o2hb_unregister_callback(const char *region_uuid,
+			      struct o2hb_callback_func *hc)
 {
 	BUG_ON(hc->hc_magic != O2HB_CB_MAGIC);
 
 	mlog(ML_HEARTBEAT, "on behalf of %p for funcs %p\n",
 	     __builtin_return_address(0), hc);
 
+	/* XXX Can this happen _with_ a region reference? */
 	if (list_empty(&hc->hc_item))
-		return 0;
+		return;
+
+	if (region_uuid)
+		o2hb_region_put(region_uuid);
 
 	down_write(&o2hb_callback_sem);
 
 	list_del_init(&hc->hc_item);
 
 	up_write(&o2hb_callback_sem);
-
-	return 0;
 }
 EXPORT_SYMBOL_GPL(o2hb_unregister_callback);
 

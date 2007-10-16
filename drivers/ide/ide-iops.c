@@ -473,57 +473,22 @@ int drive_is_ready (ide_drive_t *drive)
 EXPORT_SYMBOL(drive_is_ready);
 
 /*
- * Global for All, and taken from ide-pmac.c. Can be called
- * with spinlock held & IRQs disabled, so don't schedule !
- */
-int wait_for_ready (ide_drive_t *drive, int timeout)
-{
-	ide_hwif_t *hwif	= HWIF(drive);
-	u8 stat			= 0;
-
-	while(--timeout) {
-		stat = hwif->INB(IDE_STATUS_REG);
-		if (!(stat & BUSY_STAT)) {
-			if (drive->ready_stat == 0)
-				break;
-			else if ((stat & drive->ready_stat)||(stat & ERR_STAT))
-				break;
-		}
-		mdelay(1);
-	}
-	if ((stat & ERR_STAT) || timeout <= 0) {
-		if (stat & ERR_STAT) {
-			printk(KERN_ERR "%s: wait_for_ready, "
-				"error status: %x\n", drive->name, stat);
-		}
-		return 1;
-	}
-	return 0;
-}
-
-/*
  * This routine busy-waits for the drive status to be not "busy".
  * It then checks the status for all of the "good" bits and none
  * of the "bad" bits, and if all is okay it returns 0.  All other
- * cases return 1 after invoking ide_error() -- caller should just return.
+ * cases return error -- caller may then invoke ide_error().
  *
  * This routine should get fixed to not hog the cpu during extra long waits..
  * That could be done by busy-waiting for the first jiffy or two, and then
  * setting a timer to wake up at half second intervals thereafter,
  * until timeout is achieved, before timing out.
  */
-int ide_wait_stat (ide_startstop_t *startstop, ide_drive_t *drive, u8 good, u8 bad, unsigned long timeout)
+static int __ide_wait_stat(ide_drive_t *drive, u8 good, u8 bad, unsigned long timeout, u8 *rstat)
 {
-	ide_hwif_t *hwif = HWIF(drive);
-	u8 stat;
-	int i;
+	ide_hwif_t *hwif = drive->hwif;
 	unsigned long flags;
- 
-	/* bail early if we've exceeded max_failures */
-	if (drive->max_failures && (drive->failures > drive->max_failures)) {
-		*startstop = ide_stopped;
-		return 1;
-	}
+	int i;
+	u8 stat;
 
 	udelay(1);	/* spec allows drive 400ns to assert "BUSY" */
 	if ((stat = hwif->INB(IDE_STATUS_REG)) & BUSY_STAT) {
@@ -541,8 +506,8 @@ int ide_wait_stat (ide_startstop_t *startstop, ide_drive_t *drive, u8 good, u8 b
 					break;
 
 				local_irq_restore(flags);
-				*startstop = ide_error(drive, "status timeout", stat);
-				return 1;
+				*rstat = stat;
+				return -EBUSY;
 			}
 		}
 		local_irq_restore(flags);
@@ -556,14 +521,72 @@ int ide_wait_stat (ide_startstop_t *startstop, ide_drive_t *drive, u8 good, u8 b
 	 */
 	for (i = 0; i < 10; i++) {
 		udelay(1);
-		if (OK_STAT((stat = hwif->INB(IDE_STATUS_REG)), good, bad))
+		if (OK_STAT((stat = hwif->INB(IDE_STATUS_REG)), good, bad)) {
+			*rstat = stat;
 			return 0;
+		}
 	}
-	*startstop = ide_error(drive, "status error", stat);
-	return 1;
+	*rstat = stat;
+	return -EFAULT;
+}
+
+/*
+ * In case of error returns error value after doing "*startstop = ide_error()".
+ * The caller should return the updated value of "startstop" in this case,
+ * "startstop" is unchanged when the function returns 0.
+ */
+int ide_wait_stat(ide_startstop_t *startstop, ide_drive_t *drive, u8 good, u8 bad, unsigned long timeout)
+{
+	int err;
+	u8 stat;
+
+	/* bail early if we've exceeded max_failures */
+	if (drive->max_failures && (drive->failures > drive->max_failures)) {
+		*startstop = ide_stopped;
+		return 1;
+	}
+
+	err = __ide_wait_stat(drive, good, bad, timeout, &stat);
+
+	if (err) {
+		char *s = (err == -EBUSY) ? "status timeout" : "status error";
+		*startstop = ide_error(drive, s, stat);
+	}
+
+	return err;
 }
 
 EXPORT_SYMBOL(ide_wait_stat);
+
+/**
+ *	ide_in_drive_list	-	look for drive in black/white list
+ *	@id: drive identifier
+ *	@drive_table: list to inspect
+ *
+ *	Look for a drive in the blacklist and the whitelist tables
+ *	Returns 1 if the drive is found in the table.
+ */
+
+int ide_in_drive_list(struct hd_driveid *id, const struct drive_list_entry *drive_table)
+{
+	for ( ; drive_table->id_model; drive_table++)
+		if ((!strcmp(drive_table->id_model, id->model)) &&
+		    (!drive_table->id_firmware ||
+		     strstr(id->fw_rev, drive_table->id_firmware)))
+			return 1;
+	return 0;
+}
+
+EXPORT_SYMBOL_GPL(ide_in_drive_list);
+
+/*
+ * Early UDMA66 devices don't set bit14 to 1, only bit13 is valid.
+ * We list them here and depend on the device side cable detection for them.
+ */
+static const struct drive_list_entry ivb_list[] = {
+	{ "QUANTUM FIREBALLlct10 05"	, "A03.0900"	},
+	{ NULL				, NULL		}
+};
 
 /*
  *  All hosts that use the 80c ribbon must use!
@@ -571,45 +594,57 @@ EXPORT_SYMBOL(ide_wait_stat);
  */
 u8 eighty_ninty_three (ide_drive_t *drive)
 {
-	if(HWIF(drive)->udma_four == 0)
-		return 0;
+	ide_hwif_t *hwif = drive->hwif;
+	struct hd_driveid *id = drive->id;
+	int ivb = ide_in_drive_list(id, ivb_list);
 
-	/* Check for SATA but only if we are ATA5 or higher */
-	if (drive->id->hw_config == 0 && (drive->id->major_rev_num & 0x7FE0))
+	if (hwif->cbl == ATA_CBL_PATA40_SHORT)
 		return 1;
-	if (!(drive->id->hw_config & 0x6000))
-		return 0;
-#ifndef CONFIG_IDEDMA_IVB
-	if(!(drive->id->hw_config & 0x4000))
-		return 0;
-#endif /* CONFIG_IDEDMA_IVB */
-	return 1;
-}
 
-EXPORT_SYMBOL(eighty_ninty_three);
+	if (ivb)
+		printk(KERN_DEBUG "%s: skipping word 93 validity check\n",
+				  drive->name);
+
+	if (hwif->cbl != ATA_CBL_PATA80 && !ivb)
+		goto no_80w;
+
+	if (ide_dev_is_sata(id))
+		return 1;
+
+	/*
+	 * FIXME:
+	 * - force bit13 (80c cable present) check also for !ivb devices
+	 *   (unless the slave device is pre-ATA3)
+	 */
+	if ((id->hw_config & 0x4000) || (ivb && (id->hw_config & 0x2000)))
+		return 1;
+
+no_80w:
+	if (drive->udma33_warned == 1)
+		return 0;
+
+	printk(KERN_WARNING "%s: %s side 80-wire cable detection failed, "
+			    "limiting max speed to UDMA33\n",
+			    drive->name,
+			    hwif->cbl == ATA_CBL_PATA80 ? "drive" : "host");
+
+	drive->udma33_warned = 1;
+
+	return 0;
+}
 
 int ide_ata66_check (ide_drive_t *drive, ide_task_t *args)
 {
 	if ((args->tfRegister[IDE_COMMAND_OFFSET] == WIN_SETFEATURES) &&
 	    (args->tfRegister[IDE_SECTOR_OFFSET] > XFER_UDMA_2) &&
 	    (args->tfRegister[IDE_FEATURE_OFFSET] == SETFEATURES_XFER)) {
-#ifndef CONFIG_IDEDMA_IVB
-		if ((drive->id->hw_config & 0x6000) == 0) {
-#else /* !CONFIG_IDEDMA_IVB */
-		if (((drive->id->hw_config & 0x2000) == 0) ||
-		    ((drive->id->hw_config & 0x4000) == 0)) {
-#endif /* CONFIG_IDEDMA_IVB */
-			printk("%s: Speed warnings UDMA 3/4/5 is not "
-				"functional.\n", drive->name);
-			return 1;
-		}
-		if (!HWIF(drive)->udma_four) {
-			printk("%s: Speed warnings UDMA 3/4/5 is not "
-				"functional.\n",
-				HWIF(drive)->name);
+		if (eighty_ninty_three(drive) == 0) {
+			printk(KERN_WARNING "%s: UDMA speeds >UDMA33 cannot "
+					    "be set\n", drive->name);
 			return 1;
 		}
 	}
+
 	return 0;
 }
 
@@ -731,21 +766,10 @@ int ide_driveid_update (ide_drive_t *drive)
 #endif
 }
 
-/*
- * Similar to ide_wait_stat(), except it never calls ide_error internally.
- * This is a kludge to handle the new ide_config_drive_speed() function,
- * and should not otherwise be used anywhere.  Eventually, the tuneproc's
- * should be updated to return ide_startstop_t, in which case we can get
- * rid of this abomination again.  :)   -ml
- *
- * It is gone..........
- *
- * const char *msg == consider adding for verbose errors.
- */
-int ide_config_drive_speed (ide_drive_t *drive, u8 speed)
+int ide_config_drive_speed(ide_drive_t *drive, u8 speed)
 {
-	ide_hwif_t *hwif	= HWIF(drive);
-	int	i, error	= 1;
+	ide_hwif_t *hwif = drive->hwif;
+	int error;
 	u8 stat;
 
 //	while (HWGROUP(drive)->busy)
@@ -782,38 +806,13 @@ int ide_config_drive_speed (ide_drive_t *drive, u8 speed)
 		hwif->OUTB(drive->ctl | 2, IDE_CONTROL_REG);
 	hwif->OUTB(speed, IDE_NSECTOR_REG);
 	hwif->OUTB(SETFEATURES_XFER, IDE_FEATURE_REG);
-	hwif->OUTB(WIN_SETFEATURES, IDE_COMMAND_REG);
+	hwif->OUTBSYNC(drive, WIN_SETFEATURES, IDE_COMMAND_REG);
 	if ((IDE_CONTROL_REG) && (drive->quirk_list == 2))
 		hwif->OUTB(drive->ctl, IDE_CONTROL_REG);
-	udelay(1);
-	/*
-	 * Wait for drive to become non-BUSY
-	 */
-	if ((stat = hwif->INB(IDE_STATUS_REG)) & BUSY_STAT) {
-		unsigned long flags, timeout;
-		local_irq_set(flags);
-		timeout = jiffies + WAIT_CMD;
-		while ((stat = hwif->INB(IDE_STATUS_REG)) & BUSY_STAT) {
-			if (time_after(jiffies, timeout))
-				break;
-		}
-		local_irq_restore(flags);
-	}
 
-	/*
-	 * Allow status to settle, then read it again.
-	 * A few rare drives vastly violate the 400ns spec here,
-	 * so we'll wait up to 10usec for a "good" status
-	 * rather than expensively fail things immediately.
-	 * This fix courtesy of Matthew Faupel & Niccolo Rigacci.
-	 */
-	for (i = 0; i < 10; i++) {
-		udelay(1);
-		if (OK_STAT((stat = hwif->INB(IDE_STATUS_REG)), DRIVE_READY, BUSY_STAT|DRQ_STAT|ERR_STAT)) {
-			error = 0;
-			break;
-		}
-	}
+	error = __ide_wait_stat(drive, drive->ready_stat,
+				BUSY_STAT|DRQ_STAT|ERR_STAT,
+				WAIT_CMD, &stat);
 
 	SELECT_MASK(drive, 0);
 
@@ -858,9 +857,6 @@ int ide_config_drive_speed (ide_drive_t *drive, u8 speed)
 	return error;
 }
 
-EXPORT_SYMBOL(ide_config_drive_speed);
-
-
 /*
  * This should get invoked any time we exit the driver to
  * wait for an interrupt response from a drive.  handler() points
@@ -883,6 +879,7 @@ static void __ide_set_handler (ide_drive_t *drive, ide_handler_t *handler,
 	hwgroup->handler	= handler;
 	hwgroup->expiry		= expiry;
 	hwgroup->timer.expires	= jiffies + timeout;
+	hwgroup->req_gen_timer = hwgroup->req_gen;
 	add_timer(&hwgroup->timer);
 }
 
@@ -923,6 +920,7 @@ void ide_execute_command(ide_drive_t *drive, task_ioreg_t cmd, ide_handler_t *ha
 	hwgroup->handler	= handler;
 	hwgroup->expiry		= expiry;
 	hwgroup->timer.expires	= jiffies + timeout;
+	hwgroup->req_gen_timer = hwgroup->req_gen;
 	add_timer(&hwgroup->timer);
 	hwif->OUTBSYNC(drive, cmd, IDE_COMMAND_REG);
 	/* Drive takes 400nS to respond, we must avoid the IRQ being
@@ -1088,6 +1086,9 @@ static void pre_reset(ide_drive_t *drive)
 	if (HWIF(drive)->pre_reset != NULL)
 		HWIF(drive)->pre_reset(drive);
 
+	if (drive->current_speed != 0xff)
+		drive->desired_speed = drive->current_speed;
+	drive->current_speed = 0xff;
 }
 
 /*

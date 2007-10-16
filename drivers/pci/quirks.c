@@ -472,11 +472,9 @@ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_ICH8_3, quirk_
  */
 static void __devinit quirk_vt82c586_acpi(struct pci_dev *dev)
 {
-	u8 rev;
 	u32 region;
 
-	pci_read_config_byte(dev, PCI_CLASS_REVISION, &rev);
-	if (rev & 0x10) {
+	if (dev->revision & 0x10) {
 		pci_read_config_dword(dev, 0x48, &region);
 		region &= PCI_BASE_ADDRESS_IO_MASK;
 		quirk_io_region(dev, region, 256, PCI_BRIDGE_RESOURCES, "vt82c586 ACPI");
@@ -587,10 +585,7 @@ DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_VIA,	PCI_DEVICE_ID_VIA_8237,		quirk_via_v
  */
 static void __devinit quirk_amd_ioapic(struct pci_dev *dev)
 {
-	u8 rev;
-
-	pci_read_config_byte(dev, PCI_REVISION_ID, &rev);
-	if (rev >= 0x02) {
+	if (dev->revision >= 0x02) {
 		printk(KERN_WARNING "I/O APIC: AMD Erratum #22 may be present. In the event of instability try\n");
 		printk(KERN_WARNING "        : booting with the \"noapic\" option.\n");
 	}
@@ -610,13 +605,12 @@ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_SI,	PCI_ANY_ID,			quirk_ioapic_rmw );
 #define AMD8131_NIOAMODE_BIT 0
 static void quirk_amd_8131_ioapic(struct pci_dev *dev)
 { 
-        unsigned char revid, tmp;
+        unsigned char tmp;
         
         if (nr_ioapics == 0) 
                 return;
 
-        pci_read_config_byte(dev, PCI_REVISION_ID, &revid);
-        if (revid == AMD8131_revA0 || revid == AMD8131_revB0) {
+        if (dev->revision == AMD8131_revA0 || dev->revision == AMD8131_revB0) {
                 printk(KERN_INFO "Fixing up AMD8131 IOAPIC mode\n"); 
                 pci_read_config_byte( dev, AMD8131_MISC, &tmp);
                 tmp &= ~(1 << AMD8131_NIOAMODE_BIT);
@@ -627,6 +621,19 @@ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_8131_BRIDGE, quirk_
 DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_8131_BRIDGE, quirk_amd_8131_ioapic);
 #endif /* CONFIG_X86_IO_APIC */
 
+/*
+ * Some settings of MMRBC can lead to data corruption so block changes.
+ * See AMD 8131 HyperTransport PCI-X Tunnel Revision Guide
+ */
+static void __init quirk_amd_8131_mmrbc(struct pci_dev *dev)
+{
+	if (dev->subordinate && dev->revision <= 0x12) {
+		printk(KERN_INFO "AMD8131 rev %x detected, disabling PCI-X "
+				"MMRBC\n", dev->revision);
+		dev->subordinate->bus_flags |= PCI_BUS_FLAGS_NO_MMRBC;
+	}
+}
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_8131_BRIDGE, quirk_amd_8131_mmrbc);
 
 /*
  * FIXME: it is questionable that quirk_via_acpi
@@ -843,10 +850,8 @@ DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_CYRIX,	PCI_DEVICE_ID_CYRIX_PCI_MASTER, qu
 static void quirk_disable_pxb(struct pci_dev *pdev)
 {
 	u16 config;
-	u8 rev;
 	
-	pci_read_config_byte(pdev, PCI_REVISION_ID, &rev);
-	if (rev != 0x04)		/* Only C0 requires this */
+	if (pdev->revision != 0x04)		/* Only C0 requires this */
 		return;
 	pci_read_config_word(pdev, 0x40, &config);
 	if (config & (1<<6)) {
@@ -875,6 +880,7 @@ static void __devinit quirk_sb600_sata(struct pci_dev *pdev)
 	}
 }
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP600_SATA, quirk_sb600_sata);
+DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP700_SATA, quirk_sb600_sata);
 
 /*
  *	Serverworks CSB5 IDE does not fully support native mode
@@ -919,38 +925,6 @@ static void __init quirk_eisa_bridge(struct pci_dev *dev)
 }
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82375,	quirk_eisa_bridge );
 
-/*
- * On the MSI-K8T-Neo2Fir Board, the internal Soundcard is disabled
- * when a PCI-Soundcard is added. The BIOS only gives Options
- * "Disabled" and "AUTO". This Quirk Sets the corresponding
- * Register-Value to enable the Soundcard.
- *
- * FIXME: Presently this quirk will run on anything that has an 8237
- * which isn't correct, we need to check DMI tables or something in
- * order to make sure it only runs on the MSI-K8T-Neo2Fir.  Because it
- * runs everywhere at present we suppress the printk output in most
- * irrelevant cases.
- */
-static void k8t_sound_hostbridge(struct pci_dev *dev)
-{
-	unsigned char val;
-
-	pci_read_config_byte(dev, 0x50, &val);
-	if (val == 0x88 || val == 0xc8) {
-		/* Assume it's probably a MSI-K8T-Neo2Fir */
-		printk(KERN_INFO "PCI: MSI-K8T-Neo2Fir, attempting to turn soundcard ON\n");
-		pci_write_config_byte(dev, 0x50, val & (~0x40));
-
-		/* Verify the Change for Status output */
-		pci_read_config_byte(dev, 0x50, &val);
-		if (val & 0x40)
-			printk(KERN_INFO "PCI: MSI-K8T-Neo2Fir, soundcard still off\n");
-		else
-			printk(KERN_INFO "PCI: MSI-K8T-Neo2Fir, soundcard on\n");
-	}
-}
-DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_8237, k8t_sound_hostbridge);
-DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_8237, k8t_sound_hostbridge);
 
 /*
  * On ASUS P4B boards, the SMBus PCI Device within the ICH2/4 southbridge
@@ -961,8 +935,15 @@ DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_8237, k8t_sound_ho
  *
  * The SMBus PCI Device can be activated by setting a bit in the ICH LPC 
  * bridge. Unfortunately, this device has no subvendor/subdevice ID. So it 
- * becomes necessary to do this tweak in two steps -- I've chosen the Host
- * bridge as trigger.
+ * becomes necessary to do this tweak in two steps -- the chosen trigger
+ * is either the Host bridge (preferred) or on-board VGA controller.
+ *
+ * Note that we used to unhide the SMBus that way on Toshiba laptops
+ * (Satellite A40 and Tecra M2) but then found that the thermal management
+ * was done by SMM code, which could cause unsynchronized concurrent
+ * accesses to the SMBus registers, with potentially bad effects. Thus you
+ * should be very careful when adding new entries: if SMM is accessing the
+ * Intel SMBus, this is a very good reason to leave it hidden.
  */
 static int asus_hides_smbus;
 
@@ -1040,17 +1021,6 @@ static void __init asus_hides_smbus_hostbridge(struct pci_dev *dev)
 			case 0x099c: /* HP Compaq nx6110 */
 				asus_hides_smbus = 1;
 			}
-	} else if (unlikely(dev->subsystem_vendor == PCI_VENDOR_ID_TOSHIBA)) {
-		if (dev->device == PCI_DEVICE_ID_INTEL_82855GM_HB)
-			switch(dev->subsystem_device) {
-			case 0x0001: /* Toshiba Satellite A40 */
-				asus_hides_smbus = 1;
-			}
-		else if (dev->device == PCI_DEVICE_ID_INTEL_82855PM_HB)
-			switch(dev->subsystem_device) {
-			case 0x0001: /* Toshiba Tecra M2 */
-				asus_hides_smbus = 1;
-			}
        } else if (unlikely(dev->subsystem_vendor == PCI_VENDOR_ID_SAMSUNG)) {
                if (dev->device ==  PCI_DEVICE_ID_INTEL_82855PM_HB)
                        switch(dev->subsystem_device) {
@@ -1061,6 +1031,14 @@ static void __init asus_hides_smbus_hostbridge(struct pci_dev *dev)
 		if (dev->device == PCI_DEVICE_ID_INTEL_82855PM_HB)
 			switch(dev->subsystem_device) {
 			case 0x0058: /* Compaq Evo N620c */
+				asus_hides_smbus = 1;
+			}
+		else if (dev->device == PCI_DEVICE_ID_INTEL_82810_IG3)
+			switch(dev->subsystem_device) {
+			case 0xB16C: /* Compaq Deskpro EP 401963-001 (PCA# 010174) */
+				/* Motherboard doesn't have Host bridge
+				 * subvendor/subdevice IDs, therefore checking
+				 * its on-board VGA controller */
 				asus_hides_smbus = 1;
 			}
 	}
@@ -1074,6 +1052,8 @@ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_E7501_MCH,	asu
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82855PM_HB,	asus_hides_smbus_hostbridge );
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82855GM_HB,	asus_hides_smbus_hostbridge );
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82915GM_HB, asus_hides_smbus_hostbridge );
+
+DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82810_IG3,	asus_hides_smbus_hostbridge );
 
 static void asus_hides_smbus_lpc(struct pci_dev *dev)
 {
@@ -1092,12 +1072,14 @@ static void asus_hides_smbus_lpc(struct pci_dev *dev)
 			printk(KERN_INFO "PCI: Enabled i801 SMBus device\n");
 	}
 }
+DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82801AA_0,	asus_hides_smbus_lpc );
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82801DB_0,	asus_hides_smbus_lpc );
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82801BA_0,	asus_hides_smbus_lpc );
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82801CA_0,	asus_hides_smbus_lpc );
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82801CA_12,	asus_hides_smbus_lpc );
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82801DB_12,	asus_hides_smbus_lpc );
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82801EB_0,	asus_hides_smbus_lpc );
+DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82801AA_0,	asus_hides_smbus_lpc );
 DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82801DB_0,	asus_hides_smbus_lpc );
 DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82801BA_0,	asus_hides_smbus_lpc );
 DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82801CA_0,	asus_hides_smbus_lpc );
@@ -1218,45 +1200,68 @@ DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_VIA,	PCI_DEVICE_ID_VIA_8237, asus_hides_a
  *	do this early on to make the additional device appear during
  *	the PCI scanning.
  */
-
-static void quirk_jmicron_dualfn(struct pci_dev *pdev)
+static void quirk_jmicron_ata(struct pci_dev *pdev)
 {
-	u32 conf;
+	u32 conf1, conf5, class;
 	u8 hdr;
 
 	/* Only poke fn 0 */
 	if (PCI_FUNC(pdev->devfn))
 		return;
 
-	switch(pdev->device) {
-		case PCI_DEVICE_ID_JMICRON_JMB365:
-		case PCI_DEVICE_ID_JMICRON_JMB366:
-			/* Redirect IDE second PATA port to the right spot */
-			pci_read_config_dword(pdev, 0x80, &conf);
-			conf |= (1 << 24);
-			/* Fall through */
-			pci_write_config_dword(pdev, 0x80, conf);
-		case PCI_DEVICE_ID_JMICRON_JMB361:
-		case PCI_DEVICE_ID_JMICRON_JMB363:
-			pci_read_config_dword(pdev, 0x40, &conf);
-			/* Enable dual function mode, AHCI on fn 0, IDE fn1 */
-			/* Set the class codes correctly and then direct IDE 0 */
-			conf &= ~0x000FF200; /* Clear bit 9 and 12-19 */
-			conf |=  0x00C2A102; /* Set 1, 8, 13, 15, 17, 22, 23 */
-			pci_write_config_dword(pdev, 0x40, conf);
+	pci_read_config_dword(pdev, 0x40, &conf1);
+	pci_read_config_dword(pdev, 0x80, &conf5);
 
-			/* Reconfigure so that the PCI scanner discovers the
-			   device is now multifunction */
+	conf1 &= ~0x00CFF302; /* Clear bit 1, 8, 9, 12-19, 22, 23 */
+	conf5 &= ~(1 << 24);  /* Clear bit 24 */
 
-			pci_read_config_byte(pdev, PCI_HEADER_TYPE, &hdr);
-			pdev->hdr_type = hdr & 0x7f;
-			pdev->multifunction = !!(hdr & 0x80);
+	switch (pdev->device) {
+	case PCI_DEVICE_ID_JMICRON_JMB360:
+		/* The controller should be in single function ahci mode */
+		conf1 |= 0x0002A100; /* Set 8, 13, 15, 17 */
+		break;
 
-			break;
+	case PCI_DEVICE_ID_JMICRON_JMB365:
+	case PCI_DEVICE_ID_JMICRON_JMB366:
+		/* Redirect IDE second PATA port to the right spot */
+		conf5 |= (1 << 24);
+		/* Fall through */
+	case PCI_DEVICE_ID_JMICRON_JMB361:
+	case PCI_DEVICE_ID_JMICRON_JMB363:
+		/* Enable dual function mode, AHCI on fn 0, IDE fn1 */
+		/* Set the class codes correctly and then direct IDE 0 */
+		conf1 |= 0x00C2A102; /* Set 1, 8, 13, 15, 17, 22, 23 */
+		break;
+
+	case PCI_DEVICE_ID_JMICRON_JMB368:
+		/* The controller should be in single function IDE mode */
+		conf1 |= 0x00C00000; /* Set 22, 23 */
+		break;
 	}
+
+	pci_write_config_dword(pdev, 0x40, conf1);
+	pci_write_config_dword(pdev, 0x80, conf5);
+
+	/* Update pdev accordingly */
+	pci_read_config_byte(pdev, PCI_HEADER_TYPE, &hdr);
+	pdev->hdr_type = hdr & 0x7f;
+	pdev->multifunction = !!(hdr & 0x80);
+
+	pci_read_config_dword(pdev, PCI_CLASS_REVISION, &class);
+	pdev->class = class >> 8;
 }
-DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_JMICRON, PCI_ANY_ID, quirk_jmicron_dualfn);
-DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_JMICRON, PCI_ANY_ID, quirk_jmicron_dualfn);
+DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB360, quirk_jmicron_ata);
+DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB361, quirk_jmicron_ata);
+DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB363, quirk_jmicron_ata);
+DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB365, quirk_jmicron_ata);
+DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB366, quirk_jmicron_ata);
+DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB368, quirk_jmicron_ata);
+DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB360, quirk_jmicron_ata);
+DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB361, quirk_jmicron_ata);
+DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB363, quirk_jmicron_ata);
+DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB365, quirk_jmicron_ata);
+DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB366, quirk_jmicron_ata);
+DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB368, quirk_jmicron_ata);
 
 #endif
 
@@ -1284,119 +1289,6 @@ static void __init quirk_alder_ioapic(struct pci_dev *pdev)
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_EESSC,	quirk_alder_ioapic );
 #endif
 
-enum ide_combined_type { COMBINED = 0, IDE = 1, LIBATA = 2 };
-/* Defaults to combined */
-static enum ide_combined_type combined_mode;
-
-static int __init combined_setup(char *str)
-{
-	if (!strncmp(str, "ide", 3))
-		combined_mode = IDE;
-	else if (!strncmp(str, "libata", 6))
-		combined_mode = LIBATA;
-	else /* "combined" or anything else defaults to old behavior */
-		combined_mode = COMBINED;
-
-	return 1;
-}
-__setup("combined_mode=", combined_setup);
-
-#ifdef CONFIG_SATA_INTEL_COMBINED
-static void __devinit quirk_intel_ide_combined(struct pci_dev *pdev)
-{
-	u8 prog, comb, tmp;
-	int ich = 0;
-
-	/*
-	 * Narrow down to Intel SATA PCI devices.
-	 */
-	switch (pdev->device) {
-	/* PCI ids taken from drivers/scsi/ata_piix.c */
-	case 0x24d1:
-	case 0x24df:
-	case 0x25a3:
-	case 0x25b0:
-		ich = 5;
-		break;
-	case 0x2651:
-	case 0x2652:
-	case 0x2653:
-	case 0x2680:	/* ESB2 */
-		ich = 6;
-		break;
-	case 0x27c0:
-	case 0x27c4:
-		ich = 7;
-		break;
-	case 0x2828:	/* ICH8M */
-		ich = 8;
-		break;
-	default:
-		/* we do not handle this PCI device */
-		return;
-	}
-
-	/*
-	 * Read combined mode register.
-	 */
-	pci_read_config_byte(pdev, 0x90, &tmp);	/* combined mode reg */
-
-	if (ich == 5) {
-		tmp &= 0x6;  /* interesting bits 2:1, PATA primary/secondary */
-		if (tmp == 0x4)		/* bits 10x */
-			comb = (1 << 0);	/* SATA port 0, PATA port 1 */
-		else if (tmp == 0x6)	/* bits 11x */
-			comb = (1 << 2);	/* PATA port 0, SATA port 1 */
-		else
-			return;			/* not in combined mode */
-	} else {
-		WARN_ON((ich != 6) && (ich != 7) && (ich != 8));
-		tmp &= 0x3;  /* interesting bits 1:0 */
-		if (tmp & (1 << 0))
-			comb = (1 << 2);	/* PATA port 0, SATA port 1 */
-		else if (tmp & (1 << 1))
-			comb = (1 << 0);	/* SATA port 0, PATA port 1 */
-		else
-			return;			/* not in combined mode */
-	}
-
-	/*
-	 * Read programming interface register.
-	 * (Tells us if it's legacy or native mode)
-	 */
-	pci_read_config_byte(pdev, PCI_CLASS_PROG, &prog);
-
-	/* if SATA port is in native mode, we're ok. */
-	if (prog & comb)
-		return;
-
-	/* Don't reserve any so the IDE driver can get them (but only if
-	 * combined_mode=ide).
-	 */
-	if (combined_mode == IDE)
-		return;
-
-	/* Grab them both for libata if combined_mode=libata. */
-	if (combined_mode == LIBATA) {
-		request_region(0x1f0, 8, "libata");	/* port 0 */
-		request_region(0x170, 8, "libata");	/* port 1 */
-		return;
-	}
-
-	/* SATA port is in legacy mode.  Reserve port so that
-	 * IDE driver does not attempt to use it.  If request_region
-	 * fails, it will be obvious at boot time, so we don't bother
-	 * checking return values.
-	 */
-	if (comb == (1 << 0))
-		request_region(0x1f0, 8, "libata");	/* port 0 */
-	else
-		request_region(0x170, 8, "libata");	/* port 1 */
-}
-DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL,    PCI_ANY_ID,	  quirk_intel_ide_combined );
-#endif /* CONFIG_SATA_INTEL_COMBINED */
-
-
 int pcie_mch_quirk;
 EXPORT_SYMBOL(pcie_mch_quirk);
 
@@ -1415,8 +1307,8 @@ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_E7525_MCH,	quir
  */
 static void __devinit quirk_pcie_pxh(struct pci_dev *dev)
 {
-	disable_msi_mode(dev, pci_find_capability(dev, PCI_CAP_ID_MSI),
-					PCI_CAP_ID_MSI);
+	pci_msi_off(dev);
+
 	dev->no_msi = 1;
 
 	printk(KERN_WARNING "PCI: PXH quirk detected, "
@@ -1515,7 +1407,6 @@ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_NETMOS, PCI_ANY_ID, quirk_netmos);
 static void __devinit quirk_e100_interrupt(struct pci_dev *dev)
 {
 	u16 command;
-	u32 bar;
 	u8 __iomem *csr;
 	u8 cmd_hi;
 
@@ -1547,12 +1438,12 @@ static void __devinit quirk_e100_interrupt(struct pci_dev *dev)
 	 * re-enable them when it's ready.
 	 */
 	pci_read_config_word(dev, PCI_COMMAND, &command);
-	pci_read_config_dword(dev, PCI_BASE_ADDRESS_0, &bar);
 
-	if (!(command & PCI_COMMAND_MEMORY) || !bar)
+	if (!(command & PCI_COMMAND_MEMORY) || !pci_resource_start(dev, 0))
 		return;
 
-	csr = ioremap(bar, 8);
+	/* Convert from PCI bus to resource space.  */
+	csr = ioremap(pci_resource_start(dev, 0), 8);
 	if (!csr) {
 		printk(KERN_WARNING "PCI: Can't map %s e100 registers\n",
 			pci_name(dev));
@@ -1568,7 +1459,7 @@ static void __devinit quirk_e100_interrupt(struct pci_dev *dev)
 
 	iounmap(csr);
 }
-DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, PCI_ANY_ID, quirk_e100_interrupt);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PCI_ANY_ID, quirk_e100_interrupt);
 
 static void __devinit fixup_rev1_53c810(struct pci_dev* dev)
 {
@@ -1718,18 +1609,25 @@ DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_NVIDIA,  PCI_DEVICE_ID_NVIDIA_CK804_PCIE,
 			quirk_nvidia_ck804_pcie_aer_ext_cap);
 
 #ifdef CONFIG_PCI_MSI
-/* The Serverworks PCI-X chipset does not support MSI. We cannot easily rely
- * on setting PCI_BUS_FLAGS_NO_MSI in its bus flags because there are actually
- * some other busses controlled by the chipset even if Linux is not aware of it.
- * Instead of setting the flag on all busses in the machine, simply disable MSI
- * globally.
+/* Some chipsets do not support MSI. We cannot easily rely on setting
+ * PCI_BUS_FLAGS_NO_MSI in its bus flags because there are actually
+ * some other busses controlled by the chipset even if Linux is not
+ * aware of it.  Instead of setting the flag on all busses in the
+ * machine, simply disable MSI globally.
  */
-static void __init quirk_svw_msi(struct pci_dev *dev)
+static void __init quirk_disable_all_msi(struct pci_dev *dev)
 {
 	pci_no_msi();
 	printk(KERN_WARNING "PCI: MSI quirk detected. MSI deactivated.\n");
 }
-DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_SERVERWORKS, PCI_DEVICE_ID_SERVERWORKS_GCNB_LE, quirk_svw_msi);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_SERVERWORKS, PCI_DEVICE_ID_SERVERWORKS_GCNB_LE, quirk_disable_all_msi);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_SERVERWORKS, PCI_DEVICE_ID_SERVERWORKS_HT1000_PCIX, quirk_disable_all_msi);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_RS400_200, quirk_disable_all_msi);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_RS480, quirk_disable_all_msi);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_RD580, quirk_disable_all_msi);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_RX790, quirk_disable_all_msi);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_RS690, quirk_disable_all_msi);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_VT3351, quirk_disable_all_msi);
 
 /* Disable MSI on chipsets that are known to not support it */
 static void __devinit quirk_disable_msi(struct pci_dev *dev)

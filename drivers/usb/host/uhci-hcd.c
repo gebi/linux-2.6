@@ -13,7 +13,7 @@
  * (C) Copyright 2000 Yggdrasil Computing, Inc. (port of new PCI interface
  *               support from usb-ohci.c by Adam Richter, adam@yggdrasil.com).
  * (C) Copyright 1999 Gregory P. Smith (from usb-ohci.c)
- * (C) Copyright 2004-2006 Alan Stern, stern@rowland.harvard.edu
+ * (C) Copyright 2004-2007 Alan Stern, stern@rowland.harvard.edu
  *
  * Intel documents this fairly well, and as far as I know there
  * are no royalties or anything like that, but even so there are
@@ -107,16 +107,16 @@ static __le32 uhci_frame_skel_link(struct uhci_hcd *uhci, int frame)
 	 * interrupt QHs, which will help spread out bandwidth utilization.
 	 *
 	 * ffs (Find First bit Set) does exactly what we need:
-	 * 1,3,5,...  => ffs = 0 => use skel_int2_qh = skelqh[8],
-	 * 2,6,10,... => ffs = 1 => use skel_int4_qh = skelqh[7], etc.
+	 * 1,3,5,...  => ffs = 0 => use period-2 QH = skelqh[8],
+	 * 2,6,10,... => ffs = 1 => use period-4 QH = skelqh[7], etc.
 	 * ffs >= 7 => not on any high-period queue, so use
-	 *	skel_int1_qh = skelqh[9].
+	 *	period-1 QH = skelqh[9].
 	 * Add in UHCI_NUMFRAMES to insure at least one bit is set.
 	 */
 	skelnum = 8 - (int) __ffs(frame | UHCI_NUMFRAMES);
 	if (skelnum <= 1)
 		skelnum = 9;
-	return UHCI_PTR_QH | cpu_to_le32(uhci->skelqh[skelnum]->dma_handle);
+	return LINK_TO_QH(uhci->skelqh[skelnum]);
 }
 
 #include "uhci-debug.c"
@@ -237,7 +237,7 @@ static int resume_detect_interrupts_are_broken(struct uhci_hcd *uhci)
 static int remote_wakeup_is_broken(struct uhci_hcd *uhci)
 {
 	int port;
-	char *sys_info;
+	const char *sys_info;
 	static char bad_Asus_board[] = "A7V8X";
 
 	/* One of Asus's motherboards has a bug which causes it to
@@ -540,16 +540,18 @@ static void uhci_shutdown(struct pci_dev *pdev)
  *
  * The hardware doesn't really know any difference
  * in the queues, but the order does matter for the
- * protocols higher up. The order is:
+ * protocols higher up.  The order in which the queues
+ * are encountered by the hardware is:
  *
- *  - any isochronous events handled before any
+ *  - All isochronous events are handled before any
  *    of the queues. We don't do that here, because
  *    we'll create the actual TD entries on demand.
- *  - The first queue is the interrupt queue.
- *  - The second queue is the control queue, split into low- and full-speed
- *  - The third queue is bulk queue.
- *  - The fourth queue is the bandwidth reclamation queue, which loops back
- *    to the full-speed control queue.
+ *  - The first queue is the high-period interrupt queue.
+ *  - The second queue is the period-1 interrupt and async
+ *    (low-speed control, full-speed control, then bulk) queue.
+ *  - The third queue is the terminating bandwidth reclamation queue,
+ *    which contains no members, loops back to itself, and is present
+ *    only when FSBR is on and there are no full-speed control or bulk QHs.
  */
 static int uhci_start(struct usb_hcd *hcd)
 {
@@ -626,34 +628,19 @@ static int uhci_start(struct usb_hcd *hcd)
 	}
 
 	/*
-	 * 8 Interrupt queues; link all higher int queues to int1,
-	 * then link int1 to control and control to bulk
+	 * 8 Interrupt queues; link all higher int queues to int1 = async
 	 */
-	uhci->skel_int128_qh->link =
-			uhci->skel_int64_qh->link =
-			uhci->skel_int32_qh->link =
-			uhci->skel_int16_qh->link =
-			uhci->skel_int8_qh->link =
-			uhci->skel_int4_qh->link =
-			uhci->skel_int2_qh->link = UHCI_PTR_QH |
-			cpu_to_le32(uhci->skel_int1_qh->dma_handle);
-
-	uhci->skel_int1_qh->link = UHCI_PTR_QH |
-			cpu_to_le32(uhci->skel_ls_control_qh->dma_handle);
-	uhci->skel_ls_control_qh->link = UHCI_PTR_QH |
-			cpu_to_le32(uhci->skel_fs_control_qh->dma_handle);
-	uhci->skel_fs_control_qh->link = UHCI_PTR_QH |
-			cpu_to_le32(uhci->skel_bulk_qh->dma_handle);
-	uhci->skel_bulk_qh->link = UHCI_PTR_QH |
-			cpu_to_le32(uhci->skel_term_qh->dma_handle);
+	for (i = SKEL_ISO + 1; i < SKEL_ASYNC; ++i)
+		uhci->skelqh[i]->link = LINK_TO_QH(uhci->skel_async_qh);
+	uhci->skel_async_qh->link = UHCI_PTR_TERM;
+	uhci->skel_term_qh->link = LINK_TO_QH(uhci->skel_term_qh);
 
 	/* This dummy TD is to work around a bug in Intel PIIX controllers */
 	uhci_fill_td(uhci->term_td, 0, uhci_explen(0) |
-		(0x7f << TD_TOKEN_DEVADDR_SHIFT) | USB_PID_IN, 0);
-	uhci->term_td->link = cpu_to_le32(uhci->term_td->dma_handle);
-
-	uhci->skel_term_qh->link = UHCI_PTR_TERM;
-	uhci->skel_term_qh->element = cpu_to_le32(uhci->term_td->dma_handle);
+			(0x7f << TD_TOKEN_DEVADDR_SHIFT) | USB_PID_IN, 0);
+	uhci->term_td->link = UHCI_PTR_TERM;
+	uhci->skel_async_qh->element = uhci->skel_term_qh->element =
+			LINK_TO_TD(uhci->term_td);
 
 	/*
 	 * Fill the frame list: make all entries point to the proper
@@ -743,10 +730,9 @@ static int uhci_rh_resume(struct usb_hcd *hcd)
 	int rc = 0;
 
 	spin_lock_irq(&uhci->lock);
-	if (!test_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags)) {
-		dev_warn(&hcd->self.root_hub->dev, "HC isn't running!\n");
+	if (!test_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags))
 		rc = -ESHUTDOWN;
-	} else if (!uhci->dead)
+	else if (!uhci->dead)
 		wakeup_rh(uhci);
 	spin_unlock_irq(&uhci->lock);
 	return rc;
@@ -947,7 +933,7 @@ static int __init uhci_hcd_init(void)
 	}
 
 	uhci_up_cachep = kmem_cache_create("uhci_urb_priv",
-		sizeof(struct urb_priv), 0, 0, NULL, NULL);
+		sizeof(struct urb_priv), 0, 0, NULL);
 	if (!uhci_up_cachep)
 		goto up_failed;
 

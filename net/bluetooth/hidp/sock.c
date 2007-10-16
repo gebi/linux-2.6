@@ -194,7 +194,7 @@ static int hidp_sock_compat_ioctl(struct socket *sock, unsigned int cmd, unsigne
 		if (put_user(ca.ctrl_sock, &uca->ctrl_sock) ||
 				put_user(ca.intr_sock, &uca->intr_sock) ||
 				put_user(ca.parser, &uca->parser) ||
-				put_user(ca.rd_size, &uca->parser) ||
+				put_user(ca.rd_size, &uca->rd_size) ||
 				put_user(compat_ptr(ca.rd_data), &uca->rd_data) ||
 				put_user(ca.country, &uca->country) ||
 				put_user(ca.subclass, &uca->subclass) ||
@@ -246,7 +246,7 @@ static struct proto hidp_proto = {
 	.obj_size	= sizeof(struct bt_sock)
 };
 
-static int hidp_sock_create(struct socket *sock, int protocol)
+static int hidp_sock_create(struct net *net, struct socket *sock, int protocol)
 {
 	struct sock *sk;
 
@@ -255,7 +255,7 @@ static int hidp_sock_create(struct socket *sock, int protocol)
 	if (sock->type != SOCK_RAW)
 		return -ESOCKTNOSUPPORT;
 
-	sk = sk_alloc(PF_BLUETOOTH, GFP_ATOMIC, &hidp_proto, 1);
+	sk = sk_alloc(net, PF_BLUETOOTH, GFP_ATOMIC, &hidp_proto, 1);
 	if (!sk)
 		return -ENOMEM;
 

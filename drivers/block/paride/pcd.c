@@ -140,7 +140,7 @@ enum {D_PRT, D_PRO, D_UNI, D_MOD, D_SLV, D_DLY};
 #include <linux/blkdev.h>
 #include <asm/uaccess.h>
 
-static spinlock_t pcd_lock;
+static DEFINE_SPINLOCK(pcd_lock);
 
 module_param(verbose, bool, 0644);
 module_param(major, int, 0);
@@ -183,7 +183,7 @@ static int pcd_packet(struct cdrom_device_info *cdi,
 static int pcd_detect(void);
 static void pcd_probe_capabilities(void);
 static void do_pcd_read_drq(void);
-static void do_pcd_request(request_queue_t * q);
+static void do_pcd_request(struct request_queue * q);
 static void do_pcd_read(void);
 
 struct pcd_unit {
@@ -713,7 +713,7 @@ static int pcd_detect(void)
 /* I/O request processing */
 static struct request_queue *pcd_queue;
 
-static void do_pcd_request(request_queue_t * q)
+static void do_pcd_request(struct request_queue * q)
 {
 	if (pcd_busy)
 		return;

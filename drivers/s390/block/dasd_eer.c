@@ -14,9 +14,9 @@
 #include <linux/moduleparam.h>
 #include <linux/device.h>
 #include <linux/poll.h>
+#include <linux/mutex.h>
 
 #include <asm/uaccess.h>
-#include <asm/semaphore.h>
 #include <asm/atomic.h>
 #include <asm/ebcdic.h>
 
@@ -461,6 +461,7 @@ int dasd_eer_enable(struct dasd_device *device)
 	cqr->device = device;
 	cqr->retries = 255;
 	cqr->expires = 10 * HZ;
+	clear_bit(DASD_CQR_FLAGS_USE_ERP, &cqr->flags);
 
 	cqr->cpaddr->cmd_code = DASD_ECKD_CCW_SNSS;
 	cqr->cpaddr->count = SNSS_DATA_SIZE;
@@ -513,7 +514,7 @@ void dasd_eer_disable(struct dasd_device *device)
  * to transfer in a readbuffer, which is protected by the readbuffer_mutex.
  */
 static char readbuffer[PAGE_SIZE];
-static DECLARE_MUTEX(readbuffer_mutex);
+static DEFINE_MUTEX(readbuffer_mutex);
 
 static int dasd_eer_open(struct inode *inp, struct file *filp)
 {
@@ -578,7 +579,7 @@ static ssize_t dasd_eer_read(struct file *filp, char __user *buf,
 	struct eerbuffer *eerb;
 
 	eerb = (struct eerbuffer *) filp->private_data;
-	if (down_interruptible(&readbuffer_mutex))
+	if (mutex_lock_interruptible(&readbuffer_mutex))
 		return -ERESTARTSYS;
 
 	spin_lock_irqsave(&bufferlock, flags);
@@ -587,7 +588,7 @@ static ssize_t dasd_eer_read(struct file *filp, char __user *buf,
 		                  /* has been deleted             */
 		eerb->residual = 0;
 		spin_unlock_irqrestore(&bufferlock, flags);
-		up(&readbuffer_mutex);
+		mutex_unlock(&readbuffer_mutex);
 		return -EIO;
 	} else if (eerb->residual > 0) {
 		/* OK we still have a second half of a record to deliver */
@@ -601,7 +602,7 @@ static ssize_t dasd_eer_read(struct file *filp, char __user *buf,
 			if (!tc) {
 				/* no data available */
 				spin_unlock_irqrestore(&bufferlock, flags);
-				up(&readbuffer_mutex);
+				mutex_unlock(&readbuffer_mutex);
 				if (filp->f_flags & O_NONBLOCK)
 					return -EAGAIN;
 				rc = wait_event_interruptible(
@@ -609,7 +610,7 @@ static ssize_t dasd_eer_read(struct file *filp, char __user *buf,
 					eerb->head != eerb->tail);
 				if (rc)
 					return rc;
-				if (down_interruptible(&readbuffer_mutex))
+				if (mutex_lock_interruptible(&readbuffer_mutex))
 					return -ERESTARTSYS;
 				spin_lock_irqsave(&bufferlock, flags);
 			}
@@ -625,11 +626,11 @@ static ssize_t dasd_eer_read(struct file *filp, char __user *buf,
 	spin_unlock_irqrestore(&bufferlock, flags);
 
 	if (copy_to_user(buf, readbuffer, effective_count)) {
-		up(&readbuffer_mutex);
+		mutex_unlock(&readbuffer_mutex);
 		return -EFAULT;
 	}
 
-	up(&readbuffer_mutex);
+	mutex_unlock(&readbuffer_mutex);
 	return effective_count;
 }
 

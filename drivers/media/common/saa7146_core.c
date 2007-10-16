@@ -27,7 +27,7 @@ static int saa7146_num;
 
 unsigned int saa7146_debug;
 
-module_param(saa7146_debug, int, 0644);
+module_param(saa7146_debug, uint, 0644);
 MODULE_PARM_DESC(saa7146_debug, "debug level (default: 0)");
 
 #if 0
@@ -100,7 +100,7 @@ int saa7146_wait_for_debi_done(struct saa7146_dev *dev, int nobusyloop)
  * general helper functions
  ****************************************************************************/
 
-/* this is videobuf_vmalloc_to_sg() from video-buf.c
+/* this is videobuf_vmalloc_to_sg() from videobuf-dma-sg.c
    make sure virt has been allocated with vmalloc_32(), otherwise the BUG()
    may be triggered on highmem machines */
 static struct scatterlist* vmalloc_to_sg(unsigned char *virt, int nr_pages)
@@ -130,34 +130,51 @@ static struct scatterlist* vmalloc_to_sg(unsigned char *virt, int nr_pages)
 /********************************************************************************/
 /* common page table functions */
 
-char *saa7146_vmalloc_build_pgtable(struct pci_dev *pci, long length, struct saa7146_pgtable *pt)
+void *saa7146_vmalloc_build_pgtable(struct pci_dev *pci, long length, struct saa7146_pgtable *pt)
 {
 	int pages = (length+PAGE_SIZE-1)/PAGE_SIZE;
-	char *mem = vmalloc_32(length);
+	void *mem = vmalloc_32(length);
 	int slen = 0;
 
-	if (NULL == mem) {
-		return NULL;
-	}
+	if (NULL == mem)
+		goto err_null;
 
-	if (!(pt->slist = vmalloc_to_sg(mem, pages))) {
-		vfree(mem);
-		return NULL;
-	}
+	if (!(pt->slist = vmalloc_to_sg(mem, pages)))
+		goto err_free_mem;
 
-	if (saa7146_pgtable_alloc(pci, pt)) {
-		kfree(pt->slist);
-		pt->slist = NULL;
-		vfree(mem);
-		return NULL;
-	}
+	if (saa7146_pgtable_alloc(pci, pt))
+		goto err_free_slist;
 
-	slen = pci_map_sg(pci,pt->slist,pages,PCI_DMA_FROMDEVICE);
-	if (0 != saa7146_pgtable_build_single(pci, pt, pt->slist, slen)) {
-		return NULL;
-	}
+	pt->nents = pages;
+	slen = pci_map_sg(pci,pt->slist,pt->nents,PCI_DMA_FROMDEVICE);
+	if (0 == slen)
+		goto err_free_pgtable;
+
+	if (0 != saa7146_pgtable_build_single(pci, pt, pt->slist, slen))
+		goto err_unmap_sg;
 
 	return mem;
+
+err_unmap_sg:
+	pci_unmap_sg(pci, pt->slist, pt->nents, PCI_DMA_FROMDEVICE);
+err_free_pgtable:
+	saa7146_pgtable_free(pci, pt);
+err_free_slist:
+	kfree(pt->slist);
+	pt->slist = NULL;
+err_free_mem:
+	vfree(mem);
+err_null:
+	return NULL;
+}
+
+void saa7146_vfree_destroy_pgtable(struct pci_dev *pci, void *mem, struct saa7146_pgtable *pt)
+{
+	pci_unmap_sg(pci, pt->slist, pt->nents, PCI_DMA_FROMDEVICE);
+	saa7146_pgtable_free(pci, pt);
+	kfree(pt->slist);
+	pt->slist = NULL;
+	vfree(mem);
 }
 
 void saa7146_pgtable_free(struct pci_dev *pci, struct saa7146_pgtable *pt)
@@ -166,8 +183,6 @@ void saa7146_pgtable_free(struct pci_dev *pci, struct saa7146_pgtable *pt)
 		return;
 	pci_free_consistent(pci, pt->size, pt->cpu, pt->dma);
 	pt->cpu = NULL;
-	kfree(pt->slist);
-	pt->slist = NULL;
 }
 
 int saa7146_pgtable_alloc(struct pci_dev *pci, struct saa7146_pgtable *pt)
@@ -233,18 +248,17 @@ int saa7146_pgtable_build_single(struct pci_dev *pci, struct saa7146_pgtable *pt
 static irqreturn_t interrupt_hw(int irq, void *dev_id)
 {
 	struct saa7146_dev *dev = dev_id;
-	u32 isr = 0;
+	u32 isr;
+	u32 ack_isr;
 
 	/* read out the interrupt status register */
-	isr = saa7146_read(dev, ISR);
+	ack_isr = isr = saa7146_read(dev, ISR);
 
 	/* is this our interrupt? */
 	if ( 0 == isr ) {
 		/* nope, some other device */
 		return IRQ_NONE;
 	}
-
-	saa7146_write(dev, ISR, isr);
 
 	if( 0 != (dev->ext)) {
 		if( 0 != (dev->ext->irq_mask & isr )) {
@@ -268,21 +282,16 @@ static irqreturn_t interrupt_hw(int irq, void *dev_id)
 		isr &= ~MASK_28;
 	}
 	if (0 != (isr & (MASK_16|MASK_17))) {
-		u32 status = saa7146_read(dev, I2C_STATUS);
-		if( (0x3 == (status & 0x3)) || (0 == (status & 0x1)) ) {
-			SAA7146_IER_DISABLE(dev, MASK_16|MASK_17);
-			/* only wake up if we expect something */
-			if( 0 != dev->i2c_op ) {
-				u32 psr = (saa7146_read(dev, PSR) >> 16) & 0x2;
-				u32 ssr = (saa7146_read(dev, SSR) >> 17) & 0x1f;
-				DEB_I2C(("irq: i2c, status: 0x%08x, psr:0x%02x, ssr:0x%02x).\n",status,psr,ssr));
-				dev->i2c_op = 0;
-				wake_up(&dev->i2c_wq);
-			} else {
-				DEB_I2C(("unexpected irq: i2c, status: 0x%08x, isr %#x\n",status, isr));
-			}
+		SAA7146_IER_DISABLE(dev, MASK_16|MASK_17);
+		/* only wake up if we expect something */
+		if (0 != dev->i2c_op) {
+			dev->i2c_op = 0;
+			wake_up(&dev->i2c_wq);
 		} else {
-			DEB_I2C(("unhandled irq: i2c, status: 0x%08x, isr %#x\n",status, isr));
+			u32 psr = saa7146_read(dev, PSR);
+			u32 ssr = saa7146_read(dev, SSR);
+			printk(KERN_WARNING "%s: unexpected i2c irq: isr %08x psr %08x ssr %08x\n",
+			       dev->name, isr, psr, ssr);
 		}
 		isr &= ~(MASK_16|MASK_17);
 	}
@@ -291,6 +300,7 @@ static irqreturn_t interrupt_hw(int irq, void *dev_id)
 		ERR(("disabling interrupt source(s)!\n"));
 		SAA7146_IER_DISABLE(dev,isr);
 	}
+	saa7146_write(dev, ISR, ack_isr);
 	return IRQ_HANDLED;
 }
 
@@ -528,11 +538,11 @@ EXPORT_SYMBOL_GPL(saa7146_pgtable_alloc);
 EXPORT_SYMBOL_GPL(saa7146_pgtable_free);
 EXPORT_SYMBOL_GPL(saa7146_pgtable_build_single);
 EXPORT_SYMBOL_GPL(saa7146_vmalloc_build_pgtable);
+EXPORT_SYMBOL_GPL(saa7146_vfree_destroy_pgtable);
 EXPORT_SYMBOL_GPL(saa7146_wait_for_debi_done);
 
 EXPORT_SYMBOL_GPL(saa7146_setgpio);
 
-EXPORT_SYMBOL_GPL(saa7146_i2c_transfer);
 EXPORT_SYMBOL_GPL(saa7146_i2c_adapter_prepare);
 
 EXPORT_SYMBOL_GPL(saa7146_debug);

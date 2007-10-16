@@ -103,7 +103,9 @@ int acpi_bus_get_status(struct acpi_device *device)
 	else if (device->parent)
 		device->status = device->parent->status;
 	else
-		STRUCT_TO_INT(device->status) = 0x0F;
+		STRUCT_TO_INT(device->status) =
+		    ACPI_STA_DEVICE_PRESENT | ACPI_STA_DEVICE_ENABLED |
+		    ACPI_STA_DEVICE_UI      | ACPI_STA_DEVICE_FUNCTIONING;
 
 	if (device->status.functional && !device->status.present) {
 		printk(KERN_WARNING PREFIX "Device [%s] status [%08x]: "
@@ -192,7 +194,7 @@ int acpi_bus_set_power(acpi_handle handle, int state)
 
 	if (!device->flags.power_manageable) {
 		ACPI_DEBUG_PRINT((ACPI_DB_INFO, "Device `[%s]' is not power manageable\n",
-				device->dev.kobj.name));
+				kobject_name(&device->dev.kobj)));
 		return -ENODEV;
 	}
 	/*
@@ -260,10 +262,12 @@ int acpi_bus_set_power(acpi_handle handle, int state)
 		printk(KERN_WARNING PREFIX
 			      "Transitioning device [%s] to D%d\n",
 			      device->pnp.bus_id, state);
-	else
+	else {
+		device->power.state = state;
 		ACPI_DEBUG_PRINT((ACPI_DB_INFO,
 				  "Device [%s] transitioned to D%d\n",
 				  device->pnp.bus_id, state));
+	}
 
 	return result;
 }
@@ -274,6 +278,7 @@ EXPORT_SYMBOL(acpi_bus_set_power);
                                 Event Management
    -------------------------------------------------------------------------- */
 
+#ifdef CONFIG_ACPI_PROC_EVENT
 static DEFINE_SPINLOCK(acpi_bus_event_lock);
 
 LIST_HEAD(acpi_bus_event_list);
@@ -281,7 +286,7 @@ DECLARE_WAIT_QUEUE_HEAD(acpi_bus_event_queue);
 
 extern int event_is_open;
 
-int acpi_bus_generate_event(struct acpi_device *device, u8 type, int data)
+int acpi_bus_generate_proc_event(struct acpi_device *device, u8 type, int data)
 {
 	struct acpi_bus_event *event = NULL;
 	unsigned long flags = 0;
@@ -312,7 +317,7 @@ int acpi_bus_generate_event(struct acpi_device *device, u8 type, int data)
 	return 0;
 }
 
-EXPORT_SYMBOL(acpi_bus_generate_event);
+EXPORT_SYMBOL(acpi_bus_generate_proc_event);
 
 int acpi_bus_receive_event(struct acpi_bus_event *event)
 {
@@ -358,6 +363,7 @@ int acpi_bus_receive_event(struct acpi_bus_event *event)
 }
 
 EXPORT_SYMBOL(acpi_bus_receive_event);
+#endif	/* CONFIG_ACPI_PROC_EVENT */
 
 /* --------------------------------------------------------------------------
                              Notification Handling

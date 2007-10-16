@@ -23,8 +23,9 @@
 
 struct poll_table_struct;
 struct inode;
+struct net;
 
-#define NPROTO		33		/* should be enough for now..	*/
+#define NPROTO		34		/* should be enough for now..	*/
 
 #define SYS_SOCKET	1		/* sys_socket(2)		*/
 #define SYS_BIND	2		/* sys_bind(2)			*/
@@ -169,7 +170,7 @@ struct proto_ops {
 
 struct net_proto_family {
 	int		family;
-	int		(*create)(struct socket *sock, int protocol);
+	int		(*create)(struct net *net, struct socket *sock, int protocol);
 	struct module	*owner;
 };
 

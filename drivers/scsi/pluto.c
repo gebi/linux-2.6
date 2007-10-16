@@ -4,6 +4,7 @@
  *
  */
 
+#include <linux/completion.h>
 #include <linux/kernel.h>
 #include <linux/delay.h>
 #include <linux/types.h>
@@ -50,15 +51,9 @@ static struct ctrl_inquiry {
 } *fcs __initdata;
 static int fcscount __initdata = 0;
 static atomic_t fcss __initdata = ATOMIC_INIT(0);
-DECLARE_MUTEX_LOCKED(fc_sem);
+static DECLARE_COMPLETION(fc_detect_complete);
 
 static int pluto_encode_addr(Scsi_Cmnd *SCpnt, u16 *addr, fc_channel *fc, fcp_cmnd *fcmd);
-
-static void __init pluto_detect_timeout(unsigned long data)
-{
-	PLND(("Timeout\n"))
-	up(&fc_sem);
-}
 
 static void __init pluto_detect_done(Scsi_Cmnd *SCpnt)
 {
@@ -69,7 +64,7 @@ static void __init pluto_detect_scsi_done(Scsi_Cmnd *SCpnt)
 {
 	PLND(("Detect done %08lx\n", (long)SCpnt))
 	if (atomic_dec_and_test (&fcss))
-		up(&fc_sem);
+		complete(&fc_detect_complete);
 }
 
 int pluto_slave_configure(struct scsi_device *device)
@@ -96,7 +91,6 @@ int __init pluto_detect(struct scsi_host_template *tpnt)
 	int i, retry, nplutos;
 	fc_channel *fc;
 	struct scsi_device dev;
-	DEFINE_TIMER(fc_timer, pluto_detect_timeout, 0, 0);
 
 	tpnt->proc_name = "pluto";
 	fcscount = 0;
@@ -117,13 +111,12 @@ int __init pluto_detect(struct scsi_host_template *tpnt)
 #endif
 			return 0;
 	}
-	fcs = kmalloc(sizeof (struct ctrl_inquiry) * fcscount, GFP_DMA);
+	fcs = kcalloc(fcscount, sizeof (struct ctrl_inquiry), GFP_DMA);
 	if (!fcs) {
 		printk ("PLUTO: Not enough memory to probe\n");
 		return 0;
 	}
 	
-	memset (fcs, 0, sizeof (struct ctrl_inquiry) * fcscount);
 	memset (&dev, 0, sizeof(dev));
 	atomic_set (&fcss, fcscount);
 	
@@ -167,7 +160,6 @@ int __init pluto_detect(struct scsi_host_template *tpnt)
 	
 		SCpnt->request->cmd_flags &= ~REQ_STARTED;
 		
-		SCpnt->done = pluto_detect_done;
 		SCpnt->request_bufflen = 256;
 		SCpnt->request_buffer = fcs[i].inquiry;
 		PLD(("set up %d %08lx\n", i, (long)SCpnt))
@@ -187,15 +179,11 @@ int __init pluto_detect(struct scsi_host_template *tpnt)
 			}
 		}
 	    
-		fc_timer.expires = jiffies + 10 * HZ;
-		add_timer(&fc_timer);
-		
-		down(&fc_sem);
+		wait_for_completion_timeout(&fc_detect_complete, 10 * HZ);
 		PLND(("Woken up\n"))
 		if (!atomic_read(&fcss))
 			break; /* All fc channels have answered us */
 	}
-	del_timer_sync(&fc_timer);
 
 	PLND(("Finished search\n"))
 	for (i = 0, nplutos = 0; i < fcscount; i++) {
@@ -206,7 +194,7 @@ int __init pluto_detect(struct scsi_host_template *tpnt)
 		SCpnt = &(fcs[i].cmd);
 		
 		/* Let FC mid-level free allocated resources */
-		SCpnt->done (SCpnt);
+		pluto_detect_scsi_done(SCpnt);
 		
 		if (!SCpnt->result) {
 			struct pluto_inquiry *inq;
@@ -221,7 +209,7 @@ int __init pluto_detect(struct scsi_host_template *tpnt)
 				char *p;
 				long *ages;
 				
-				ages = kmalloc (((inq->channels + 1) * inq->targets) * sizeof(long), GFP_KERNEL);
+				ages = kcalloc((inq->channels + 1) * inq->targets, sizeof(long), GFP_KERNEL);
 				if (!ages) continue;
 				
 				host = scsi_register (tpnt, sizeof (struct pluto));
@@ -248,7 +236,6 @@ int __init pluto_detect(struct scsi_host_template *tpnt)
 				fc->channels = inq->channels + 1;
 				fc->targets = inq->targets;
 				fc->ages = ages;
-				memset (ages, 0, ((inq->channels + 1) * inq->targets) * sizeof(long));
 				
 				pluto->fc = fc;
 				memcpy (pluto->rev_str, inq->revision, 4);
@@ -270,7 +257,7 @@ int __init pluto_detect(struct scsi_host_template *tpnt)
 		} else
 			fc->fcp_register(fc, TYPE_SCSI_FCP, 1);
 	}
-	kfree((char *)fcs);
+	kfree(fcs);
 	if (nplutos)
 		printk ("PLUTO: Total of %d SparcSTORAGE Arrays found\n", nplutos);
 	return nplutos;

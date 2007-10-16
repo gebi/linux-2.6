@@ -38,7 +38,7 @@ static struct dentry *lock_parent(struct dentry *dentry)
 	struct dentry *dir;
 
 	dir = dget(dentry->d_parent);
-	mutex_lock(&(dir->d_inode->i_mutex));
+	mutex_lock_nested(&(dir->d_inode->i_mutex), I_MUTEX_PARENT);
 	return dir;
 }
 
@@ -168,9 +168,9 @@ static int grow_file(struct dentry *ecryptfs_dentry, struct file *lower_file,
 		goto out;
 	}
 	i_size_write(inode, 0);
-	ecryptfs_write_inode_size_to_metadata(lower_file, lower_inode, inode,
-					      ecryptfs_dentry,
-					      ECRYPTFS_LOWER_I_MUTEX_NOT_HELD);
+	rc = ecryptfs_write_inode_size_to_metadata(lower_file, lower_inode,
+			inode, ecryptfs_dentry,
+			ECRYPTFS_LOWER_I_MUTEX_NOT_HELD);
 	ecryptfs_inode_to_private(inode)->crypt_stat.flags |= ECRYPTFS_NEW_FILE;
 out:
 	return rc;
@@ -200,9 +200,6 @@ static int ecryptfs_initialize_file(struct dentry *ecryptfs_dentry)
 	inode = ecryptfs_dentry->d_inode;
 	crypt_stat = &ecryptfs_inode_to_private(inode)->crypt_stat;
 	lower_flags = ((O_CREAT | O_TRUNC) & O_ACCMODE) | O_RDWR;
-#if BITS_PER_LONG != 32
-	lower_flags |= O_LARGEFILE;
-#endif
 	lower_mnt = ecryptfs_dentry_to_lower_mnt(ecryptfs_dentry);
 	/* Corresponding fput() at end of this function */
 	if ((rc = ecryptfs_open_lower_file(&lower_file, lower_dentry, lower_mnt,
@@ -285,7 +282,7 @@ static struct dentry *ecryptfs_lookup(struct inode *dir, struct dentry *dentry,
 	struct dentry *lower_dentry;
 	struct vfsmount *lower_mnt;
 	char *encoded_name;
-	unsigned int encoded_namelen;
+	int encoded_namelen;
 	struct ecryptfs_crypt_stat *crypt_stat = NULL;
 	struct ecryptfs_mount_crypt_stat *mount_crypt_stat;
 	char *page_virt = NULL;
@@ -354,6 +351,10 @@ static struct dentry *ecryptfs_lookup(struct inode *dir, struct dentry *dentry,
 	}
 	if (S_ISLNK(lower_inode->i_mode)) {
 		ecryptfs_printk(KERN_DEBUG, "Is a symlink; returning\n");
+		goto out;
+	}
+	if (special_file(lower_inode->i_mode)) {
+		ecryptfs_printk(KERN_DEBUG, "Is a special file; returning\n");
 		goto out;
 	}
 	if (!nd) {
@@ -476,7 +477,7 @@ static int ecryptfs_symlink(struct inode *dir, struct dentry *dentry,
 	struct dentry *lower_dir_dentry;
 	umode_t mode;
 	char *encoded_symname;
-	unsigned int encoded_symlen;
+	int encoded_symlen;
 	struct ecryptfs_crypt_stat *crypt_stat = NULL;
 
 	lower_dentry = ecryptfs_dentry_to_lower(dentry);
@@ -803,6 +804,25 @@ int ecryptfs_truncate(struct dentry *dentry, loff_t new_length)
 			goto out_fput;
 		}
 	} else { /* new_length < i_size_read(inode) */
+		pgoff_t index = 0;
+		int end_pos_in_page = -1;
+
+		if (new_length != 0) {
+			index = ((new_length - 1) >> PAGE_CACHE_SHIFT);
+			end_pos_in_page = ((new_length - 1) & ~PAGE_CACHE_MASK);
+		}
+		if (end_pos_in_page != (PAGE_CACHE_SIZE - 1)) {
+			if ((rc = ecryptfs_write_zeros(&fake_ecryptfs_file,
+						       index,
+						       (end_pos_in_page + 1),
+						       ((PAGE_CACHE_SIZE - 1)
+							- end_pos_in_page)))) {
+				printk(KERN_ERR "Error attempting to zero out "
+				       "the remainder of the end page on "
+				       "reducing truncate; rc = [%d]\n", rc);
+				goto out_fput;
+			}
+		}
 		vmtruncate(inode, new_length);
 		rc = ecryptfs_write_inode_size_to_metadata(
 			lower_file, lower_dentry->d_inode, inode, dentry,
@@ -878,9 +898,55 @@ static int ecryptfs_setattr(struct dentry *dentry, struct iattr *ia)
 	struct ecryptfs_crypt_stat *crypt_stat;
 
 	crypt_stat = &ecryptfs_inode_to_private(dentry->d_inode)->crypt_stat;
-	lower_dentry = ecryptfs_dentry_to_lower(dentry);
+	if (!(crypt_stat->flags & ECRYPTFS_STRUCT_INITIALIZED))
+		ecryptfs_init_crypt_stat(crypt_stat);
 	inode = dentry->d_inode;
 	lower_inode = ecryptfs_inode_to_lower(inode);
+	lower_dentry = ecryptfs_dentry_to_lower(dentry);
+	mutex_lock(&crypt_stat->cs_mutex);
+	if (S_ISDIR(dentry->d_inode->i_mode))
+		crypt_stat->flags &= ~(ECRYPTFS_ENCRYPTED);
+	else if (S_ISREG(dentry->d_inode->i_mode)
+		 && (!(crypt_stat->flags & ECRYPTFS_POLICY_APPLIED)
+		     || !(crypt_stat->flags & ECRYPTFS_KEY_VALID))) {
+		struct vfsmount *lower_mnt;
+		struct file *lower_file = NULL;
+		struct ecryptfs_mount_crypt_stat *mount_crypt_stat;
+		int lower_flags;
+
+		lower_mnt = ecryptfs_dentry_to_lower_mnt(dentry);
+		lower_flags = O_RDONLY;
+		if ((rc = ecryptfs_open_lower_file(&lower_file, lower_dentry,
+						   lower_mnt, lower_flags))) {
+			printk(KERN_ERR
+			       "Error opening lower file; rc = [%d]\n", rc);
+			mutex_unlock(&crypt_stat->cs_mutex);
+			goto out;
+		}
+		mount_crypt_stat = &ecryptfs_superblock_to_private(
+			dentry->d_sb)->mount_crypt_stat;
+		if ((rc = ecryptfs_read_metadata(dentry, lower_file))) {
+			if (!(mount_crypt_stat->flags
+			      & ECRYPTFS_PLAINTEXT_PASSTHROUGH_ENABLED)) {
+				rc = -EIO;
+				printk(KERN_WARNING "Attempt to read file that "
+				       "is not in a valid eCryptfs format, "
+				       "and plaintext passthrough mode is not "
+				       "enabled; returning -EIO\n");
+
+				mutex_unlock(&crypt_stat->cs_mutex);
+				fput(lower_file);
+				goto out;
+			}
+			rc = 0;
+			crypt_stat->flags &= ~(ECRYPTFS_ENCRYPTED);
+			mutex_unlock(&crypt_stat->cs_mutex);
+			fput(lower_file);
+			goto out;
+		}
+		fput(lower_file);
+	}
+	mutex_unlock(&crypt_stat->cs_mutex);
 	if (ia->ia_valid & ATTR_SIZE) {
 		ecryptfs_printk(KERN_DEBUG,
 				"ia->ia_valid = [0x%x] ATTR_SIZE" " = [0x%x]\n",

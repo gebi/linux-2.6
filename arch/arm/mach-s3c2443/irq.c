@@ -23,7 +23,6 @@
 #include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/ioport.h>
-#include <linux/ptrace.h>
 #include <linux/sysdev.h>
 
 #include <asm/hardware.h>
@@ -137,7 +136,7 @@ static struct irq_chip s3c2443_irq_lcd = {
 
 static void s3c2443_irq_demux_dma(unsigned int irq, struct irq_desc *desc)
 {
-	s3c2443_irq_demux(IRQ_S3C2443_DMA1, 6);
+	s3c2443_irq_demux(IRQ_S3C2443_DMA0, 6);
 }
 
 #define INTMSK_DMA	(1UL << (IRQ_S3C2443_DMA - IRQ_EINT0))
@@ -253,7 +252,7 @@ static int __init s3c2443_add_sub(unsigned int base,
 	return 0;
 }
 
-static int s3c2443_irq_add(struct sys_device *sysdev)
+static int __init s3c2443_irq_add(struct sys_device *sysdev)
 {
 	printk("S3C2443: IRQ Support\n");
 
@@ -281,7 +280,7 @@ static struct sysdev_driver s3c2443_irq_driver = {
 	.add		= s3c2443_irq_add,
 };
 
-static int s3c2443_irq_init(void)
+static int __init s3c2443_irq_init(void)
 {
 	return sysdev_driver_register(&s3c2443_sysclass, &s3c2443_irq_driver);
 }

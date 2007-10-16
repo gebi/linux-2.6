@@ -64,47 +64,7 @@ static unsigned long last_pc0, last_match20;
 
 static DEFINE_SPINLOCK(time_lock);
 
-static inline void ack_r4ktimer(unsigned long newval)
-{
-	write_c0_compare(newval);
-}
-
-/*
- * There are a lot of conceptually broken versions of the MIPS timer interrupt
- * handler floating around.  This one is rather different, but the algorithm
- * is provably more robust.
- */
 unsigned long wtimer;
-
-void mips_timer_interrupt(void)
-{
-	int irq = 63;
-
-	irq_enter();
-	kstat_this_cpu.irqs[irq]++;
-
-	if (r4k_offset == 0)
-		goto null;
-
-	do {
-		kstat_this_cpu.irqs[irq]++;
-		do_timer(1);
-#ifndef CONFIG_SMP
-		update_process_times(user_mode(get_irq_regs()));
-#endif
-		r4k_cur += r4k_offset;
-		ack_r4ktimer(r4k_cur);
-
-	} while (((unsigned long)read_c0_count()
-	         - r4k_cur) < 0x7fffffff);
-
-	irq_exit();
-	return;
-
-null:
-	ack_r4ktimer(0);
-	irq_exit();
-}
 
 #ifdef CONFIG_PM
 irqreturn_t counter0_irq(int irq, void *dev_id)
@@ -203,11 +163,7 @@ wakeup_counter0_set(int ticks)
 /* I haven't found anyone that doesn't use a 12 MHz source clock,
  * but just in case.....
  */
-#ifdef CONFIG_AU1000_SRC_CLK
-#define AU1000_SRC_CLK	CONFIG_AU1000_SRC_CLK
-#else
 #define AU1000_SRC_CLK	12000000
-#endif
 
 /*
  * We read the real processor speed from the PLL.  This is important
@@ -244,36 +200,11 @@ unsigned long cal_r4koff(void)
 		while (au_readl(SYS_COUNTER_CNTRL) & SYS_CNTRL_T1S);
 
 		while (au_readl(SYS_COUNTER_CNTRL) & SYS_CNTRL_C1S);
-		au_writel (0, SYS_TOYWRITE);
+		au_writel(0, SYS_TOYWRITE);
 		while (au_readl(SYS_COUNTER_CNTRL) & SYS_CNTRL_C1S);
 
-#if defined(CONFIG_AU1000_USE32K)
-		{
-			unsigned long start, end, count;
-
-			start = au_readl(SYS_RTCREAD);
-			start += 2;
-			/* wait for the beginning of a new tick
-			*/
-			while (au_readl(SYS_RTCREAD) < start);
-
-			/* Start r4k counter.
-			*/
-			write_c0_count(0);
-
-			/* Wait 0.5 seconds.
-			*/
-			end = start + (32768 / trim_divide)/2;
-
-			while (end > au_readl(SYS_RTCREAD));
-
-			count = read_c0_count();
-			cpu_speed = count * 2;
-		}
-#else
 		cpu_speed = (au_readl(SYS_CPUPLL) & 0x0000003f) *
 			AU1000_SRC_CLK;
-#endif
 	}
 	else {
 		/* The 32KHz oscillator isn't running, so assume there
@@ -357,8 +288,4 @@ void __init plat_timer_setup(struct irqaction *irq)
 	}
 
 #endif
-}
-
-void __init au1xxx_time_init(void)
-{
 }

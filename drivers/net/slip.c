@@ -363,7 +363,7 @@ sl_bump(struct slip *sl)
 	}
 	skb->dev = sl->dev;
 	memcpy(skb_put(skb,count), sl->rbuff, count);
-	skb->mac.raw=skb->data;
+	skb_reset_mac_header(skb);
 	skb->protocol=htons(ETH_P_IP);
 	netif_rx(skb);
 	sl->dev->last_rx = jiffies;
@@ -638,8 +638,6 @@ static void sl_setup(struct net_device *dev)
 	dev->hard_header_len	= 0;
 	dev->addr_len		= 0;
 	dev->tx_queue_len	= 10;
-
-	SET_MODULE_OWNER(dev);
 
 	/* New-style flags. */
 	dev->flags		= IFF_NOARP|IFF_POINTOPOINT|IFF_MULTICAST;
@@ -957,7 +955,7 @@ slip_close(struct tty_struct *tty)
   *			STANDARD SLIP ENCAPSULATION		  	 *
   ************************************************************************/
 
-int
+static int
 slip_esc(unsigned char *s, unsigned char *d, int len)
 {
 	unsigned char *ptr = d;

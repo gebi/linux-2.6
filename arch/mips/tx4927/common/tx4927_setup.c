@@ -49,14 +49,11 @@
 
 #undef DEBUG
 
-void __init tx4927_time_init(void);
 void dump_cp0(char *key);
 
 
 void __init plat_mem_setup(void)
 {
-	board_time_init = tx4927_time_init;
-
 #ifdef CONFIG_TOSHIBA_RBTX4927
 	{
 		extern void toshiba_rbtx4927_setup(void);
@@ -65,33 +62,19 @@ void __init plat_mem_setup(void)
 #endif
 }
 
-void __init tx4927_time_init(void)
+void __init plat_time_init(void)
 {
-
 #ifdef CONFIG_TOSHIBA_RBTX4927
 	{
 		extern void toshiba_rbtx4927_time_init(void);
 		toshiba_rbtx4927_time_init();
 	}
 #endif
-
-	return;
 }
-
 
 void __init plat_timer_setup(struct irqaction *irq)
 {
-	u32 count;
-	u32 c1;
-	u32 c2;
-
 	setup_irq(TX4927_IRQ_CPU_TIMER, irq);
-
-	/* to generate the first timer interrupt */
-	c1 = read_c0_count();
-	count = c1 + (mips_hpt_frequency / HZ);
-	write_c0_compare(count);
-	c2 = read_c0_count();
 
 #ifdef CONFIG_TOSHIBA_RBTX4927
 	{
@@ -134,10 +117,10 @@ dump_cp0(char *key)
 	return;
 }
 
-void print_pic(char *key, u32 reg, char *name)
+void print_pic(char *key, unsigned long reg, char *name)
 {
-	printk("%s pic:0x%08x:%s=0x%08x\n", key, reg, name,
-	       TX4927_RD(reg));
+	printk(KERN_INFO "%s pic:0x%08lx:%s=0x%08x\n", key, reg, name,
+	       __raw_readl((void __iomem *)reg));
 	return;
 }
 
@@ -176,9 +159,10 @@ void dump_pic(char *key)
 }
 
 
-void print_addr(char *hdr, char *key, u32 addr)
+void print_addr(char *hdr, char *key, unsigned long addr)
 {
-	printk("%s %s:0x%08x=0x%08x\n", hdr, key, addr, TX4927_RD(addr));
+	printk(KERN_INFO "%s %s:0x%08lx=0x%08x\n", hdr, key, addr,
+	       __raw_readl((void __iomem *)addr));
 	return;
 }
 

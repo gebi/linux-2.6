@@ -1,6 +1,6 @@
 /************************************************************************
  * s2io.h: A Linux PCI-X Ethernet driver for Neterion 10GbE Server NIC
- * Copyright(c) 2002-2005 Neterion Inc.
+ * Copyright(c) 2002-2007 Neterion Inc.
 
  * This software may be used and distributed according to the terms of
  * the GNU General Public License (GPL), incorporated herein by reference.
@@ -32,7 +32,8 @@
 #define FAILURE -1
 #define S2IO_MINUS_ONE 0xFFFFFFFFFFFFFFFFULL
 #define S2IO_MAX_PCI_CONFIG_SPACE_REINIT 100
-
+#define S2IO_BIT_RESET 1
+#define S2IO_BIT_SET 2
 #define CHECKBIT(value, nbit) (value & (1 << nbit))
 
 /* Maximum time to flicker LED when asked to identify NIC using ethtool */
@@ -73,6 +74,10 @@ static int debug_level = ERR_DBG;
 /* DEBUG message print. */
 #define DBG_PRINT(dbg_level, args...)  if(!(debug_level<dbg_level)) printk(args)
 
+#ifndef DMA_ERROR_CODE
+#define DMA_ERROR_CODE          (~(dma_addr_t)0x0)
+#endif
+
 /* Protocol assist features of the NIC */
 #define L3_CKSUM_OK 0xFFFF
 #define L4_CKSUM_OK 0xFFFF
@@ -86,7 +91,7 @@ struct swStat {
 	unsigned long long serious_err_cnt;
 	unsigned long long soft_reset_cnt;
 	unsigned long long fifo_full_cnt;
-	unsigned long long ring_full_cnt;
+	unsigned long long ring_full_cnt[8];
 	/* LRO statistics */
 	unsigned long long clubbed_frms_cnt;
 	unsigned long long sending_both;
@@ -94,6 +99,53 @@ struct swStat {
 	unsigned long long flush_max_pkts;
 	unsigned long long sum_avg_pkts_aggregated;
 	unsigned long long num_aggregations;
+	/* Other statistics */
+	unsigned long long mem_alloc_fail_cnt;
+	unsigned long long pci_map_fail_cnt;
+	unsigned long long watchdog_timer_cnt;
+	unsigned long long mem_allocated;
+	unsigned long long mem_freed;
+	unsigned long long link_up_cnt;
+	unsigned long long link_down_cnt;
+	unsigned long long link_up_time;
+	unsigned long long link_down_time;
+
+	/* Transfer Code statistics */
+	unsigned long long tx_buf_abort_cnt;
+	unsigned long long tx_desc_abort_cnt;
+	unsigned long long tx_parity_err_cnt;
+	unsigned long long tx_link_loss_cnt;
+	unsigned long long tx_list_proc_err_cnt;
+
+	unsigned long long rx_parity_err_cnt;
+	unsigned long long rx_abort_cnt;
+	unsigned long long rx_parity_abort_cnt;
+	unsigned long long rx_rda_fail_cnt;
+	unsigned long long rx_unkn_prot_cnt;
+	unsigned long long rx_fcs_err_cnt;
+	unsigned long long rx_buf_size_err_cnt;
+	unsigned long long rx_rxd_corrupt_cnt;
+	unsigned long long rx_unkn_err_cnt;
+
+	/* Error/alarm statistics*/
+	unsigned long long tda_err_cnt;
+	unsigned long long pfc_err_cnt;
+	unsigned long long pcc_err_cnt;
+	unsigned long long tti_err_cnt;
+	unsigned long long lso_err_cnt;
+	unsigned long long tpa_err_cnt;
+	unsigned long long sm_err_cnt;
+	unsigned long long mac_tmac_err_cnt;
+	unsigned long long mac_rmac_err_cnt;
+	unsigned long long xgxs_txgxs_err_cnt;
+	unsigned long long xgxs_rxgxs_err_cnt;
+	unsigned long long rc_err_cnt;
+	unsigned long long prc_pcix_err_cnt;
+	unsigned long long rpa_err_cnt;
+	unsigned long long rda_err_cnt;
+	unsigned long long rti_err_cnt;
+	unsigned long long mc_err_cnt;
+
 };
 
 /* Xpak releated alarm and warnings */
@@ -296,6 +348,9 @@ struct stat_block {
 	struct xpakStat xpak_stat;
 };
 
+/* Default value for 'vlan_strip_tag' configuration parameter */
+#define NO_STRIP_IN_PROMISC 2
+
 /*
  * Structures representing different init time configuration
  * parameters of the NIC.
@@ -303,6 +358,11 @@ struct stat_block {
 
 #define MAX_TX_FIFOS 8
 #define MAX_RX_RINGS 8
+
+#define MAX_RX_DESC_1  (MAX_RX_RINGS * MAX_RX_BLOCKS_PER_RING * 127 )
+#define MAX_RX_DESC_2  (MAX_RX_RINGS * MAX_RX_BLOCKS_PER_RING * 85 )
+#define MAX_RX_DESC_3  (MAX_RX_RINGS * MAX_RX_BLOCKS_PER_RING * 85 )
+#define MAX_TX_DESC    (MAX_AVAILABLE_TXDS)
 
 /* FIFO mappings for all possible number of fifos configured */
 static int fifo_map[][MAX_TX_FIFOS] = {
@@ -372,6 +432,11 @@ struct config_param {
 	struct tx_fifo_config tx_cfg[MAX_TX_FIFOS];	/*Per-Tx FIFO config */
 	u32 max_txds;		/*Max no. of Tx buffer descriptor per TxDL */
 	u64 tx_intr_type;
+#define INTA	0
+#define MSI_X	2
+	u8 intr_type;
+	u8 napi;
+
 	/* Specifies if Tx Intr is UTILZ or PER_LIST type. */
 
 /* Rx Side */
@@ -379,7 +444,6 @@ struct config_param {
 #define MAX_RX_BLOCKS_PER_RING  150
 
 	struct rx_ring_config rx_cfg[MAX_RX_RINGS];	/*Per-Rx Ring config */
-	u8 bimodal;		/*Flag for setting bimodal interrupts*/
 
 #define HEADER_ETHERNET_II_802_3_SIZE 14
 #define HEADER_802_2_SIZE              3
@@ -540,8 +604,7 @@ struct RxD_block {
 #define SIZE_OF_BLOCK	4096
 
 #define RXD_MODE_1	0 /* One Buffer mode */
-#define RXD_MODE_3A	1 /* Three Buffer mode */
-#define RXD_MODE_3B	2 /* Two Buffer mode */
+#define RXD_MODE_3B	1 /* Two Buffer mode */
 
 /* Structure to hold virtual addresses of Buf0 and Buf1 in
  * 2buf mode. */
@@ -738,6 +801,13 @@ struct lro {
 	u8		saw_ts;
 };
 
+/* These flags represent the devices temporary state */
+enum s2io_device_state_t
+{
+	__S2IO_STATE_LINK_TASK=0,
+	__S2IO_STATE_CARD_UP
+};
+
 /* Structure representing one instance of the NIC */
 struct s2io_nic {
 	int rxd_mode;
@@ -747,6 +817,7 @@ struct s2io_nic {
 	 */
 	int pkts_to_process;
 	struct net_device *dev;
+	struct napi_struct napi;
 	struct mac_info mac_control;
 	struct config_param config;
 	struct pci_dev *pdev;
@@ -756,11 +827,9 @@ struct s2io_nic {
 #define MAX_SUPPORTED_MULTICASTS MAX_MAC_SUPPORTED
 
 	struct mac_addr def_mac_addr[MAX_MAC_SUPPORTED];
-	struct mac_addr pre_mac_addr[MAX_MAC_SUPPORTED];
 
 	struct net_device_stats stats;
 	int high_dma_flag;
-	int device_close_flag;
 	int device_enabled_once;
 
 	char name[60];
@@ -790,11 +859,6 @@ struct s2io_nic {
 	u16 all_multi_pos;
 	u16 promisc_flg;
 
-	u16 tx_pkt_count;
-	u16 rx_pkt_count;
-	u16 tx_err_count;
-	u16 rx_err_count;
-
 	/*  Id timer, used to blink NIC to physically identify NIC. */
 	struct timer_list id_timer;
 
@@ -821,13 +885,12 @@ struct s2io_nic {
 #define	LINK_UP		2
 
 	int task_flag;
-#define CARD_DOWN 1
-#define CARD_UP 2
-	atomic_t card_state;
-	volatile unsigned long link_state;
+	unsigned long long start_time;
 	struct vlan_group *vlgrp;
 #define MSIX_FLG                0xA5
 	struct msix_entry *entries;
+	int msi_detected;
+	wait_queue_head_t msi_wait;
 	struct s2io_msix_entry *s2io_entries;
 	char desc[MAX_REQUESTED_MSI_X][25];
 
@@ -845,14 +908,9 @@ struct s2io_nic {
 	unsigned long	sending_both;
 	u8		lro;
 	u16		lro_max_aggr_per_sess;
-
-#define INTA	0
-#define MSI	1
-#define MSI_X	2
-	u8 intr_type;
-
+	volatile unsigned long state;
 	spinlock_t	rx_lock;
-	atomic_t	isr_cnt;
+	u64		general_int_mask;
 	u64 *ufo_in_band_v;
 #define VPD_STRING_LEN 80
 	u8  product_name[VPD_STRING_LEN];
@@ -977,7 +1035,7 @@ static void free_shared_mem(struct s2io_nic *sp);
 static int init_nic(struct s2io_nic *nic);
 static void rx_intr_handler(struct ring_info *ring_data);
 static void tx_intr_handler(struct fifo_info *fifo_data);
-static void alarm_intr_handler(struct s2io_nic *sp);
+static void s2io_handle_errors(void * dev_id);
 
 static int s2io_starter(void);
 static void s2io_closer(void);
@@ -987,12 +1045,10 @@ static void s2io_set_multicast(struct net_device *dev);
 static int rx_osm_handler(struct ring_info *ring_data, struct RxD_t * rxdp);
 static void s2io_link(struct s2io_nic * sp, int link);
 static void s2io_reset(struct s2io_nic * sp);
-static int s2io_poll(struct net_device *dev, int *budget);
+static int s2io_poll(struct napi_struct *napi, int budget);
 static void s2io_init_pci(struct s2io_nic * sp);
-static int s2io_set_mac_addr(struct net_device *dev, u8 * addr);
+static int do_s2io_prog_unicast(struct net_device *dev, u8 *addr);
 static void s2io_alarm_handle(unsigned long data);
-static int s2io_enable_msi(struct s2io_nic *nic);
-static irqreturn_t s2io_msi_handle(int irq, void *dev_id);
 static irqreturn_t
 s2io_msix_ring_handle(int irq, void *dev_id);
 static irqreturn_t
@@ -1004,8 +1060,8 @@ static void s2io_set_link(struct work_struct *work);
 static int s2io_set_swapper(struct s2io_nic * sp);
 static void s2io_card_down(struct s2io_nic *nic);
 static int s2io_card_up(struct s2io_nic *nic);
-static int get_xena_rev_id(struct pci_dev *pdev);
-static int wait_for_cmd_complete(void __iomem *addr, u64 busy_bit);
+static int wait_for_cmd_complete(void __iomem *addr, u64 busy_bit,
+					int bit_state);
 static int s2io_add_isr(struct s2io_nic * sp);
 static void s2io_rem_isr(struct s2io_nic * sp);
 
@@ -1019,6 +1075,12 @@ static void queue_rx_frame(struct sk_buff *skb);
 static void update_L3L4_header(struct s2io_nic *sp, struct lro *lro);
 static void lro_append_pkt(struct s2io_nic *sp, struct lro *lro,
 			   struct sk_buff *skb, u32 tcp_len);
+static int rts_ds_steer(struct s2io_nic *nic, u8 ds_codepoint, u8 ring);
+
+static pci_ers_result_t s2io_io_error_detected(struct pci_dev *pdev,
+			                      pci_channel_state_t state);
+static pci_ers_result_t s2io_io_slot_reset(struct pci_dev *pdev);
+static void s2io_io_resume(struct pci_dev *pdev);
 
 #define s2io_tcp_mss(skb) skb_shinfo(skb)->gso_size
 #define s2io_udp_mss(skb) skb_shinfo(skb)->gso_size

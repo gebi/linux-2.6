@@ -36,9 +36,10 @@
 #include <linux/rtnetlink.h>
 #include <linux/notifier.h>
 #include <linux/hdlc.h>
+#include <net/net_namespace.h>
 
 
-static const char* version = "HDLC support module revision 1.20";
+static const char* version = "HDLC support module revision 1.21";
 
 #undef DEBUG_LINK
 
@@ -66,6 +67,12 @@ static int hdlc_rcv(struct sk_buff *skb, struct net_device *dev,
 		    struct packet_type *p, struct net_device *orig_dev)
 {
 	struct hdlc_device_desc *desc = dev_to_desc(dev);
+
+	if (dev->nd_net != &init_net) {
+		kfree_skb(skb);
+		return 0;
+	}
+
 	if (desc->netif_rx)
 		return desc->netif_rx(skb);
 
@@ -102,6 +109,9 @@ static int hdlc_device_event(struct notifier_block *this, unsigned long event,
 	unsigned long flags;
 	int on;
  
+	if (dev->nd_net != &init_net)
+		return NOTIFY_DONE;
+
 	if (dev->get_stats != hdlc_get_stats)
 		return NOTIFY_DONE; /* not an HDLC device */
  
@@ -222,19 +232,29 @@ int hdlc_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 	return -EINVAL;
 }
 
+static const struct header_ops hdlc_null_ops;
+
+static void hdlc_setup_dev(struct net_device *dev)
+{
+	/* Re-init all variables changed by HDLC protocol drivers,
+	 * including ether_setup() called from hdlc_raw_eth.c.
+	 */
+	dev->get_stats		 = hdlc_get_stats;
+	dev->flags		 = IFF_POINTOPOINT | IFF_NOARP;
+	dev->mtu		 = HDLC_MAX_MTU;
+	dev->type		 = ARPHRD_RAWHDLC;
+	dev->hard_header_len	 = 16;
+	dev->addr_len		 = 0;
+	dev->header_ops		 = &hdlc_null_ops;
+
+	dev->change_mtu		 = hdlc_change_mtu;
+}
+
 static void hdlc_setup(struct net_device *dev)
 {
 	hdlc_device *hdlc = dev_to_hdlc(dev);
 
-	dev->get_stats = hdlc_get_stats;
-	dev->change_mtu = hdlc_change_mtu;
-	dev->mtu = HDLC_MAX_MTU;
-
-	dev->type = ARPHRD_RAWHDLC;
-	dev->hard_header_len = 16;
-
-	dev->flags = IFF_POINTOPOINT | IFF_NOARP;
-
+	hdlc_setup_dev(dev);
 	hdlc->carrier = 1;
 	hdlc->open = 0;
 	spin_lock_init(&hdlc->state_lock);
@@ -294,6 +314,7 @@ void detach_hdlc_protocol(struct net_device *dev)
 	}
 	kfree(hdlc->state);
 	hdlc->state = NULL;
+	hdlc_setup_dev(dev);
 }
 
 

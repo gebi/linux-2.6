@@ -56,11 +56,6 @@ static unsigned long __initdata doc_locations[] = {
 #endif /*  CONFIG_MTD_DOCPROBE_HIGH */
 #elif defined(__PPC__)
 	0xe4000000,
-#elif defined(CONFIG_MOMENCO_OCELOT)
-	0x2f000000,
-	0xff000000,
-#elif defined(CONFIG_MOMENCO_OCELOT_G) || defined (CONFIG_MOMENCO_OCELOT_C)
-	0xff000000,
 #else
 #warning Unknown architecture for DiskOnChip. No default probe locations defined
 #endif
@@ -114,7 +109,7 @@ module_param(no_autopart, int, 0);
 static int show_firmware_partition = 0;
 module_param(show_firmware_partition, int, 0);
 
-#ifdef MTD_NAND_DISKONCHIP_BBTWRITE
+#ifdef CONFIG_MTD_NAND_DISKONCHIP_BBTWRITE
 static int inftl_bbt_write = 1;
 #else
 static int inftl_bbt_write = 0;

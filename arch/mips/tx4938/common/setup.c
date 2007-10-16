@@ -34,35 +34,17 @@
 #include <asm/tx4938/rbtx4938.h>
 
 extern void toshiba_rbtx4938_setup(void);
-extern void rbtx4938_time_init(void);
 
 void __init tx4938_setup(void);
-void __init tx4938_time_init(void);
 void dump_cp0(char *key);
 
 void __init
 plat_mem_setup(void)
 {
-	board_time_init = tx4938_time_init;
 	toshiba_rbtx4938_setup();
-}
-
-void __init
-tx4938_time_init(void)
-{
-	rbtx4938_time_init();
 }
 
 void __init plat_timer_setup(struct irqaction *irq)
 {
-	u32 count;
-	u32 c1;
-	u32 c2;
-
 	setup_irq(TX4938_IRQ_CPU_TIMER, irq);
-
-	c1 = read_c0_count();
-	count = c1 + (mips_hpt_frequency / HZ);
-	write_c0_compare(count);
-	c2 = read_c0_count();
 }

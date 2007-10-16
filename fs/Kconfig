@@ -251,7 +251,7 @@ config JBD2
 
 config JBD2_DEBUG
 	bool "JBD2 (ext4dev/ext4) debugging support"
-	depends on JBD2
+	depends on JBD2 && DEBUG_FS
 	help
 	  If you are using the ext4dev/ext4 journaled file system (or
 	  potentially any other filesystem/device using JBD2), this option
@@ -260,10 +260,10 @@ config JBD2_DEBUG
 	  By default, the debugging output will be turned off.
 
 	  If you select Y here, then you will be able to turn on debugging
-	  with "echo N > /proc/sys/fs/jbd2-debug", where N is a number between
-	  1 and 5. The higher the number, the more debugging output is
-	  generated.  To turn debugging off again, do
-	  "echo 0 > /proc/sys/fs/jbd2-debug".
+	  with "echo N > /sys/kernel/debug/jbd2/jbd2-debug", where N is a
+	  number between 1 and 5. The higher the number, the more debugging
+	  output is generated.  To turn debugging off again, do
+	  "echo 0 > /sys/kernel/debug/jbd2/jbd2-debug".
 
 config FS_MBCACHE
 # Meta block cache for Extended Attributes (ext2/ext3/ext4)
@@ -314,7 +314,7 @@ config REISERFS_CHECK
 
 config REISERFS_PROC_INFO
 	bool "Stats in /proc/fs/reiserfs"
-	depends on REISERFS_FS
+	depends on REISERFS_FS && PROC_FS
 	help
 	  Create under /proc/fs/reiserfs a hierarchy of files, displaying
 	  various ReiserFS statistics and internal data at the expense of
@@ -441,9 +441,6 @@ config OCFS2_FS
 
 	  Note: Features which OCFS2 does not support yet:
 	          - extended attributes
-		  - shared writeable mmap
-	          - loopback is supported, but data written will not
-	            be cluster coherent.
 	          - quotas
 	          - cluster aware flock
 	          - Directory change notification (F_NOTIFY)
@@ -724,10 +721,6 @@ config FAT_FS
 	  file system and use GNU tar's M option. GNU tar is a program
 	  available for Unix and DOS ("man tar" or "info tar").
 
-	  It is now also becoming possible to read and write compressed FAT
-	  file systems; read <file:Documentation/filesystems/fat_cvf.txt> for
-	  details.
-
 	  The FAT support will enlarge your kernel by about 37 KB. If unsure,
 	  say Y.
 
@@ -995,7 +988,7 @@ config TMPFS_POSIX_ACL
 
 config HUGETLBFS
 	bool "HugeTLB file system support"
-	depends on X86 || IA64 || PPC64 || SPARC64 || SUPERH || BROKEN
+	depends on X86 || IA64 || PPC64 || SPARC64 || (SUPERH && MMU) || BROKEN
 	help
 	  hugetlbfs is a filesystem backing for HugeTLB pages, based on
 	  ramfs. For architectures that support it, say Y here and read
@@ -1232,6 +1225,14 @@ config JFFS2_FS_WRITEBUFFER
 	    - NOR flash with transparent ECC
 	    - DataFlash
 
+config JFFS2_FS_WBUF_VERIFY
+	bool "Verify JFFS2 write-buffer reads"
+	depends on JFFS2_FS_WRITEBUFFER
+	default n
+	help
+	  This causes JFFS2 to read back every page written through the
+	  write-buffer, and check for errors.
+
 config JFFS2_SUMMARY
 	bool "JFFS2 summary support (EXPERIMENTAL)"
 	depends on JFFS2_FS && EXPERIMENTAL
@@ -1302,52 +1303,71 @@ config JFFS2_ZLIB
 	select ZLIB_DEFLATE
 	depends on JFFS2_FS
 	default y
-        help
-          Zlib is designed to be a free, general-purpose, legally unencumbered,
-          lossless data-compression library for use on virtually any computer
-          hardware and operating system. See <http://www.gzip.org/zlib/> for
-          further information.
+	help
+	  Zlib is designed to be a free, general-purpose, legally unencumbered,
+	  lossless data-compression library for use on virtually any computer
+	  hardware and operating system. See <http://www.gzip.org/zlib/> for
+	  further information.
 
-          Say 'Y' if unsure.
+	  Say 'Y' if unsure.
+
+config JFFS2_LZO
+	bool "JFFS2 LZO compression support" if JFFS2_COMPRESSION_OPTIONS
+	select LZO_COMPRESS
+	select LZO_DECOMPRESS
+	depends on JFFS2_FS
+	default n
+	help
+	  minilzo-based compression. Generally works better than Zlib.
+
+	  This feature was added in July, 2007. Say 'N' if you need
+	  compatibility with older bootloaders or kernels.
 
 config JFFS2_RTIME
 	bool "JFFS2 RTIME compression support" if JFFS2_COMPRESSION_OPTIONS
 	depends on JFFS2_FS
 	default y
-        help
-          Rtime does manage to recompress already-compressed data. Say 'Y' if unsure.
+	help
+	  Rtime does manage to recompress already-compressed data. Say 'Y' if unsure.
 
 config JFFS2_RUBIN
 	bool "JFFS2 RUBIN compression support" if JFFS2_COMPRESSION_OPTIONS
 	depends on JFFS2_FS
 	default n
-        help
-          RUBINMIPS and DYNRUBIN compressors. Say 'N' if unsure.
+	help
+	  RUBINMIPS and DYNRUBIN compressors. Say 'N' if unsure.
 
 choice
-        prompt "JFFS2 default compression mode" if JFFS2_COMPRESSION_OPTIONS
-        default JFFS2_CMODE_PRIORITY
-        depends on JFFS2_FS
-        help
-          You can set here the default compression mode of JFFS2 from
-          the available compression modes. Don't touch if unsure.
+	prompt "JFFS2 default compression mode" if JFFS2_COMPRESSION_OPTIONS
+	default JFFS2_CMODE_PRIORITY
+	depends on JFFS2_FS
+	help
+	  You can set here the default compression mode of JFFS2 from
+	  the available compression modes. Don't touch if unsure.
 
 config JFFS2_CMODE_NONE
-        bool "no compression"
-        help
-          Uses no compression.
+	bool "no compression"
+	help
+	  Uses no compression.
 
 config JFFS2_CMODE_PRIORITY
-        bool "priority"
-        help
-          Tries the compressors in a predefined order and chooses the first
-          successful one.
+	bool "priority"
+	help
+	  Tries the compressors in a predefined order and chooses the first
+	  successful one.
 
 config JFFS2_CMODE_SIZE
-        bool "size (EXPERIMENTAL)"
-        help
-          Tries all compressors and chooses the one which has the smallest
-          result.
+	bool "size (EXPERIMENTAL)"
+	help
+	  Tries all compressors and chooses the one which has the smallest
+	  result.
+
+config JFFS2_CMODE_FAVOURLZO
+	bool "Favour LZO"
+	help
+	  Tries all compressors and chooses the one which has the smallest
+	  result but gives some preference to LZO (which has faster
+	  decompression) at the expense of size.
 
 endchoice
 
@@ -1678,7 +1698,8 @@ config NFSD_V3_ACL
 
 config NFSD_V4
 	bool "Provide NFSv4 server support (EXPERIMENTAL)"
-	depends on NFSD_V3 && EXPERIMENTAL
+	depends on NFSD && NFSD_V3 && EXPERIMENTAL
+	select RPCSEC_GSS_KRB5
 	help
 	  If you would like to include the NFSv4 server as well as the NFSv2
 	  and NFSv3 servers, say Y here.  This feature is experimental, and
@@ -1733,6 +1754,26 @@ config SUNRPC
 
 config SUNRPC_GSS
 	tristate
+
+config SUNRPC_XPRT_RDMA
+	tristate "RDMA transport for sunrpc (EXPERIMENTAL)"
+	depends on SUNRPC && INFINIBAND && EXPERIMENTAL
+	default m
+	help
+	  Adds a client RPC transport for supporting kernel NFS over RDMA
+	  mounts, including Infiniband and iWARP. Experimental.
+
+config SUNRPC_BIND34
+	bool "Support for rpcbind versions 3 & 4 (EXPERIMENTAL)"
+	depends on SUNRPC && EXPERIMENTAL
+	help
+	  Provides kernel support for querying rpcbind servers via versions 3
+	  and 4 of the rpcbind protocol.  The kernel automatically falls back
+	  to version 2 if a remote rpcbind service does not support versions
+	  3 or 4.
+
+	  If unsure, say N to get traditional behavior (version 2 rpcbind
+	  requests only).
 
 config RPCSEC_GSS_KRB5
 	tristate "Secure RPC: Kerberos V mechanism (EXPERIMENTAL)"
@@ -2019,7 +2060,7 @@ config CODA_FS_OLD_API
 config AFS_FS
 	tristate "Andrew File System support (AFS) (EXPERIMENTAL)"
 	depends on INET && EXPERIMENTAL
-	select RXRPC
+	select AF_RXRPC
 	help
 	  If you say Y here, you will get an experimental Andrew File System
 	  driver. It currently only supports unsecured read-only AFS access.
@@ -2028,12 +2069,19 @@ config AFS_FS
 
 	  If unsure, say N.
 
-config RXRPC
-	tristate
+config AFS_DEBUG
+	bool "AFS dynamic debugging"
+	depends on AFS_FS
+	help
+	  Say Y here to make runtime controllable debugging messages appear.
+
+	  See <file:Documentation/filesystems/afs.txt> for more information.
+
+	  If unsure, say N.
 
 config 9P_FS
 	tristate "Plan 9 Resource Sharing Support (9P2000) (Experimental)"
-	depends on INET && EXPERIMENTAL
+	depends on INET && NET_9P && EXPERIMENTAL
 	help
 	  If you say Y here, you will get experimental support for
 	  Plan 9 resource sharing via the 9P2000 protocol.

@@ -67,7 +67,10 @@ static inline union listen_entry *stid2entry(const struct tid_info *t,
 static inline struct t3c_tid_entry *lookup_tid(const struct tid_info *t,
 					       unsigned int tid)
 {
-	return tid < t->ntids ? &(t->tid_tab[tid]) : NULL;
+	struct t3c_tid_entry *t3c_tid = tid < t->ntids ?
+	    &(t->tid_tab[tid]) : NULL;
+
+	return (t3c_tid && t3c_tid->client) ? t3c_tid : NULL;
 }
 
 /*
@@ -76,9 +79,17 @@ static inline struct t3c_tid_entry *lookup_tid(const struct tid_info *t,
 static inline struct t3c_tid_entry *lookup_stid(const struct tid_info *t,
 						unsigned int tid)
 {
+	union listen_entry *e;
+
 	if (tid < t->stid_base || tid >= t->stid_base + t->nstids)
 		return NULL;
-	return &(stid2entry(t, tid)->t3c_tid);
+
+	e = stid2entry(t, tid);
+	if ((void *)e->next >= (void *)t->tid_tab &&
+	    (void *)e->next < (void *)&t->atid_tab[t->natids])
+		return NULL;
+
+	return &e->t3c_tid;
 }
 
 /*
@@ -87,9 +98,17 @@ static inline struct t3c_tid_entry *lookup_stid(const struct tid_info *t,
 static inline struct t3c_tid_entry *lookup_atid(const struct tid_info *t,
 						unsigned int tid)
 {
+	union active_open_entry *e;
+
 	if (tid < t->atid_base || tid >= t->atid_base + t->natids)
 		return NULL;
-	return &(atid2entry(t, tid)->t3c_tid);
+
+	e = atid2entry(t, tid);
+	if ((void *)e->next >= (void *)t->tid_tab &&
+	    (void *)e->next < (void *)&t->atid_tab[t->natids])
+		return NULL;
+
+	return &e->t3c_tid;
 }
 
 int process_rx(struct t3cdev *dev, struct sk_buff **skbs, int n);

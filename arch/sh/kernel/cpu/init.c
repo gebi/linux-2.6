@@ -3,7 +3,7 @@
  *
  * CPU init code
  *
- * Copyright (C) 2002 - 2006  Paul Mundt
+ * Copyright (C) 2002 - 2007  Paul Mundt
  * Copyright (C) 2003  Richard Curnow
  *
  * This file is subject to the terms and conditions of the GNU General Public
@@ -21,8 +21,8 @@
 #include <asm/cacheflush.h>
 #include <asm/cache.h>
 #include <asm/io.h>
-
-extern void detect_cpu_and_cache_system(void);
+#include <asm/ubc.h>
+#include <asm/smp.h>
 
 /*
  * Generic wrapper for command line arguments to disable on-chip
@@ -41,6 +41,23 @@ __setup("no" __stringify(x), x##_setup);
 onchip_setup(fpu);
 onchip_setup(dsp);
 
+#ifdef CONFIG_SPECULATIVE_EXECUTION
+#define CPUOPM		0xff2f0000
+#define CPUOPM_RABD	(1 << 5)
+
+static void __init speculative_execution_init(void)
+{
+	/* Clear RABD */
+	ctrl_outl(ctrl_inl(CPUOPM) & ~CPUOPM_RABD, CPUOPM);
+
+	/* Flush the update */
+	(void)ctrl_inl(CPUOPM);
+	ctrl_barrier();
+}
+#else
+#define speculative_execution_init()	do { } while (0)
+#endif
+
 /*
  * Generic first-level cache init
  */
@@ -48,8 +65,19 @@ static void __init cache_init(void)
 {
 	unsigned long ccr, flags;
 
-	if (current_cpu_data.type == CPU_SH_NONE)
-		panic("Unknown CPU");
+	/* First setup the rest of the I-cache info */
+	current_cpu_data.icache.entry_mask = current_cpu_data.icache.way_incr -
+				      current_cpu_data.icache.linesz;
+
+	current_cpu_data.icache.way_size = current_cpu_data.icache.sets *
+				    current_cpu_data.icache.linesz;
+
+	/* And the D-cache too */
+	current_cpu_data.dcache.entry_mask = current_cpu_data.dcache.way_incr -
+				      current_cpu_data.dcache.linesz;
+
+	current_cpu_data.dcache.way_size = current_cpu_data.dcache.sets *
+				    current_cpu_data.dcache.linesz;
 
 	jump_to_P2();
 	ccr = ctrl_inl(CCR);
@@ -116,21 +144,15 @@ static void __init cache_init(void)
 		flags &= ~CCR_CACHE_EMODE;
 #endif
 
-#ifdef CONFIG_SH_WRITETHROUGH
-	/* Turn on Write-through caching */
+#if defined(CONFIG_CACHE_WRITETHROUGH)
+	/* Write-through */
 	flags |= CCR_CACHE_WT;
-#else
-	/* .. or default to Write-back */
+#elif defined(CONFIG_CACHE_WRITEBACK)
+	/* Write-back */
 	flags |= CCR_CACHE_CB;
-#endif
-
-#ifdef CONFIG_SH_OCRAM
-	/* Turn on OCRAM -- halve the OC */
-	flags |= CCR_CACHE_ORA;
-	current_cpu_data.dcache.sets >>= 1;
-
-	current_cpu_data.dcache.way_size = current_cpu_data.dcache.sets *
-				    current_cpu_data.dcache.linesz;
+#else
+	/* Off */
+	flags &= ~CCR_CACHE_ENABLE;
 #endif
 
 	ctrl_outl(flags, CCR);
@@ -195,17 +217,24 @@ static void __init dsp_init(void)
  * Each processor family is still responsible for doing its own probing
  * and cache configuration in detect_cpu_and_cache_system().
  */
-asmlinkage void __init sh_cpu_init(void)
+
+asmlinkage void __cpuinit sh_cpu_init(void)
 {
+	current_thread_info()->cpu = hard_smp_processor_id();
+
 	/* First, probe the CPU */
 	detect_cpu_and_cache_system();
+
+	if (current_cpu_data.type == CPU_SH_NONE)
+		panic("Unknown CPU");
 
 	/* Init the cache */
 	cache_init();
 
-	shm_align_mask = max_t(unsigned long,
-			       current_cpu_data.dcache.way_size - 1,
-			       PAGE_SIZE - 1);
+	if (raw_smp_processor_id() == 0)
+		shm_align_mask = max_t(unsigned long,
+				       current_cpu_data.dcache.way_size - 1,
+				       PAGE_SIZE - 1);
 
 	/* Disable the FPU */
 	if (fpu_disabled) {
@@ -238,13 +267,13 @@ asmlinkage void __init sh_cpu_init(void)
 	}
 #endif
 
-#ifdef CONFIG_UBC_WAKEUP
 	/*
 	 * Some brain-damaged loaders decided it would be a good idea to put
 	 * the UBC to sleep. This causes some issues when it comes to things
 	 * like PTRACE_SINGLESTEP or doing hardware watchpoints in GDB.  So ..
 	 * we wake it up and hope that all is well.
 	 */
-	ubc_wakeup();
-#endif
+	if (raw_smp_processor_id() == 0)
+		ubc_wakeup();
+	speculative_execution_init();
 }

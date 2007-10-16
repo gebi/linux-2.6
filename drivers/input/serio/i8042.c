@@ -385,6 +385,8 @@ static int i8042_enable_kbd_port(void)
 	i8042_ctr |= I8042_CTR_KBDINT;
 
 	if (i8042_command(&i8042_ctr, I8042_CMD_CTL_WCTR)) {
+		i8042_ctr &= ~I8042_CTR_KBDINT;
+		i8042_ctr |= I8042_CTR_KBDDIS;
 		printk(KERN_ERR "i8042.c: Failed to enable KBD port.\n");
 		return -EIO;
 	}
@@ -402,6 +404,8 @@ static int i8042_enable_aux_port(void)
 	i8042_ctr |= I8042_CTR_AUXINT;
 
 	if (i8042_command(&i8042_ctr, I8042_CMD_CTL_WCTR)) {
+		i8042_ctr &= ~I8042_CTR_AUXINT;
+		i8042_ctr |= I8042_CTR_AUXDIS;
 		printk(KERN_ERR "i8042.c: Failed to enable AUX port.\n");
 		return -EIO;
 	}
@@ -512,6 +516,7 @@ static irqreturn_t __devinit i8042_aux_test_irq(int irq, void *dev_id)
 {
 	unsigned long flags;
 	unsigned char str, data;
+	int ret = 0;
 
 	spin_lock_irqsave(&i8042_lock, flags);
 	str = i8042_read_status();
@@ -520,12 +525,40 @@ static irqreturn_t __devinit i8042_aux_test_irq(int irq, void *dev_id)
 		if (i8042_irq_being_tested &&
 		    data == 0xa5 && (str & I8042_STR_AUXDATA))
 			complete(&i8042_aux_irq_delivered);
+		ret = 1;
 	}
 	spin_unlock_irqrestore(&i8042_lock, flags);
 
-	return IRQ_HANDLED;
+	return IRQ_RETVAL(ret);
 }
 
+/*
+ * i8042_toggle_aux - enables or disables AUX port on i8042 via command and
+ * verifies success by readinng CTR. Used when testing for presence of AUX
+ * port.
+ */
+static int __devinit i8042_toggle_aux(int on)
+{
+	unsigned char param;
+	int i;
+
+	if (i8042_command(&param,
+			on ? I8042_CMD_AUX_ENABLE : I8042_CMD_AUX_DISABLE))
+		return -1;
+
+	/* some chips need some time to set the I8042_CTR_AUXDIS bit */
+	for (i = 0; i < 100; i++) {
+		udelay(50);
+
+		if (i8042_command(&param, I8042_CMD_CTL_RCTR))
+			return -1;
+
+		if (!(param & I8042_CTR_AUXDIS) == on)
+			return 0;
+	}
+
+	return -1;
+}
 
 /*
  * i8042_check_aux() applies as much paranoia as it can at detecting
@@ -553,7 +586,8 @@ static int __devinit i8042_check_aux(void)
  */
 
 	param = 0x5a;
-	if (i8042_command(&param, I8042_CMD_AUX_LOOP) || param != 0x5a) {
+	retval = i8042_command(&param, I8042_CMD_AUX_LOOP);
+	if (retval || param != 0x5a) {
 
 /*
  * External connection test - filters out AT-soldered PS/2 i8042's
@@ -567,23 +601,24 @@ static int __devinit i8042_check_aux(void)
 		    (param && param != 0xfa && param != 0xff))
 			return -1;
 
-		aux_loop_broken = 1;
+/*
+ * If AUX_LOOP completed without error but returned unexpected data
+ * mark it as broken
+ */
+		if (!retval)
+			aux_loop_broken = 1;
 	}
 
 /*
  * Bit assignment test - filters out PS/2 i8042's in AT mode
  */
 
-	if (i8042_command(&param, I8042_CMD_AUX_DISABLE))
-		return -1;
-	if (i8042_command(&param, I8042_CMD_CTL_RCTR) || (~param & I8042_CTR_AUXDIS)) {
+	if (i8042_toggle_aux(0)) {
 		printk(KERN_WARNING "Failed to disable AUX port, but continuing anyway... Is this a SiS?\n");
 		printk(KERN_WARNING "If AUX port is really absent please use the 'i8042.noaux' option.\n");
 	}
 
-	if (i8042_command(&param, I8042_CMD_AUX_ENABLE))
-		return -1;
-	if (i8042_command(&param, I8042_CMD_CTL_RCTR) || (param & I8042_CTR_AUXDIS))
+	if (i8042_toggle_aux(1))
 		return -1;
 
 /*
@@ -760,6 +795,13 @@ static int i8042_controller_init(void)
 static void i8042_controller_reset(void)
 {
 	i8042_flush();
+
+/*
+ * Disable both KBD and AUX interfaces so they don't get in the way
+ */
+
+	i8042_ctr |= I8042_CTR_KBDDIS | I8042_CTR_AUXDIS;
+	i8042_ctr &= ~(I8042_CTR_KBDINT | I8042_CTR_AUXINT);
 
 /*
  * Disable MUX mode if present.
@@ -1002,7 +1044,7 @@ static void __devinit i8042_register_ports(void)
 	}
 }
 
-static void __devinit i8042_unregister_ports(void)
+static void __devexit i8042_unregister_ports(void)
 {
 	int i;
 

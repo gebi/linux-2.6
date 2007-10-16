@@ -17,6 +17,18 @@
 #include <asm/mipsregs.h>
 #include <asm/asm-offsets.h>
 
+/*
+ * For SMTC kernel, global IE should be left set, and interrupts
+ * controlled exclusively via IXMT.
+ */
+#ifdef CONFIG_MIPS_MT_SMTC
+#define STATMASK 0x1e
+#elif defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX)
+#define STATMASK 0x3f
+#else
+#define STATMASK 0x1f
+#endif
+
 #ifdef CONFIG_MIPS_MT_SMTC
 #include <asm/mipsmtregs.h>
 #endif /* CONFIG_MIPS_MT_SMTC */
@@ -29,16 +41,25 @@
 		.endm
 
 		.macro	SAVE_TEMP
+#ifdef CONFIG_CPU_HAS_SMARTMIPS
+		mflhxu	v1
+		LONG_S	v1, PT_LO(sp)
+		mflhxu	v1
+		LONG_S	v1, PT_HI(sp)
+		mflhxu	v1
+		LONG_S	v1, PT_ACX(sp)
+#else
 		mfhi	v1
+		LONG_S	v1, PT_HI(sp)
+		mflo	v1
+		LONG_S	v1, PT_LO(sp)
+#endif
 #ifdef CONFIG_32BIT
 		LONG_S	$8, PT_R8(sp)
 		LONG_S	$9, PT_R9(sp)
 #endif
-		LONG_S	v1, PT_HI(sp)
-		mflo	v1
 		LONG_S	$10, PT_R10(sp)
 		LONG_S	$11, PT_R11(sp)
-		LONG_S	v1,  PT_LO(sp)
 		LONG_S	$12, PT_R12(sp)
 		LONG_S	$13, PT_R13(sp)
 		LONG_S	$14, PT_R14(sp)
@@ -70,14 +91,14 @@
 #else
 		MFC0	k0, CP0_CONTEXT
 #endif
-#if defined(CONFIG_BUILD_ELF64) || (defined(CONFIG_64BIT) && __GNUC__ < 4)
+#if defined(CONFIG_32BIT) || defined(KBUILD_64BIT_SYM32)
+		lui	k1, %hi(kernelsp)
+#else
 		lui	k1, %highest(kernelsp)
 		daddiu	k1, %higher(kernelsp)
 		dsll	k1, 16
 		daddiu	k1, %hi(kernelsp)
 		dsll	k1, 16
-#else
-		lui	k1, %hi(kernelsp)
 #endif
 		LONG_SRL	k0, PTEBASE_SHIFT
 		LONG_ADDU	k1, k0
@@ -95,14 +116,14 @@
 		.endm
 #else
 		.macro	get_saved_sp	/* Uniprocessor variation */
-#if defined(CONFIG_BUILD_ELF64) || (defined(CONFIG_64BIT) && __GNUC__ < 4)
+#if defined(CONFIG_32BIT) || defined(KBUILD_64BIT_SYM32)
+		lui	k1, %hi(kernelsp)
+#else
 		lui	k1, %highest(kernelsp)
 		daddiu	k1, %higher(kernelsp)
 		dsll	k1, k1, 16
 		daddiu	k1, %hi(kernelsp)
 		dsll	k1, k1, 16
-#else
-		lui	k1, %hi(kernelsp)
 #endif
 		LONG_L	k1, %lo(kernelsp)(k1)
 		.endm
@@ -182,16 +203,25 @@
 		.endm
 
 		.macro	RESTORE_TEMP
+#ifdef CONFIG_CPU_HAS_SMARTMIPS
+		LONG_L	$24, PT_ACX(sp)
+		mtlhx	$24
+		LONG_L	$24, PT_HI(sp)
+		mtlhx	$24
 		LONG_L	$24, PT_LO(sp)
+		mtlhx	$24
+#else
+		LONG_L	$24, PT_LO(sp)
+		mtlo	$24
+		LONG_L	$24, PT_HI(sp)
+		mthi	$24
+#endif
 #ifdef CONFIG_32BIT
 		LONG_L	$8, PT_R8(sp)
 		LONG_L	$9, PT_R9(sp)
 #endif
-		mtlo	$24
-		LONG_L	$24, PT_HI(sp)
 		LONG_L	$10, PT_R10(sp)
 		LONG_L	$11, PT_R11(sp)
-		mthi	$24
 		LONG_L	$12, PT_R12(sp)
 		LONG_L	$13, PT_R13(sp)
 		LONG_L	$14, PT_R14(sp)
@@ -218,10 +248,10 @@
 		.set	reorder
 		.set	noat
 		mfc0	a0, CP0_STATUS
-		ori	a0, 0x1f
-		xori	a0, 0x1f
-		mtc0	a0, CP0_STATUS
 		li	v1, 0xff00
+		ori	a0, STATMASK
+		xori	a0, STATMASK
+		mtc0	a0, CP0_STATUS
 		and	a0, v1
 		LONG_L	v0, PT_STATUS(sp)
 		nor	v1, $0, v1
@@ -231,10 +261,6 @@
 		LONG_L	$31, PT_R31(sp)
 		LONG_L	$28, PT_R28(sp)
 		LONG_L	$25, PT_R25(sp)
-#ifdef CONFIG_64BIT
-		LONG_L	$8, PT_R8(sp)
-		LONG_L	$9, PT_R9(sp)
-#endif
 		LONG_L	$7,  PT_R7(sp)
 		LONG_L	$6,  PT_R6(sp)
 		LONG_L	$5,  PT_R5(sp)
@@ -255,16 +281,6 @@
 		.endm
 
 #else
-/*
- * For SMTC kernel, global IE should be left set, and interrupts
- * controlled exclusively via IXMT.
- */
-
-#ifdef CONFIG_MIPS_MT_SMTC
-#define STATMASK 0x1e
-#else
-#define STATMASK 0x1f
-#endif
 		.macro	RESTORE_SOME
 		.set	push
 		.set	reorder
@@ -367,9 +383,9 @@
 		.macro	CLI
 #if !defined(CONFIG_MIPS_MT_SMTC)
 		mfc0	t0, CP0_STATUS
-		li	t1, ST0_CU0 | 0x1f
+		li	t1, ST0_CU0 | STATMASK
 		or	t0, t1
-		xori	t0, 0x1f
+		xori	t0, STATMASK
 		mtc0	t0, CP0_STATUS
 #else /* CONFIG_MIPS_MT_SMTC */
 		/*
@@ -377,11 +393,11 @@
 		 * and disable interrupts only for the
 		 * current TC, using the TCStatus register.
 		 */
-		mfc0	t0,CP0_TCSTATUS
+		mfc0	t0, CP0_TCSTATUS
 		/* Fortunately CU 0 is in the same place in both registers */
 		/* Set TCU0, TMX, TKSU (for later inversion) and IXMT */
 		li	t1, ST0_CU0 | 0x08001c00
-		or	t0,t1
+		or	t0, t1
 		/* Clear TKSU, leave IXMT */
 		xori	t0, 0x00001800
 		mtc0	t0, CP0_TCSTATUS
@@ -402,9 +418,9 @@
 		.macro	STI
 #if !defined(CONFIG_MIPS_MT_SMTC)
 		mfc0	t0, CP0_STATUS
-		li	t1, ST0_CU0 | 0x1f
+		li	t1, ST0_CU0 | STATMASK
 		or	t0, t1
-		xori	t0, 0x1e
+		xori	t0, STATMASK & ~1
 		mtc0	t0, CP0_STATUS
 #else /* CONFIG_MIPS_MT_SMTC */
 		/*
@@ -413,11 +429,11 @@
 		 * current TC, using the TCStatus register.
 		 */
 		_ehb
-		mfc0	t0,CP0_TCSTATUS
+		mfc0	t0, CP0_TCSTATUS
 		/* Fortunately CU 0 is in the same place in both registers */
 		/* Set TCU0, TKSU (for later inversion) and IXMT */
 		li	t1, ST0_CU0 | 0x08001c00
-		or	t0,t1
+		or	t0, t1
 		/* Clear TKSU *and* IXMT */
 		xori	t0, 0x00001c00
 		mtc0	t0, CP0_TCSTATUS
@@ -433,7 +449,8 @@
 		.endm
 
 /*
- * Just move to kernel mode and leave interrupts as they are.
+ * Just move to kernel mode and leave interrupts as they are.  Note
+ * for the R3000 this means copying the previous enable from IEp.
  * Set cp0 enable bit as sign that we're running on the kernel stack
  */
 		.macro	KMODE
@@ -464,9 +481,14 @@
 		move	ra, t0
 #endif /* CONFIG_MIPS_MT_SMTC */
 		mfc0	t0, CP0_STATUS
-		li	t1, ST0_CU0 | 0x1e
+		li	t1, ST0_CU0 | (STATMASK & ~1)
+#if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX)
+		andi	t2, t0, ST0_IEP
+		srl	t2, 2
+		or	t0, t2
+#endif
 		or	t0, t1
-		xori	t0, 0x1e
+		xori	t0, STATMASK & ~1
 		mtc0	t0, CP0_STATUS
 #ifdef CONFIG_MIPS_MT_SMTC
 		_ehb

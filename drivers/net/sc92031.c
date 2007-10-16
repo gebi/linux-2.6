@@ -814,7 +814,6 @@ static void _sc92031_rx_tasklet(struct net_device *dev)
 			memcpy(skb_put(skb, pkt_size), rx_ring + rx_ring_offset, pkt_size);
 		}
 
-		skb->dev = dev;
 		skb->protocol = eth_type_trans(skb, dev);
 		dev->last_rx = jiffies;
 		netif_rx(skb);
@@ -964,7 +963,7 @@ static int sc92031_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		goto out;
 	}
 
-	spin_lock_bh(&priv->lock);
+	spin_lock(&priv->lock);
 
 	if (unlikely(!netif_carrier_ok(dev))) {
 		err = -ENOLINK;
@@ -1005,7 +1004,7 @@ static int sc92031_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		netif_stop_queue(dev);
 
 out_unlock:
-	spin_unlock_bh(&priv->lock);
+	spin_unlock(&priv->lock);
 
 out:
 	dev_kfree_skb(skb);
@@ -1042,12 +1041,12 @@ static int sc92031_open(struct net_device *dev)
 	priv->pm_config = 0;
 
 	/* Interrupts already disabled by sc92031_stop or sc92031_probe */
-	spin_lock(&priv->lock);
+	spin_lock_bh(&priv->lock);
 
 	_sc92031_reset(dev);
 	mmiowb();
 
-	spin_unlock(&priv->lock);
+	spin_unlock_bh(&priv->lock);
 	sc92031_enable_interrupts(dev);
 
 	if (netif_carrier_ok(dev))
@@ -1077,13 +1076,13 @@ static int sc92031_stop(struct net_device *dev)
 	/* Disable interrupts, stop Tx and Rx. */
 	sc92031_disable_interrupts(dev);
 
-	spin_lock(&priv->lock);
+	spin_lock_bh(&priv->lock);
 
 	_sc92031_disable_tx_rx(dev);
 	_sc92031_tx_clear(dev);
 	mmiowb();
 
-	spin_unlock(&priv->lock);
+	spin_unlock_bh(&priv->lock);
 
 	free_irq(pdev->irq, dev);
 	pci_free_consistent(pdev, TX_BUF_TOT_LEN, priv->tx_bufs,
@@ -1373,9 +1372,14 @@ static void sc92031_ethtool_get_strings(struct net_device *dev,
 				SILAN_STATS_NUM * ETH_GSTRING_LEN);
 }
 
-static int sc92031_ethtool_get_stats_count(struct net_device *dev)
+static int sc92031_ethtool_get_sset_count(struct net_device *dev, int sset)
 {
-	return SILAN_STATS_NUM;
+	switch (sset) {
+	case ETH_SS_STATS:
+		return SILAN_STATS_NUM;
+	default:
+		return -EOPNOTSUPP;
+	}
 }
 
 static void sc92031_ethtool_get_ethtool_stats(struct net_device *dev,
@@ -1397,14 +1401,9 @@ static struct ethtool_ops sc92031_ethtool_ops = {
 	.set_wol		= sc92031_ethtool_set_wol,
 	.nway_reset		= sc92031_ethtool_nway_reset,
 	.get_link		= ethtool_op_get_link,
-	.get_tx_csum		= ethtool_op_get_tx_csum,
-	.get_sg			= ethtool_op_get_sg,
-	.get_tso		= ethtool_op_get_tso,
 	.get_strings		= sc92031_ethtool_get_strings,
-	.get_stats_count	= sc92031_ethtool_get_stats_count,
+	.get_sset_count		= sc92031_ethtool_get_sset_count,
 	.get_ethtool_stats	= sc92031_ethtool_get_ethtool_stats,
-	.get_perm_addr		= ethtool_op_get_perm_addr,
-	.get_ufo		= ethtool_op_get_ufo,
 };
 
 static int __devinit sc92031_probe(struct pci_dev *pdev,
@@ -1539,13 +1538,13 @@ static int sc92031_suspend(struct pci_dev *pdev, pm_message_t state)
 	/* Disable interrupts, stop Tx and Rx. */
 	sc92031_disable_interrupts(dev);
 
-	spin_lock(&priv->lock);
+	spin_lock_bh(&priv->lock);
 
 	_sc92031_disable_tx_rx(dev);
 	_sc92031_tx_clear(dev);
 	mmiowb();
 
-	spin_unlock(&priv->lock);
+	spin_unlock_bh(&priv->lock);
 
 out:
 	pci_set_power_state(pdev, pci_choose_state(pdev, state));
@@ -1565,12 +1564,12 @@ static int sc92031_resume(struct pci_dev *pdev)
 		goto out;
 
 	/* Interrupts already disabled by sc92031_suspend */
-	spin_lock(&priv->lock);
+	spin_lock_bh(&priv->lock);
 
 	_sc92031_reset(dev);
 	mmiowb();
 
-	spin_unlock(&priv->lock);
+	spin_unlock_bh(&priv->lock);
 	sc92031_enable_interrupts(dev);
 
 	netif_device_attach(dev);

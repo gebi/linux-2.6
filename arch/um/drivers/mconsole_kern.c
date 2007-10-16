@@ -25,7 +25,6 @@
 #include "linux/console.h"
 #include "asm/irq.h"
 #include "asm/uaccess.h"
-#include "user_util.h"
 #include "kern_util.h"
 #include "kern.h"
 #include "mconsole.h"
@@ -500,7 +499,7 @@ static struct mc_device mem_mc = {
 	.remove		= mem_remove,
 };
 
-static int mem_mc_init(void)
+static int __init mem_mc_init(void)
 {
 	if(can_drop_memory())
 		mconsole_register_dev(&mem_mc);
@@ -615,6 +614,9 @@ void mconsole_remove(struct mc_request *req)
 	err_msg = NULL;
 	err = (*dev->remove)(n, &err_msg);
 	switch(err){
+	case 0:
+		err_msg = "";
+		break;
 	case -ENODEV:
 		if(err_msg == NULL)
 			err_msg = "Device doesn't exist";
@@ -796,7 +798,7 @@ void mconsole_stack(struct mc_request *req)
  */
 static char *notify_socket = NULL;
 
-static int mconsole_init(void)
+static int __init mconsole_init(void)
 {
 	/* long to avoid size mismatch warnings from gcc */
 	long sock;

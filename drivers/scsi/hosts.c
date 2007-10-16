@@ -220,7 +220,7 @@ int scsi_add_host(struct Scsi_Host *shost, struct device *dev)
 	get_device(&shost->shost_gendev);
 
 	if (shost->transportt->host_size &&
-	    (shost->shost_data = kmalloc(shost->transportt->host_size,
+	    (shost->shost_data = kzalloc(shost->transportt->host_size,
 					 GFP_KERNEL)) == NULL)
 		goto out_del_classdev;
 
@@ -342,6 +342,7 @@ struct Scsi_Host *scsi_host_alloc(struct scsi_host_template *sht, int privsize)
 	shost->unchecked_isa_dma = sht->unchecked_isa_dma;
 	shost->use_clustering = sht->use_clustering;
 	shost->ordered_tag = sht->ordered_tag;
+	shost->active_mode = sht->supported_mode;
 
 	if (sht->max_host_blocked)
 		shost->max_host_blocked = sht->max_host_blocked;
@@ -435,7 +436,7 @@ struct Scsi_Host *scsi_host_lookup(unsigned short hostnum)
 	struct class_device *cdev;
 	struct Scsi_Host *shost = ERR_PTR(-ENXIO), *p;
 
-	down_read(&class->subsys.rwsem);
+	down(&class->sem);
 	list_for_each_entry(cdev, &class->children, node) {
 		p = class_to_shost(cdev);
 		if (p->host_no == hostnum) {
@@ -443,7 +444,7 @@ struct Scsi_Host *scsi_host_lookup(unsigned short hostnum)
 			break;
 		}
 	}
-	up_read(&class->subsys.rwsem);
+	up(&class->sem);
 
 	return shost;
 }

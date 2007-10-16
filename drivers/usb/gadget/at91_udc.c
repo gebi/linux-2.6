@@ -31,7 +31,6 @@
 #include <linux/delay.h>
 #include <linux/ioport.h>
 #include <linux/slab.h>
-#include <linux/smp_lock.h>
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/list.h>
@@ -39,7 +38,7 @@
 #include <linux/proc_fs.h>
 #include <linux/clk.h>
 #include <linux/usb/ch9.h>
-#include <linux/usb_gadget.h>
+#include <linux/usb/gadget.h>
 
 #include <asm/byteorder.h>
 #include <asm/hardware.h>
@@ -602,25 +601,6 @@ static void at91_ep_free_request(struct usb_ep *_ep, struct usb_request *_req)
 	kfree(req);
 }
 
-static void *at91_ep_alloc_buffer(
-	struct usb_ep *_ep,
-	unsigned bytes,
-	dma_addr_t *dma,
-	gfp_t gfp_flags)
-{
-	*dma = ~0;
-	return kmalloc(bytes, gfp_flags);
-}
-
-static void at91_ep_free_buffer(
-	struct usb_ep *ep,
-	void *buf,
-	dma_addr_t dma,
-	unsigned bytes)
-{
-	kfree(buf);
-}
-
 static int at91_ep_queue(struct usb_ep *_ep,
 			struct usb_request *_req, gfp_t gfp_flags)
 {
@@ -789,8 +769,6 @@ static const struct usb_ep_ops at91_ep_ops = {
 	.disable	= at91_ep_disable,
 	.alloc_request	= at91_ep_alloc_request,
 	.free_request	= at91_ep_free_request,
-	.alloc_buffer	= at91_ep_alloc_buffer,
-	.free_buffer	= at91_ep_free_buffer,
 	.queue		= at91_ep_queue,
 	.dequeue	= at91_ep_dequeue,
 	.set_halt	= at91_ep_set_halt,
@@ -1835,7 +1813,7 @@ static int at91udc_resume(struct platform_device *pdev)
 #define	at91udc_resume	NULL
 #endif
 
-static struct platform_driver at91_udc = {
+static struct platform_driver at91_udc_driver = {
 	.remove		= __exit_p(at91udc_remove),
 	.shutdown	= at91udc_shutdown,
 	.suspend	= at91udc_suspend,
@@ -1848,13 +1826,13 @@ static struct platform_driver at91_udc = {
 
 static int __init udc_init_module(void)
 {
-	return platform_driver_probe(&at91_udc, at91udc_probe);
+	return platform_driver_probe(&at91_udc_driver, at91udc_probe);
 }
 module_init(udc_init_module);
 
 static void __exit udc_exit_module(void)
 {
-	platform_driver_unregister(&at91_udc);
+	platform_driver_unregister(&at91_udc_driver);
 }
 module_exit(udc_exit_module);
 

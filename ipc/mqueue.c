@@ -215,9 +215,7 @@ static void init_once(void *foo, struct kmem_cache * cachep, unsigned long flags
 {
 	struct mqueue_inode_info *p = (struct mqueue_inode_info *) foo;
 
-	if ((flags & (SLAB_CTOR_VERIFY | SLAB_CTOR_CONSTRUCTOR)) ==
-		SLAB_CTOR_CONSTRUCTOR)
-		inode_init_once(&p->vfs_inode);
+	inode_init_once(&p->vfs_inode);
 }
 
 static struct inode *mqueue_alloc_inode(struct super_block *sb)
@@ -523,8 +521,7 @@ static void __do_notify(struct mqueue_inode_info *info)
 			break;
 		case SIGEV_THREAD:
 			set_cookie(info->notify_cookie, NOTIFY_WOKENUP);
-			netlink_sendskb(info->notify_sock,
-					info->notify_cookie, 0);
+			netlink_sendskb(info->notify_sock, info->notify_cookie);
 			break;
 		}
 		/* after notification unregisters process */
@@ -570,7 +567,7 @@ static void remove_notification(struct mqueue_inode_info *info)
 	if (info->notify_owner != NULL &&
 	    info->notify.sigev_notify == SIGEV_THREAD) {
 		set_cookie(info->notify_cookie, NOTIFY_REMOVED);
-		netlink_sendskb(info->notify_sock, info->notify_cookie, 0);
+		netlink_sendskb(info->notify_sock, info->notify_cookie);
 	}
 	put_pid(info->notify_owner);
 	info->notify_owner = NULL;
@@ -682,6 +679,7 @@ asmlinkage long sys_mq_open(const char __user *u_name, int oflag, mode_t mode,
 
 	if (oflag & O_CREAT) {
 		if (dentry->d_inode) {	/* entry already exists */
+			audit_inode(name, dentry->d_inode);
 			error = -EEXIST;
 			if (oflag & O_EXCL)
 				goto out;
@@ -694,6 +692,7 @@ asmlinkage long sys_mq_open(const char __user *u_name, int oflag, mode_t mode,
 		error = -ENOENT;
 		if (!dentry->d_inode)
 			goto out;
+		audit_inode(name, dentry->d_inode);
 		filp = do_open(dentry, oflag);
 	}
 
@@ -731,7 +730,8 @@ asmlinkage long sys_mq_unlink(const char __user *u_name)
 	if (IS_ERR(name))
 		return PTR_ERR(name);
 
-	mutex_lock(&mqueue_mnt->mnt_root->d_inode->i_mutex);
+	mutex_lock_nested(&mqueue_mnt->mnt_root->d_inode->i_mutex,
+			I_MUTEX_PARENT);
 	dentry = lookup_one_len(name, mqueue_mnt->mnt_root, strlen(name));
 	if (IS_ERR(dentry)) {
 		err = PTR_ERR(dentry);
@@ -840,6 +840,7 @@ asmlinkage long sys_mq_timedsend(mqd_t mqdes, const char __user *u_msg_ptr,
 	if (unlikely(filp->f_op != &mqueue_file_operations))
 		goto out_fput;
 	info = MQUEUE_I(inode);
+	audit_inode(NULL, inode);
 
 	if (unlikely(!(filp->f_mode & FMODE_WRITE)))
 		goto out_fput;
@@ -923,6 +924,7 @@ asmlinkage ssize_t sys_mq_timedreceive(mqd_t mqdes, char __user *u_msg_ptr,
 	if (unlikely(filp->f_op != &mqueue_file_operations))
 		goto out_fput;
 	info = MQUEUE_I(inode);
+	audit_inode(NULL, inode);
 
 	if (unlikely(!(filp->f_mode & FMODE_READ)))
 		goto out_fput;
@@ -1250,7 +1252,7 @@ static int __init init_mqueue_fs(void)
 
 	mqueue_inode_cachep = kmem_cache_create("mqueue_inode_cache",
 				sizeof(struct mqueue_inode_info), 0,
-				SLAB_HWCACHE_ALIGN, init_once, NULL);
+				SLAB_HWCACHE_ALIGN, init_once);
 	if (mqueue_inode_cachep == NULL)
 		return -ENOMEM;
 

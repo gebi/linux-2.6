@@ -73,7 +73,7 @@ static void ppp_close(struct net_device *dev)
 
 	sppp_close(dev);
 	sppp_detach(dev);
-	dev->rebuild_header = NULL;
+
 	dev->change_mtu = state(hdlc)->old_change_mtu;
 	dev->mtu = HDLC_MAX_MTU;
 	dev->hard_header_len = 16;
@@ -127,9 +127,7 @@ static int ppp_ioctl(struct net_device *dev, struct ifreq *ifr)
 		if (result)
 			return result;
 		dev->hard_start_xmit = hdlc->xmit;
-		dev->hard_header = NULL;
 		dev->type = ARPHRD_PPP;
-		dev->addr_len = 0;
 		netif_dormant_off(dev);
 		return 0;
 	}

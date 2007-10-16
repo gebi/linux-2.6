@@ -11,12 +11,12 @@
  * Copyright (C) 2000, 01 MIPS Technologies, Inc.
  * Copyright (C) 2002, 2003, 2004, 2005  Maciej W. Rozycki
  */
+#include <linux/bug.h>
 #include <linux/init.h>
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/smp.h>
-#include <linux/smp_lock.h>
 #include <linux/spinlock.h>
 #include <linux/kallsyms.h>
 #include <linux/bootmem.h>
@@ -39,7 +39,6 @@
 #include <asm/traps.h>
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>
-#include <asm/watch.h>
 #include <asm/types.h>
 #include <asm/stacktrace.h>
 
@@ -70,6 +69,7 @@ extern asmlinkage void handle_reserved(void);
 extern int fpu_emulator_cop1Handler(struct pt_regs *xcp,
 	struct mips_fpu_struct *ctx, int has_fpu);
 
+void (*board_watchpoint_handler)(struct pt_regs *regs);
 void (*board_be_init)(void);
 int (*board_be_handler)(struct pt_regs *regs, int is_fixup);
 void (*board_nmi_handler_setup)(void);
@@ -131,7 +131,7 @@ static void show_stacktrace(struct task_struct *task, struct pt_regs *regs)
 	const int field = 2 * sizeof(unsigned long);
 	long stackdata;
 	int i;
-	unsigned long *sp = (unsigned long *)regs->regs[29];
+	unsigned long __user *sp = (unsigned long __user *)regs->regs[29];
 
 	printk("Stack :");
 	i = 0;
@@ -187,7 +187,7 @@ void dump_stack(void)
 
 EXPORT_SYMBOL(dump_stack);
 
-void show_code(unsigned int *pc)
+static void show_code(unsigned int __user *pc)
 {
 	long i;
 
@@ -229,6 +229,9 @@ void show_regs(struct pt_regs *regs)
 			printk("\n");
 	}
 
+#ifdef CONFIG_CPU_HAS_SMARTMIPS
+	printk("Acx    : %0*lx\n", field, regs->acx);
+#endif
 	printk("Hi    : %0*lx\n", field, regs->hi);
 	printk("Lo    : %0*lx\n", field, regs->lo);
 
@@ -292,7 +295,8 @@ void show_regs(struct pt_regs *regs)
 	if (1 <= cause && cause <= 5)
 		printk("BadVA : %0*lx\n", field, regs->cp0_badvaddr);
 
-	printk("PrId  : %08x\n", read_c0_prid());
+	printk("PrId  : %08x (%s)\n", read_c0_prid(),
+	       cpu_name_string());
 }
 
 void show_registers(struct pt_regs *regs)
@@ -302,13 +306,13 @@ void show_registers(struct pt_regs *regs)
 	printk("Process %s (pid: %d, threadinfo=%p, task=%p)\n",
 	        current->comm, current->pid, current_thread_info(), current);
 	show_stacktrace(current, regs);
-	show_code((unsigned int *) regs->cp0_epc);
+	show_code((unsigned int __user *) regs->cp0_epc);
 	printk("\n");
 }
 
 static DEFINE_SPINLOCK(die_lock);
 
-NORET_TYPE void ATTRIB_NORET die(const char * str, struct pt_regs * regs)
+void __noreturn die(const char * str, struct pt_regs * regs)
 {
 	static int die_counter;
 #ifdef CONFIG_MIPS_MT_SMTC
@@ -323,6 +327,7 @@ NORET_TYPE void ATTRIB_NORET die(const char * str, struct pt_regs * regs)
 #endif /* CONFIG_MIPS_MT_SMTC */
 	printk("%s[#%d]:\n", str, ++die_counter);
 	show_registers(regs);
+	add_taint(TAINT_DIE);
 	spin_unlock_irq(&die_lock);
 
 	if (in_interrupt())
@@ -370,7 +375,7 @@ asmlinkage void do_be(struct pt_regs *regs)
 		action = MIPS_BE_FIXUP;
 
 	if (board_be_handler)
-		action = board_be_handler(regs, fixup != 0);
+		action = board_be_handler(regs, fixup != NULL);
 
 	switch (action) {
 	case MIPS_BE_DISCARD:
@@ -602,21 +607,13 @@ asmlinkage void do_ov(struct pt_regs *regs)
  */
 asmlinkage void do_fpe(struct pt_regs *regs, unsigned long fcr31)
 {
+	siginfo_t info;
+
 	die_if_kernel("FP exception in kernel code", regs);
 
 	if (fcr31 & FPU_CSR_UNI_X) {
 		int sig;
 
-		preempt_disable();
-
-#ifdef CONFIG_PREEMPT
-		if (!is_fpu_owner()) {
-			/* We might lose fpu before disabling preempt... */
-			own_fpu();
-			BUG_ON(!used_math());
-			restore_fp(current);
-		}
-#endif
 		/*
 		 * Unimplemented operation exception.  If we've got the full
 		 * software emulator on-board, let's use it...
@@ -627,18 +624,12 @@ asmlinkage void do_fpe(struct pt_regs *regs, unsigned long fcr31)
 		 * register operands before invoking the emulator, which seems
 		 * a bit extreme for what should be an infrequent event.
 		 */
-		save_fp(current);
 		/* Ensure 'resume' not overwrite saved fp context again. */
-		lose_fpu();
-
-		preempt_enable();
+		lose_fpu(1);
 
 		/* Run the emulator */
-		sig = fpu_emulator_cop1Handler (regs, &current->thread.fpu, 1);
+		sig = fpu_emulator_cop1Handler(regs, &current->thread.fpu, 1);
 
-		preempt_disable();
-
-		own_fpu();	/* Using the FPU again.  */
 		/*
 		 * We can't allow the emulated instruction to leave any of
 		 * the cause bit set in $fcr31.
@@ -646,18 +637,29 @@ asmlinkage void do_fpe(struct pt_regs *regs, unsigned long fcr31)
 		current->thread.fpu.fcr31 &= ~FPU_CSR_ALL_X;
 
 		/* Restore the hardware register state */
-		restore_fp(current);
-
-		preempt_enable();
+		own_fpu(1);	/* Using the FPU again.  */
 
 		/* If something went wrong, signal */
 		if (sig)
 			force_sig(sig, current);
 
 		return;
-	}
-
-	force_sig(SIGFPE, current);
+	} else if (fcr31 & FPU_CSR_INV_X)
+		info.si_code = FPE_FLTINV;
+	else if (fcr31 & FPU_CSR_DIV_X)
+		info.si_code = FPE_FLTDIV;
+	else if (fcr31 & FPU_CSR_OVF_X)
+		info.si_code = FPE_FLTOVF;
+	else if (fcr31 & FPU_CSR_UDF_X)
+		info.si_code = FPE_FLTUND;
+	else if (fcr31 & FPU_CSR_INE_X)
+		info.si_code = FPE_FLTRES;
+	else
+		info.si_code = __SI_FAULT;
+	info.si_signo = SIGFPE;
+	info.si_errno = 0;
+	info.si_addr = (void __user *) regs->cp0_epc;
+	force_sig_info(SIGFPE, &info, current);
 }
 
 asmlinkage void do_bp(struct pt_regs *regs)
@@ -665,7 +667,7 @@ asmlinkage void do_bp(struct pt_regs *regs)
 	unsigned int opcode, bcode;
 	siginfo_t info;
 
-	if (get_user(opcode, (unsigned int __user *) exception_epc(regs)))
+	if (__get_user(opcode, (unsigned int __user *) exception_epc(regs)))
 		goto out_sigsegv;
 
 	/*
@@ -715,7 +717,7 @@ asmlinkage void do_tr(struct pt_regs *regs)
 	unsigned int opcode, tcode = 0;
 	siginfo_t info;
 
-	if (get_user(opcode, (unsigned int __user *) exception_epc(regs)))
+	if (__get_user(opcode, (unsigned int __user *) exception_epc(regs)))
 		goto out_sigsegv;
 
 	/* Immediate versions don't provide a code.  */
@@ -768,6 +770,33 @@ asmlinkage void do_ri(struct pt_regs *regs)
 	force_sig(SIGILL, current);
 }
 
+/*
+ * MIPS MT processors may have fewer FPU contexts than CPU threads. If we've
+ * emulated more than some threshold number of instructions, force migration to
+ * a "CPU" that has FP support.
+ */
+static void mt_ase_fp_affinity(void)
+{
+#ifdef CONFIG_MIPS_MT_FPAFF
+	if (mt_fpemul_threshold > 0 &&
+	     ((current->thread.emulated_fp++ > mt_fpemul_threshold))) {
+		/*
+		 * If there's no FPU present, or if the application has already
+		 * restricted the allowed set to exclude any CPUs with FPUs,
+		 * we'll skip the procedure.
+		 */
+		if (cpus_intersects(current->cpus_allowed, mt_fpu_cpumask)) {
+			cpumask_t tmask;
+
+			cpus_and(tmask, current->thread.user_cpus_allowed,
+			         mt_fpu_cpumask);
+			set_cpus_allowed(current, tmask);
+			set_thread_flag(TIF_FPUBOUND);
+		}
+	}
+#endif /* CONFIG_MIPS_MT_FPAFF */
+}
+
 asmlinkage void do_cpu(struct pt_regs *regs)
 {
 	unsigned int cpid;
@@ -788,62 +817,27 @@ asmlinkage void do_cpu(struct pt_regs *regs)
 		break;
 
 	case 1:
-		preempt_disable();
-
-		own_fpu();
-		if (used_math()) {	/* Using the FPU again.  */
-			restore_fp(current);
-		} else {			/* First time FPU user.  */
+		if (used_math())	/* Using the FPU again.  */
+			own_fpu(1);
+		else {			/* First time FPU user.  */
 			init_fpu();
 			set_used_math();
 		}
 
-		if (cpu_has_fpu) {
-			preempt_enable();
-		} else {
+		if (!raw_cpu_has_fpu) {
 			int sig;
-			preempt_enable();
 			sig = fpu_emulator_cop1Handler(regs,
 						&current->thread.fpu, 0);
 			if (sig)
 				force_sig(sig, current);
-#ifdef CONFIG_MIPS_MT_FPAFF
-			else {
-			/*
-			 * MIPS MT processors may have fewer FPU contexts
-			 * than CPU threads. If we've emulated more than
-			 * some threshold number of instructions, force
-			 * migration to a "CPU" that has FP support.
-			 */
-			 if(mt_fpemul_threshold > 0
-			 && ((current->thread.emulated_fp++
-			    > mt_fpemul_threshold))) {
-			  /*
-			   * If there's no FPU present, or if the
-			   * application has already restricted
-			   * the allowed set to exclude any CPUs
-			   * with FPUs, we'll skip the procedure.
-			   */
-			  if (cpus_intersects(current->cpus_allowed,
-			  			mt_fpu_cpumask)) {
-			    cpumask_t tmask;
-
-			    cpus_and(tmask,
-					current->thread.user_cpus_allowed,
-					mt_fpu_cpumask);
-			    set_cpus_allowed(current, tmask);
-			    current->thread.mflags |= MF_FPUBOUND;
-			  }
-			 }
-			}
-#endif /* CONFIG_MIPS_MT_FPAFF */
+			else
+				mt_ase_fp_affinity();
 		}
 
 		return;
 
 	case 2:
 	case 3:
-		die_if_kernel("do_cpu invoked from kernel context!", regs);
 		break;
 	}
 
@@ -857,6 +851,11 @@ asmlinkage void do_mdmx(struct pt_regs *regs)
 
 asmlinkage void do_watch(struct pt_regs *regs)
 {
+	if (board_watchpoint_handler) {
+		(*board_watchpoint_handler)(regs);
+		return;
+	}
+
 	/*
 	 * We use the watch exception where available to detect stack
 	 * overflows.
@@ -883,7 +882,7 @@ asmlinkage void do_mcheck(struct pt_regs *regs)
 		dump_tlb_all();
 	}
 
-	show_code((unsigned int *) regs->cp0_epc);
+	show_code((unsigned int __user *) regs->cp0_epc);
 
 	/*
 	 * Some chips may have other causes of machine check (e.g. SB1
@@ -950,19 +949,13 @@ asmlinkage void do_reserved(struct pt_regs *regs)
 	      (regs->cp0_cause & 0x7f) >> 2);
 }
 
-asmlinkage void do_default_vi(struct pt_regs *regs)
-{
-	show_regs(regs);
-	panic("Caught unexpected vectored interrupt.");
-}
-
 /*
  * Some MIPS CPUs can enable/disable for cache parity detection, but do
  * it different ways.
  */
 static inline void parity_protection_init(void)
 {
-	switch (current_cpu_data.cputype) {
+	switch (current_cpu_type()) {
 	case CPU_24K:
 	case CPU_34K:
 	case CPU_5KC:
@@ -1058,19 +1051,11 @@ void ejtag_exception_handler(struct pt_regs *regs)
 /*
  * NMI exception handler.
  */
-void nmi_exception_handler(struct pt_regs *regs)
+NORET_TYPE void ATTRIB_NORET nmi_exception_handler(struct pt_regs *regs)
 {
-#ifdef CONFIG_MIPS_MT_SMTC
-	unsigned long dvpret = dvpe();
 	bust_spinlocks(1);
 	printk("NMI taken!!!!\n");
-	mips_mt_regdump(dvpret);
-#else
-	bust_spinlocks(1);
-	printk("NMI taken!!!!\n");
-#endif /* CONFIG_MIPS_MT_SMTC */
 	die("NMI", regs);
-	while(1) ;
 }
 
 #define VECTORSPACING 0x100	/* for EI/VI mode */
@@ -1091,8 +1076,8 @@ void *set_except_vector(int n, void *addr)
 
 	exception_handlers[n] = handler;
 	if (n == 0 && cpu_has_divec) {
-		*(volatile u32 *)(ebase + 0x200) = 0x08000000 |
-		                                 (0x03ffffff & (handler >> 2));
+		*(u32 *)(ebase + 0x200) = 0x08000000 |
+					  (0x03ffffff & (handler >> 2));
 		flush_icache_range(ebase + 0x200, ebase + 0x204);
 	}
 	return (void *)old_handler;
@@ -1151,7 +1136,13 @@ void mips_srs_free(int set)
 	clear_bit(set, &sr->sr_allocated);
 }
 
-static void *set_vi_srs_handler(int n, void *addr, int srs)
+static asmlinkage void do_default_vi(void)
+{
+	show_regs(get_irq_regs());
+	panic("Caught unexpected vectored interrupt.");
+}
+
+static void *set_vi_srs_handler(int n, vi_handler_t addr, int srs)
 {
 	unsigned long handler;
 	unsigned long old_handler = vi_handlers[n];
@@ -1175,11 +1166,11 @@ static void *set_vi_srs_handler(int n, void *addr, int srs)
 
 	if (cpu_has_veic) {
 		if (board_bind_eic_interrupt)
-			board_bind_eic_interrupt (n, srs);
+			board_bind_eic_interrupt(n, srs);
 	} else if (cpu_has_vint) {
 		/* SRSMap is only defined if shadow sets are implemented */
 		if (mips_srs_max() > 1)
-			change_c0_srsmap (0xf << n*4, srs << n*4);
+			change_c0_srsmap(0xf << n*4, srs << n*4);
 	}
 
 	if (srs == 0) {
@@ -1208,13 +1199,13 @@ static void *set_vi_srs_handler(int n, void *addr, int srs)
 			 * Sigh... panicing won't help as the console
 			 * is probably not configured :(
 			 */
-			panic ("VECTORSPACING too small");
+			panic("VECTORSPACING too small");
 		}
 
-		memcpy (b, &except_vec_vi, handler_len);
+		memcpy(b, &except_vec_vi, handler_len);
 #ifdef CONFIG_MIPS_MT_SMTC
-		if (n > 7)
-			printk("Vector index %d exceeds SMTC maximum\n", n);
+		BUG_ON(n > 7);	/* Vector index %d exceeds SMTC maximum. */
+
 		w = (u32 *)(b + mori_offset);
 		*w = (*w & 0xffff0000) | (0x100 << n);
 #endif /* CONFIG_MIPS_MT_SMTC */
@@ -1240,7 +1231,7 @@ static void *set_vi_srs_handler(int n, void *addr, int srs)
 	return (void *)old_handler;
 }
 
-void *set_vi_handler(int n, void *addr)
+void *set_vi_handler(int n, vi_handler_t addr)
 {
 	return set_vi_srs_handler(n, addr, 0);
 }
@@ -1256,26 +1247,26 @@ static inline void mips_srs_init(void)
 /*
  * This is used by native signal handling
  */
-asmlinkage int (*save_fp_context)(struct sigcontext *sc);
-asmlinkage int (*restore_fp_context)(struct sigcontext *sc);
+asmlinkage int (*save_fp_context)(struct sigcontext __user *sc);
+asmlinkage int (*restore_fp_context)(struct sigcontext __user *sc);
 
-extern asmlinkage int _save_fp_context(struct sigcontext *sc);
-extern asmlinkage int _restore_fp_context(struct sigcontext *sc);
+extern asmlinkage int _save_fp_context(struct sigcontext __user *sc);
+extern asmlinkage int _restore_fp_context(struct sigcontext __user *sc);
 
-extern asmlinkage int fpu_emulator_save_context(struct sigcontext *sc);
-extern asmlinkage int fpu_emulator_restore_context(struct sigcontext *sc);
+extern asmlinkage int fpu_emulator_save_context(struct sigcontext __user *sc);
+extern asmlinkage int fpu_emulator_restore_context(struct sigcontext __user *sc);
 
 #ifdef CONFIG_SMP
-static int smp_save_fp_context(struct sigcontext *sc)
+static int smp_save_fp_context(struct sigcontext __user *sc)
 {
-	return cpu_has_fpu
+	return raw_cpu_has_fpu
 	       ? _save_fp_context(sc)
 	       : fpu_emulator_save_context(sc);
 }
 
-static int smp_restore_fp_context(struct sigcontext *sc)
+static int smp_restore_fp_context(struct sigcontext __user *sc)
 {
-	return cpu_has_fpu
+	return raw_cpu_has_fpu
 	       ? _restore_fp_context(sc)
 	       : fpu_emulator_restore_context(sc);
 }
@@ -1303,14 +1294,14 @@ static inline void signal_init(void)
 /*
  * This is used by 32-bit signal stuff on the 64-bit kernel
  */
-asmlinkage int (*save_fp_context32)(struct sigcontext32 *sc);
-asmlinkage int (*restore_fp_context32)(struct sigcontext32 *sc);
+asmlinkage int (*save_fp_context32)(struct sigcontext32 __user *sc);
+asmlinkage int (*restore_fp_context32)(struct sigcontext32 __user *sc);
 
-extern asmlinkage int _save_fp_context32(struct sigcontext32 *sc);
-extern asmlinkage int _restore_fp_context32(struct sigcontext32 *sc);
+extern asmlinkage int _save_fp_context32(struct sigcontext32 __user *sc);
+extern asmlinkage int _restore_fp_context32(struct sigcontext32 __user *sc);
 
-extern asmlinkage int fpu_emulator_save_context32(struct sigcontext32 *sc);
-extern asmlinkage int fpu_emulator_restore_context32(struct sigcontext32 *sc);
+extern asmlinkage int fpu_emulator_save_context32(struct sigcontext32 __user *sc);
+extern asmlinkage int fpu_emulator_restore_context32(struct sigcontext32 __user *sc);
 
 static inline void signal32_init(void)
 {
@@ -1365,20 +1356,24 @@ void __init per_cpu_trap_init(void)
 		set_c0_status(ST0_MX);
 
 #ifdef CONFIG_CPU_MIPSR2
-	write_c0_hwrena (0x0000000f); /* Allow rdhwr to all registers */
+	if (cpu_has_mips_r2) {
+		unsigned int enable = 0x0000000f;
+
+		if (cpu_has_userlocal)
+			enable |= (1 << 29);
+
+		write_c0_hwrena(enable);
+	}
 #endif
 
 #ifdef CONFIG_MIPS_MT_SMTC
 	if (!secondaryTC) {
 #endif /* CONFIG_MIPS_MT_SMTC */
 
-	/*
-	 * Interrupt handling.
-	 */
 	if (cpu_has_veic || cpu_has_vint) {
-		write_c0_ebase (ebase);
+		write_c0_ebase(ebase);
 		/* Setting vector spacing enables EI/VI mode  */
-		change_c0_intctl (0x3e0, VECTORSPACING);
+		change_c0_intctl(0x3e0, VECTORSPACING);
 	}
 	if (cpu_has_divec) {
 		if (cpu_has_mipsmt) {
@@ -1388,6 +1383,23 @@ void __init per_cpu_trap_init(void)
 		} else
 			set_c0_cause(CAUSEF_IV);
 	}
+
+	/*
+	 * Before R2 both interrupt numbers were fixed to 7, so on R2 only:
+	 *
+	 *  o read IntCtl.IPTI to determine the timer interrupt
+	 *  o read IntCtl.IPPCI to determine the performance counter interrupt
+	 */
+	if (cpu_has_mips_r2) {
+		cp0_compare_irq = (read_c0_intctl() >> 29) & 7;
+		cp0_perfcount_irq = (read_c0_intctl() >> 26) & 7;
+		if (cp0_perfcount_irq == cp0_compare_irq)
+			cp0_perfcount_irq = -1;
+	} else {
+		cp0_compare_irq = CP0_LEGACY_COMPARE_IRQ;
+		cp0_perfcount_irq = -1;
+	}
+
 #ifdef CONFIG_MIPS_MT_SMTC
 	}
 #endif /* CONFIG_MIPS_MT_SMTC */
@@ -1406,19 +1418,29 @@ void __init per_cpu_trap_init(void)
 		cpu_cache_init();
 		tlb_init();
 #ifdef CONFIG_MIPS_MT_SMTC
+	} else if (!secondaryTC) {
+		/*
+		 * First TC in non-boot VPE must do subset of tlb_init()
+		 * for MMU countrol registers.
+		 */
+		write_c0_pagemask(PM_DEFAULT_MASK);
+		write_c0_wired(0);
 	}
 #endif /* CONFIG_MIPS_MT_SMTC */
 }
 
 /* Install CPU exception handler */
-void __init set_handler (unsigned long offset, void *addr, unsigned long size)
+void __init set_handler(unsigned long offset, void *addr, unsigned long size)
 {
 	memcpy((void *)(ebase + offset), addr, size);
 	flush_icache_range(ebase + offset, ebase + offset + size);
 }
 
+static char panic_null_cerr[] __initdata =
+	"Trying to set NULL cache error exception handler";
+
 /* Install uncached CPU exception handler */
-void __init set_uncached_handler (unsigned long offset, void *addr, unsigned long size)
+void __init set_uncached_handler(unsigned long offset, void *addr, unsigned long size)
 {
 #ifdef CONFIG_32BIT
 	unsigned long uncached_ebase = KSEG1ADDR(ebase);
@@ -1426,6 +1448,9 @@ void __init set_uncached_handler (unsigned long offset, void *addr, unsigned lon
 #ifdef CONFIG_64BIT
 	unsigned long uncached_ebase = TO_UNCAC(ebase);
 #endif
+
+	if (!addr)
+		panic(panic_null_cerr);
 
 	memcpy((void *)(uncached_ebase + offset), addr, size);
 }
@@ -1446,7 +1471,7 @@ void __init trap_init(void)
 	unsigned long i;
 
 	if (cpu_has_veic || cpu_has_vint)
-		ebase = (unsigned long) alloc_bootmem_low_pages (0x200 + VECTORSPACING*64);
+		ebase = (unsigned long) alloc_bootmem_low_pages(0x200 + VECTORSPACING*64);
 	else
 		ebase = CAC_BASE;
 
@@ -1472,7 +1497,7 @@ void __init trap_init(void)
 	 * destination.
 	 */
 	if (cpu_has_ejtag && board_ejtag_handler_setup)
-		board_ejtag_handler_setup ();
+		board_ejtag_handler_setup();
 
 	/*
 	 * Only some CPUs have the watch exceptions.
@@ -1525,8 +1550,8 @@ void __init trap_init(void)
 	set_except_vector(12, handle_ov);
 	set_except_vector(13, handle_tr);
 
-	if (current_cpu_data.cputype == CPU_R6000 ||
-	    current_cpu_data.cputype == CPU_R6000A) {
+	if (current_cpu_type() == CPU_R6000 ||
+	    current_cpu_type() == CPU_R6000A) {
 		/*
 		 * The R6000 is the only R-series CPU that features a machine
 		 * check exception (similar to the R4000 cache error) and
@@ -1554,8 +1579,7 @@ void __init trap_init(void)
 	if (cpu_has_mipsmt)
 		set_except_vector(25, handle_mt);
 
-	if (cpu_has_dsp)
-		set_except_vector(26, handle_dsp);
+	set_except_vector(26, handle_dsp);
 
 	if (cpu_has_vce)
 		/* Special exception: R4[04]00 uses also the divec space. */

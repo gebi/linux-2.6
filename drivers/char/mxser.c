@@ -54,7 +54,6 @@
 #include <linux/gfp.h>
 #include <linux/ioport.h>
 #include <linux/mm.h>
-#include <linux/smp_lock.h>
 #include <linux/delay.h>
 #include <linux/pci.h>
 
@@ -91,8 +90,6 @@
 #define UART_MCR_AFE		0x20
 #define UART_LSR_SPECIAL	0x1E
 
-#define RELEVANT_IFLAG(iflag)	(iflag & (IGNBRK|BRKINT|IGNPAR|PARMRK|INPCK|\
-					  IXON|IXOFF))
 
 #define IRQ_T(info) ((info->flags & ASYNC_SHARE_IRQ) ? IRQF_SHARED : IRQF_DISABLED)
 
@@ -1338,43 +1335,23 @@ static int mxser_ioctl(struct tty_struct *tty, struct file *file, unsigned int c
 		 *   (use |'ed TIOCM_RNG/DSR/CD/CTS for masking)
 		 * Caller should use TIOCGICOUNT to see which one it was
 		 */
-	case TIOCMIWAIT: {
-			DECLARE_WAITQUEUE(wait, current);
-			int ret;
+	case TIOCMIWAIT:
+		spin_lock_irqsave(&info->slock, flags);
+		cnow = info->icount;	/* note the counters on entry */
+		spin_unlock_irqrestore(&info->slock, flags);
+
+		wait_event_interruptible(info->delta_msr_wait, ({
+			cprev = cnow;
 			spin_lock_irqsave(&info->slock, flags);
-			cprev = info->icount;	/* note the counters on entry */
+			cnow = info->icount;	/* atomic copy */
 			spin_unlock_irqrestore(&info->slock, flags);
 
-			add_wait_queue(&info->delta_msr_wait, &wait);
-			while (1) {
-				spin_lock_irqsave(&info->slock, flags);
-				cnow = info->icount;	/* atomic copy */
-				spin_unlock_irqrestore(&info->slock, flags);
-
-				set_current_state(TASK_INTERRUPTIBLE);
-				if (((arg & TIOCM_RNG) &&
-						(cnow.rng != cprev.rng)) ||
-						((arg & TIOCM_DSR) &&
-						(cnow.dsr != cprev.dsr)) ||
-						((arg & TIOCM_CD) &&
-						(cnow.dcd != cprev.dcd)) ||
-						((arg & TIOCM_CTS) &&
-						(cnow.cts != cprev.cts))) {
-					ret = 0;
-					break;
-				}
-				/* see if a signal did it */
-				if (signal_pending(current)) {
-					ret = -ERESTARTSYS;
-					break;
-				}
-				cprev = cnow;
-			}
-			current->state = TASK_RUNNING;
-			remove_wait_queue(&info->delta_msr_wait, &wait);
-			break;
-		}
-		/* NOTREACHED */
+			((arg & TIOCM_RNG) && (cnow.rng != cprev.rng)) ||
+			((arg & TIOCM_DSR) && (cnow.dsr != cprev.dsr)) ||
+			((arg & TIOCM_CD)  && (cnow.dcd != cprev.dcd)) ||
+			((arg & TIOCM_CTS) && (cnow.cts != cprev.cts));
+		}));
+		break;
 		/*
 		 * Get counter of input serial line interrupts (DCD,RI,DSR,CTS)
 		 * Return: write counters to the user passed counter struct
@@ -1750,16 +1727,12 @@ static void mxser_set_termios(struct tty_struct *tty, struct ktermios *old_termi
 	struct mxser_struct *info = tty->driver_data;
 	unsigned long flags;
 
-	if ((tty->termios->c_cflag != old_termios->c_cflag) ||
-			(RELEVANT_IFLAG(tty->termios->c_iflag) != RELEVANT_IFLAG(old_termios->c_iflag))) {
+	mxser_change_speed(info, old_termios);
 
-		mxser_change_speed(info, old_termios);
-
-		if ((old_termios->c_cflag & CRTSCTS) &&
-				!(tty->termios->c_cflag & CRTSCTS)) {
-			tty->hw_stopped = 0;
-			mxser_start(tty);
-		}
+	if ((old_termios->c_cflag & CRTSCTS) &&
+			!(tty->termios->c_cflag & CRTSCTS)) {
+		tty->hw_stopped = 0;
+		mxser_start(tty);
 	}
 
 /* Handle sw stopped */

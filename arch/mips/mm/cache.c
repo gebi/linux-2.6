@@ -3,10 +3,14 @@
  * License.  See the file "COPYING" in the main directory of this archive
  * for more details.
  *
- * Copyright (C) 1994 - 2003 by Ralf Baechle
+ * Copyright (C) 1994 - 2003, 06, 07 by Ralf Baechle (ralf@linux-mips.org)
+ * Copyright (C) 2007 MIPS Technologies, Inc.
  */
+#include <linux/fs.h>
+#include <linux/fcntl.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
+#include <linux/linkage.h>
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/mm.h>
@@ -88,6 +92,19 @@ void __flush_dcache_page(struct page *page)
 
 EXPORT_SYMBOL(__flush_dcache_page);
 
+void __flush_anon_page(struct page *page, unsigned long vmaddr)
+{
+	if (pages_do_alias((unsigned long)page_address(page), vmaddr)) {
+		void *kaddr;
+
+		kaddr = kmap_coherent(page, vmaddr);
+		flush_data_cache_page((unsigned long)kaddr);
+		kunmap_coherent();
+	}
+}
+
+EXPORT_SYMBOL(__flush_anon_page);
+
 void __update_cache(struct vm_area_struct *vma, unsigned long address,
 	pte_t pte)
 {
@@ -141,12 +158,14 @@ void __init cpu_cache_init(void)
 		tx39_cache_init();
 		return;
 	}
-	if (cpu_has_sb1_cache) {
-		extern void __weak sb1_cache_init(void);
-
-		sb1_cache_init();
-		return;
-	}
 
 	panic(cache_panic);
+}
+
+int __weak __uncached_access(struct file *file, unsigned long addr)
+{
+	if (file->f_flags & O_SYNC)
+		return 1;
+
+	return addr >= __pa(high_memory);
 }

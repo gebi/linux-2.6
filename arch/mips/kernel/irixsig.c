@@ -10,7 +10,6 @@
 #include <linux/mm.h>
 #include <linux/errno.h>
 #include <linux/smp.h>
-#include <linux/smp_lock.h>
 #include <linux/time.h>
 #include <linux/ptrace.h>
 #include <linux/resource.h>
@@ -164,9 +163,9 @@ static inline int handle_signal(unsigned long sig, siginfo_t *info,
 		ret = setup_irix_frame(ka, regs, sig, oldset);
 
 	spin_lock_irq(&current->sighand->siglock);
-	sigorsets(&current->blocked,&current->blocked,&ka->sa.sa_mask);
+	sigorsets(&current->blocked, &current->blocked, &ka->sa.sa_mask);
 	if (!(ka->sa.sa_flags & SA_NODEFER))
-		sigaddset(&current->blocked,sig);
+		sigaddset(&current->blocked, sig);
 	recalc_sigpending();
 	spin_unlock_irq(&current->sighand->siglock);
 
@@ -606,8 +605,8 @@ repeat:
 	current->state = TASK_INTERRUPTIBLE;
 	read_lock(&tasklist_lock);
 	tsk = current;
-	list_for_each(_p,&tsk->children) {
-		p = list_entry(_p,struct task_struct,sibling);
+	list_for_each(_p, &tsk->children) {
+		p = list_entry(_p, struct task_struct, sibling);
 		if ((type == IRIX_P_PID) && p->pid != pid)
 			continue;
 		if ((type == IRIX_P_PGID) && process_group(p) != pid)
@@ -726,7 +725,7 @@ asmlinkage int irix_getcontext(struct pt_regs *regs)
 	       current->comm, current->pid, ctx);
 #endif
 
-	if (!access_ok(VERIFY_WRITE, ctx, sizeof(*ctx)));
+	if (!access_ok(VERIFY_WRITE, ctx, sizeof(*ctx)))
 		return -EFAULT;
 
 	error = __put_user(current->thread.irix_oldctx, &ctx->link);

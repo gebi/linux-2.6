@@ -196,11 +196,12 @@ acpi_ev_queue_notify_request(struct acpi_namespace_node * node,
 		notify_info->notify.value = (u16) notify_value;
 		notify_info->notify.handler_obj = handler_obj;
 
-		acpi_ex_relinquish_interpreter();
-
-		acpi_ev_notify_dispatch(notify_info);
-
-		acpi_ex_reacquire_interpreter();
+		status =
+		    acpi_os_execute(OSL_NOTIFY_HANDLER, acpi_ev_notify_dispatch,
+				    notify_info);
+		if (ACPI_FAILURE(status)) {
+			acpi_ut_delete_generic_state(notify_info);
+		}
 	}
 
 	if (!handler_obj) {
@@ -319,8 +320,9 @@ static u32 acpi_ev_global_lock_handler(void *context)
 		acpi_gbl_global_lock_acquired = TRUE;
 		/* Send a unit to the semaphore */
 
-		if (ACPI_FAILURE(acpi_os_signal_semaphore(
-			acpi_gbl_global_lock_semaphore, 1))) {
+		if (ACPI_FAILURE
+		    (acpi_os_signal_semaphore
+		     (acpi_gbl_global_lock_semaphore, 1))) {
 			ACPI_ERROR((AE_INFO,
 				    "Could not signal Global Lock semaphore"));
 		}
@@ -423,6 +425,8 @@ static acpi_status acpi_ev_remove_global_lock_handler(void)
  * the global lock appear as a standard mutex on the OS side.
  *
  *****************************************************************************/
+static acpi_thread_id acpi_ev_global_lock_thread_id;
+static int acpi_ev_global_lock_acquired;
 
 acpi_status acpi_ev_acquire_global_lock(u16 timeout)
 {
@@ -435,10 +439,25 @@ acpi_status acpi_ev_acquire_global_lock(u16 timeout)
 	 * Only one thread can acquire the GL at a time, the global_lock_mutex
 	 * enforces this. This interface releases the interpreter if we must wait.
 	 */
-	status = acpi_ex_system_wait_mutex(acpi_gbl_global_lock_mutex, timeout);
+	status = acpi_ex_system_wait_mutex(acpi_gbl_global_lock_mutex, 0);
+	if (status == AE_TIME) {
+		if (acpi_ev_global_lock_thread_id == acpi_os_get_thread_id()) {
+			acpi_ev_global_lock_acquired++;
+			return AE_OK;
+		}
+	}
+
+	if (ACPI_FAILURE(status)) {
+		status =
+		    acpi_ex_system_wait_mutex(acpi_gbl_global_lock_mutex,
+					      timeout);
+	}
 	if (ACPI_FAILURE(status)) {
 		return_ACPI_STATUS(status);
 	}
+
+	acpi_ev_global_lock_thread_id = acpi_os_get_thread_id();
+	acpi_ev_global_lock_acquired++;
 
 	/*
 	 * Make sure that a global lock actually exists. If not, just treat
@@ -506,6 +525,11 @@ acpi_status acpi_ev_release_global_lock(void)
 		return_ACPI_STATUS(AE_NOT_ACQUIRED);
 	}
 
+	acpi_ev_global_lock_acquired--;
+	if (acpi_ev_global_lock_acquired > 0) {
+		return AE_OK;
+	}
+
 	if (acpi_gbl_global_lock_present) {
 
 		/* Allow any thread to release the lock */
@@ -529,7 +553,8 @@ acpi_status acpi_ev_release_global_lock(void)
 	acpi_gbl_global_lock_acquired = FALSE;
 
 	/* Release the local GL mutex */
-
+	acpi_ev_global_lock_thread_id = NULL;
+	acpi_ev_global_lock_acquired = 0;
 	acpi_os_release_mutex(acpi_gbl_global_lock_mutex);
 	return_ACPI_STATUS(status);
 }

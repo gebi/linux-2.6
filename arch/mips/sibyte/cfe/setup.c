@@ -29,8 +29,8 @@
 #include <asm/reboot.h>
 #include <asm/sibyte/board.h>
 
-#include "cfe_api.h"
-#include "cfe_error.h"
+#include <asm/fw/cfe/cfe_api.h>
+#include <asm/fw/cfe/cfe_error.h>
 
 /* Max ram addressable in 32-bit segments */
 #ifdef CONFIG_64BIT
@@ -62,7 +62,7 @@ extern unsigned long initrd_start, initrd_end;
 extern int kgdb_port;
 #endif
 
-static void ATTRIB_NORET cfe_linux_exit(void *arg)
+static void __noreturn cfe_linux_exit(void *arg)
 {
 	int warm = *(int *)arg;
 
@@ -83,14 +83,14 @@ static void ATTRIB_NORET cfe_linux_exit(void *arg)
 	while (1);
 }
 
-static void ATTRIB_NORET cfe_linux_restart(char *command)
+static void __noreturn cfe_linux_restart(char *command)
 {
 	static const int zero;
 
 	cfe_linux_exit((void *)&zero);
 }
 
-static void ATTRIB_NORET cfe_linux_halt(void)
+static void __noreturn cfe_linux_halt(void)
 {
 	static const int one = 1;
 
@@ -221,10 +221,10 @@ static int __init initrd_setup(char *str)
 		goto fail;
 	}
 	initrd_end = initrd_start + initrd_size;
-	prom_printf("Found initrd of %lx@%lx\n", initrd_size, initrd_start);
+	printk("Found initrd of %lx@%lx\n", initrd_size, initrd_start);
 	return 1;
  fail:
-	prom_printf("Bad initrd argument.  Disabling initrd\n");
+	printk("Bad initrd argument.  Disabling initrd\n");
 	initrd_start = 0;
 	initrd_end = 0;
 	return 1;
@@ -281,7 +281,7 @@ void __init prom_init(void)
 	}
 	if (cfe_eptseal != CFE_EPTSEAL) {
 		/* too early for panic to do any good */
-		prom_printf("CFE's entrypoint seal doesn't match. Spinning.");
+		printk("CFE's entrypoint seal doesn't match. Spinning.");
 		while (1) ;
 	}
 	cfe_init(cfe_handle, cfe_ept);
@@ -303,13 +303,13 @@ void __init prom_init(void)
 		} else {
 			/* The loader should have set the command line */
 			/* too early for panic to do any good */
-			prom_printf("LINUX_CMDLINE not defined in cfe.");
+			printk("LINUX_CMDLINE not defined in cfe.");
 			while (1) ;
 		}
 	}
 
 #ifdef CONFIG_KGDB
-	if ((arg = strstr(arcs_cmdline,"kgdb=duart")) != NULL)
+	if ((arg = strstr(arcs_cmdline, "kgdb=duart")) != NULL)
 		kgdb_port = (arg[10] == '0') ? 0 : 1;
 	else
 		kgdb_port = 1;
@@ -339,7 +339,6 @@ void __init prom_init(void)
 	/* Not sure this is needed, but it's the safe way. */
 	arcs_cmdline[CL_SIZE-1] = 0;
 
-	mips_machgroup = MACH_GROUP_SIBYTE;
 	prom_meminit();
 }
 

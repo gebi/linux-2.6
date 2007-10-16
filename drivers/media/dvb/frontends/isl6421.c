@@ -29,7 +29,6 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/moduleparam.h>
 #include <linux/string.h>
 #include <linux/slab.h>
 
@@ -122,6 +121,7 @@ struct dvb_frontend *isl6421_attach(struct dvb_frontend *fe, struct i2c_adapter 
 	/* detect if it is present or not */
 	if (isl6421_set_voltage(fe, SEC_VOLTAGE_OFF)) {
 		kfree(isl6421);
+		fe->sec_priv = NULL;
 		return NULL;
 	}
 

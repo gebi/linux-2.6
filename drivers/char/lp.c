@@ -118,7 +118,6 @@
 #include <linux/kernel.h>
 #include <linux/major.h>
 #include <linux/sched.h>
-#include <linux/smp_lock.h>
 #include <linux/slab.h>
 #include <linux/fcntl.h>
 #include <linux/delay.h>
@@ -138,9 +137,6 @@
 
 /* if you have more than 8 printers, remember to increase LP_NO */
 #define LP_NO 8
-
-/* ROUND_UP macro from fs/select.c */
-#define ROUND_UP(x,y) (((x)+(y)-1)/(y))
 
 static struct lp_struct lp_table[LP_NO];
 
@@ -652,7 +648,7 @@ static int lp_ioctl(struct inode *inode, struct file *file,
 			    (par_timeout.tv_usec < 0)) {
 				return -EINVAL;
 			}
-			to_jiffies = ROUND_UP(par_timeout.tv_usec, 1000000/HZ);
+			to_jiffies = DIV_ROUND_UP(par_timeout.tv_usec, 1000000/HZ);
 			to_jiffies += par_timeout.tv_sec * (long) HZ;
 			if (to_jiffies <= 0) {
 				return -EINVAL;
@@ -803,8 +799,7 @@ static int lp_register(int nr, struct parport *port)
 	if (reset)
 		lp_reset(nr);
 
-	class_device_create(lp_class, NULL, MKDEV(LP_MAJOR, nr), NULL,
-				"lp%d", nr);
+	device_create(lp_class, port->dev, MKDEV(LP_MAJOR, nr), "lp%d", nr);
 
 	printk(KERN_INFO "lp%d: using %s (%s).\n", nr, port->name, 
 	       (port->irq == PARPORT_IRQ_NONE)?"polling":"interrupt-driven");
@@ -975,7 +970,7 @@ static void lp_cleanup_module (void)
 		if (lp_table[offset].dev == NULL)
 			continue;
 		parport_unregister_device(lp_table[offset].dev);
-		class_device_destroy(lp_class, MKDEV(LP_MAJOR, offset));
+		device_destroy(lp_class, MKDEV(LP_MAJOR, offset));
 	}
 	class_destroy(lp_class);
 }

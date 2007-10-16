@@ -97,13 +97,15 @@ enum {
 	MAX_NPORTS = 2,		/* max # of ports */
 	MAX_FRAME_SIZE = 10240,	/* max MAC frame size, including header + FCS */
 	EEPROMSIZE = 8192,	/* Serial EEPROM size */
+	SERNUM_LEN     = 16,    /* Serial # length */
 	RSS_TABLE_SIZE = 64,	/* size of RSS lookup and mapping tables */
 	TCB_SIZE = 128,		/* TCB size */
 	NMTUS = 16,		/* size of MTU table */
 	NCCTRL_WIN = 32,	/* # of congestion control windows */
+	PROTO_SRAM_LINES = 128, /* size of TP sram */
 };
 
-#define MAX_RX_COALESCING_LEN 16224U
+#define MAX_RX_COALESCING_LEN 12288U
 
 enum {
 	PAUSE_RX = 1 << 0,
@@ -112,8 +114,7 @@ enum {
 };
 
 enum {
-	SUPPORTED_OFFLOAD = 1 << 24,
-	SUPPORTED_IRQ = 1 << 25
+	SUPPORTED_IRQ      = 1 << 24
 };
 
 enum {				/* adapter interrupt-maintained statistics */
@@ -123,6 +124,30 @@ enum {				/* adapter interrupt-maintained statistics */
 
 	IRQ_NUM_STATS		/* keep last */
 };
+
+enum {
+	TP_VERSION_MAJOR	= 1,
+	TP_VERSION_MINOR	= 1,
+	TP_VERSION_MICRO	= 0
+};
+
+#define S_TP_VERSION_MAJOR		16
+#define M_TP_VERSION_MAJOR		0xFF
+#define V_TP_VERSION_MAJOR(x)		((x) << S_TP_VERSION_MAJOR)
+#define G_TP_VERSION_MAJOR(x)		\
+	    (((x) >> S_TP_VERSION_MAJOR) & M_TP_VERSION_MAJOR)
+
+#define S_TP_VERSION_MINOR		8
+#define M_TP_VERSION_MINOR		0xFF
+#define V_TP_VERSION_MINOR(x)		((x) << S_TP_VERSION_MINOR)
+#define G_TP_VERSION_MINOR(x)		\
+	    (((x) >> S_TP_VERSION_MINOR) & M_TP_VERSION_MINOR)
+
+#define S_TP_VERSION_MICRO		0
+#define M_TP_VERSION_MICRO		0xFF
+#define V_TP_VERSION_MICRO(x)		((x) << S_TP_VERSION_MICRO)
+#define G_TP_VERSION_MICRO(x)		\
+	    (((x) >> S_TP_VERSION_MICRO) & M_TP_VERSION_MICRO)
 
 enum {
 	SGE_QSETS = 8,		/* # of SGE Tx/Rx/RspQ sets */
@@ -143,8 +168,8 @@ enum {
 };
 
 struct sg_ent {			/* SGE scatter/gather entry */
-	u32 len[2];
-	u64 addr[2];
+	__be32 len[2];
+	__be64 addr[2];
 };
 
 #ifndef SGE_NUM_GENBITS
@@ -260,6 +285,10 @@ struct mac_stats {
 	unsigned long serdes_signal_loss;
 	unsigned long xaui_pcs_ctc_err;
 	unsigned long xaui_pcs_align_change;
+
+	unsigned long num_toggled; /* # times toggled TxEn due to stuck TX */
+	unsigned long num_resets;  /* # times reset due to stuck TX */
+
 };
 
 struct tp_mib_stats {
@@ -354,12 +383,16 @@ enum {
 	MC5_MODE_72_BIT = 2
 };
 
+/* MC5 min active region size */
+enum { MC5_MIN_TIDS = 16 };
+
 struct vpd_params {
 	unsigned int cclk;
 	unsigned int mclk;
 	unsigned int uclk;
 	unsigned int mdc;
 	unsigned int mem_timing;
+	u8 sn[SERNUM_LEN + 1];
 	u8 eth_base[6];
 	u8 port_type[MAX_NPORTS];
 	unsigned short xauicfg[2];
@@ -398,6 +431,14 @@ struct adapter_params {
 	unsigned int stats_update_period;	/* MAC stats accumulation period */
 	unsigned int linkpoll_period;	/* link poll period in 0.1s */
 	unsigned int rev;	/* chip revision */
+	unsigned int offload;
+};
+
+enum {					    /* chip revisions */
+	T3_REV_A  = 0,
+	T3_REV_B  = 2,
+	T3_REV_B2 = 3,
+	T3_REV_C  = 4,
 };
 
 struct trace_params {
@@ -465,6 +506,15 @@ struct cmac {
 	struct adapter *adapter;
 	unsigned int offset;
 	unsigned int nucast;	/* # of address filters for unicast MACs */
+	unsigned int tx_tcnt;
+	unsigned int tx_xcnt;
+	u64 tx_mcnt;
+	unsigned int rx_xcnt;
+	unsigned int rx_ocnt;
+	u64 rx_mcnt;
+	unsigned int toggle_cnt;
+	unsigned int txen;
+	u64 rx_pause;
 	struct mac_stats stats;
 };
 
@@ -588,7 +638,7 @@ static inline int is_10G(const struct adapter *adap)
 
 static inline int is_offload(const struct adapter *adap)
 {
-	return adapter_info(adap)->caps & SUPPORTED_OFFLOAD;
+	return adap->params.offload;
 }
 
 static inline unsigned int core_ticks_per_usec(const struct adapter *adap)
@@ -634,11 +684,15 @@ const struct adapter_info *t3_get_adapter_info(unsigned int board_id);
 int t3_seeprom_read(struct adapter *adapter, u32 addr, u32 *data);
 int t3_seeprom_write(struct adapter *adapter, u32 addr, u32 data);
 int t3_seeprom_wp(struct adapter *adapter, int enable);
+int t3_get_tp_version(struct adapter *adapter, u32 *vers);
+int t3_check_tpsram_version(struct adapter *adapter, int *must_load);
+int t3_check_tpsram(struct adapter *adapter, u8 *tp_ram, unsigned int size);
+int t3_set_proto_sram(struct adapter *adap, u8 *data);
 int t3_read_flash(struct adapter *adapter, unsigned int addr,
 		  unsigned int nwords, u32 *data, int byte_oriented);
 int t3_load_fw(struct adapter *adapter, const u8 * fw_data, unsigned int size);
 int t3_get_fw_version(struct adapter *adapter, u32 *vers);
-int t3_check_fw_version(struct adapter *adapter);
+int t3_check_fw_version(struct adapter *adapter, int *must_load);
 int t3_init_hw(struct adapter *adapter, u32 fw_params);
 void mac_prep(struct cmac *mac, struct adapter *adapter, int index);
 void early_hw_init(struct adapter *adapter, const struct adapter_info *ai);
@@ -666,6 +720,7 @@ int t3_mac_set_address(struct cmac *mac, unsigned int idx, u8 addr[6]);
 int t3_mac_set_num_ucast(struct cmac *mac, int n);
 const struct mac_stats *t3_mac_update_stats(struct cmac *mac);
 int t3_mac_set_speed_duplex_fc(struct cmac *mac, int speed, int duplex, int fc);
+int t3b2_mac_watchdog_task(struct cmac *mac);
 
 void t3_mc5_prep(struct adapter *adapter, struct mc5 *mc5, int mode);
 int t3_mc5_init(struct mc5 *mc5, unsigned int nservers, unsigned int nfilters,

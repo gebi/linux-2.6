@@ -49,9 +49,13 @@
 typedef irqreturn_t(*intr_handler_t) (int, void *);
 
 struct vlan_group;
+struct adapter;
+struct sge_qset;
 
 struct port_info {
+	struct adapter *adapter;
 	struct vlan_group *vlan_grp;
+	struct sge_qset *qs;
 	const struct port_type_info *port_type;
 	u8 port_id;
 	u8 rx_csum_offload;
@@ -71,21 +75,30 @@ enum {				/* adapter flags */
 	QUEUES_BOUND = (1 << 3),
 };
 
+struct fl_pg_chunk {
+	struct page *page;
+	void *va;
+	unsigned int offset;
+};
+
 struct rx_desc;
 struct rx_sw_desc;
 
-struct sge_fl {			/* SGE per free-buffer list state */
-	unsigned int buf_size;	/* size of each Rx buffer */
-	unsigned int credits;	/* # of available Rx buffers */
-	unsigned int size;	/* capacity of free list */
-	unsigned int cidx;	/* consumer index */
-	unsigned int pidx;	/* producer index */
-	unsigned int gen;	/* free list generation */
-	struct rx_desc *desc;	/* address of HW Rx descriptor ring */
-	struct rx_sw_desc *sdesc;	/* address of SW Rx descriptor ring */
-	dma_addr_t phys_addr;	/* physical address of HW ring start */
-	unsigned int cntxt_id;	/* SGE context id for the free list */
-	unsigned long empty;	/* # of times queue ran out of buffers */
+struct sge_fl {                     /* SGE per free-buffer list state */
+	unsigned int buf_size;      /* size of each Rx buffer */
+	unsigned int credits;       /* # of available Rx buffers */
+	unsigned int size;          /* capacity of free list */
+	unsigned int cidx;          /* consumer index */
+	unsigned int pidx;          /* producer index */
+	unsigned int gen;           /* free list generation */
+	struct fl_pg_chunk pg_chunk;/* page chunk cache */
+	unsigned int use_pages;     /* whether FL uses pages or sk_buffs */
+	struct rx_desc *desc;       /* address of HW Rx descriptor ring */
+	struct rx_sw_desc *sdesc;   /* address of SW Rx descriptor ring */
+	dma_addr_t   phys_addr;     /* physical address of HW ring start */
+	unsigned int cntxt_id;      /* SGE context id for the free list */
+	unsigned long empty;        /* # of times queue ran out of buffers */
+	unsigned long alloc_failed; /* # of times buffer allocation failed */
 };
 
 /*
@@ -121,6 +134,8 @@ struct sge_rspq {		/* state for an SGE response queue */
 	unsigned long empty;	/* # of times queue ran out of credits */
 	unsigned long nomem;	/* # of responses deferred due to no mem */
 	unsigned long unhandled_irqs;	/* # of spurious intrs */
+	unsigned long starved;
+	unsigned long restarted;
 };
 
 struct tx_desc;
@@ -160,10 +175,12 @@ enum {				/* per port SGE statistics */
 };
 
 struct sge_qset {		/* an SGE queue set */
+	struct adapter *adap;
+	struct napi_struct napi;
 	struct sge_rspq rspq;
 	struct sge_fl fl[SGE_RXQ_PER_SET];
 	struct sge_txq txq[SGE_TXQ_PER_SET];
-	struct net_device *netdev;	/* associated net device */
+	struct net_device *netdev;
 	unsigned long txq_stopped;	/* which Tx queues are stopped */
 	struct timer_list tx_reclaim_timer;	/* reclaims TX buffers */
 	unsigned long port_stats[SGE_PSTAT_MAX];
@@ -208,12 +225,6 @@ struct adapter {
 	struct delayed_work adap_check_task;
 	struct work_struct ext_intr_handler_task;
 
-	/*
-	 * Dummy netdevices are needed when using multiple receive queues with
-	 * NAPI as each netdevice can service only one queue.
-	 */
-	struct net_device *dummy_netdev[SGE_QSETS - 1];
-
 	struct dentry *debugfs_root;
 
 	struct mutex mdio_lock;
@@ -240,12 +251,6 @@ static inline struct port_info *adap2pinfo(struct adapter *adap, int idx)
 	return netdev_priv(adap->port[idx]);
 }
 
-/*
- * We use the spare atalk_ptr to map a net device to its SGE queue set.
- * This is a macro so it can be used as l-value.
- */
-#define dev2qset(netdev) ((netdev)->atalk_ptr)
-
 #define OFFLOAD_DEVMAP_BIT 15
 
 #define tdev2adap(d) container_of(d, struct adapter, tdev)
@@ -271,7 +276,7 @@ int t3_mgmt_tx(struct adapter *adap, struct sk_buff *skb);
 void t3_update_qset_coalesce(struct sge_qset *qs, const struct qset_params *p);
 int t3_sge_alloc_qset(struct adapter *adapter, unsigned int id, int nports,
 		      int irq_vec_idx, const struct qset_params *p,
-		      int ntxq, struct net_device *netdev);
+		      int ntxq, struct net_device *dev);
 int t3_get_desc(const struct sge_qset *qs, unsigned int qnum, unsigned int idx,
 		unsigned char *data);
 irqreturn_t t3_sge_intr_msix(int irq, void *cookie);

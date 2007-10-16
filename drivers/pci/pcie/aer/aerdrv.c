@@ -66,7 +66,7 @@ static struct pci_error_handlers aer_error_handlers = {
 	.resume = aer_error_resume,
 };
 
-static struct pcie_port_service_driver aerdrv = {
+static struct pcie_port_service_driver aerdriver = {
 	.name		= "aer",
 	.id_table	= &aer_id[0],
 
@@ -80,6 +80,13 @@ static struct pcie_port_service_driver aerdrv = {
 
 	.reset_link	= aer_root_reset,
 };
+
+static int pcie_aer_disable;
+
+void pci_no_aer(void)
+{
+	pcie_aer_disable = 1;	/* has priority over 'forceload' */
+}
 
 /**
  * aer_irq - Root Port's ISR
@@ -148,16 +155,15 @@ static struct aer_rpc* aer_alloc_rpc(struct pcie_device *dev)
 {
 	struct aer_rpc *rpc;
 
-	if (!(rpc = kmalloc(sizeof(struct aer_rpc),
+	if (!(rpc = kzalloc(sizeof(struct aer_rpc),
 		GFP_KERNEL)))
 		return NULL;
 
-	memset(rpc, 0, sizeof(struct aer_rpc));
 	/*
 	 * Initialize Root lock access, e_lock, to Root Error Status Reg,
 	 * Root Error ID Reg, and Root error producer/consumer index.
 	 */
-	rpc->e_lock = SPIN_LOCK_UNLOCKED;
+	spin_lock_init(&rpc->e_lock);
 
 	rpc->rpd = dev;
 	INIT_WORK(&rpc->dpc_handler, aer_isr);
@@ -328,7 +334,9 @@ static void aer_error_resume(struct pci_dev *dev)
  **/
 static int __init aer_service_init(void)
 {
-	return pcie_port_service_register(&aerdrv);
+	if (pcie_aer_disable)
+		return -ENXIO;
+	return pcie_port_service_register(&aerdriver);
 }
 
 /**
@@ -338,7 +346,7 @@ static int __init aer_service_init(void)
  **/
 static void __exit aer_service_exit(void)
 {
-	pcie_port_service_unregister(&aerdrv);
+	pcie_port_service_unregister(&aerdriver);
 }
 
 module_init(aer_service_init);

@@ -172,6 +172,14 @@
 
 #define A_SG_INT_CAUSE 0x5c
 
+#define S_HIPIODRBDROPERR    11
+#define V_HIPIODRBDROPERR(x) ((x) << S_HIPIODRBDROPERR)
+#define F_HIPIODRBDROPERR    V_HIPIODRBDROPERR(1U)
+
+#define S_LOPIODRBDROPERR    10
+#define V_LOPIODRBDROPERR(x) ((x) << S_LOPIODRBDROPERR)
+#define F_LOPIODRBDROPERR    V_LOPIODRBDROPERR(1U)
+
 #define S_RSPQDISABLED    3
 #define V_RSPQDISABLED(x) ((x) << S_RSPQDISABLED)
 #define F_RSPQDISABLED    V_RSPQDISABLED(1U)
@@ -1160,6 +1168,8 @@
 
 #define A_TP_MOD_CHANNEL_WEIGHT 0x434
 
+#define A_TP_MOD_RATE_LIMIT 0x438
+
 #define A_TP_PIO_ADDR 0x440
 
 #define A_TP_PIO_DATA 0x444
@@ -1206,6 +1216,23 @@
 
 #define A_TP_RX_TRC_KEY0 0x120
 
+#define A_TP_TX_DROP_CNT_CH0 0x12d
+
+#define S_TXDROPCNTCH0RCVD    0
+#define M_TXDROPCNTCH0RCVD    0xffff
+#define V_TXDROPCNTCH0RCVD(x) ((x) << S_TXDROPCNTCH0RCVD)
+#define G_TXDROPCNTCH0RCVD(x) (((x) >> S_TXDROPCNTCH0RCVD) & \
+			       M_TXDROPCNTCH0RCVD)
+
+#define A_TP_PROXY_FLOW_CNTL 0x4b0
+
+#define A_TP_EMBED_OP_FIELD0 0x4e8
+#define A_TP_EMBED_OP_FIELD1 0x4ec
+#define A_TP_EMBED_OP_FIELD2 0x4f0
+#define A_TP_EMBED_OP_FIELD3 0x4f4
+#define A_TP_EMBED_OP_FIELD4 0x4f8
+#define A_TP_EMBED_OP_FIELD5 0x4fc
+
 #define A_ULPRX_CTL 0x500
 
 #define S_ROUND_ROBIN    4
@@ -1226,9 +1253,15 @@
 
 #define A_ULPRX_ISCSI_TAGMASK 0x514
 
+#define S_HPZ0    0
+#define M_HPZ0    0xf
+#define V_HPZ0(x) ((x) << S_HPZ0)
+#define G_HPZ0(x) (((x) >> S_HPZ0) & M_HPZ0)
+
 #define A_ULPRX_TDDP_LLIMIT 0x51c
 
 #define A_ULPRX_TDDP_ULIMIT 0x520
+#define A_ULPRX_TDDP_PSZ 0x528
 
 #define A_ULPRX_STAG_LLIMIT 0x52c
 
@@ -1293,6 +1326,7 @@
 #define V_D0_WEIGHT(x) ((x) << S_D0_WEIGHT)
 
 #define A_PM1_RX_CFG 0x5c0
+#define A_PM1_RX_MODE 0x5c4
 
 #define A_PM1_RX_INT_ENABLE 0x5d8
 
@@ -1361,6 +1395,7 @@
 #define A_PM1_RX_INT_CAUSE 0x5dc
 
 #define A_PM1_TX_CFG 0x5e0
+#define A_PM1_TX_MODE 0x5e4
 
 #define A_PM1_TX_INT_ENABLE 0x5f8
 
@@ -1834,6 +1869,8 @@
 #define V_TXPAUSEEN(x) ((x) << S_TXPAUSEEN)
 #define F_TXPAUSEEN    V_TXPAUSEEN(1U)
 
+#define A_XGM_TX_PAUSE_QUANTA 0x808
+
 #define A_XGM_RX_CTRL 0x80c
 
 #define S_RXEN    0
@@ -1865,6 +1902,10 @@
 #define S_COPYALLFRAMES    0
 #define V_COPYALLFRAMES(x) ((x) << S_COPYALLFRAMES)
 #define F_COPYALLFRAMES    V_COPYALLFRAMES(1U)
+
+#define S_DISBCAST    1
+#define V_DISBCAST(x) ((x) << S_DISBCAST)
+#define F_DISBCAST    V_DISBCAST(1U)
 
 #define A_XGM_RX_HASH_LOW 0x814
 
@@ -1920,10 +1961,19 @@
 
 #define A_XGM_TXFIFO_CFG 0x888
 
+#define S_TXIPG    13
+#define M_TXIPG    0xff
+#define V_TXIPG(x) ((x) << S_TXIPG)
+#define G_TXIPG(x) (((x) >> S_TXIPG) & M_TXIPG)
+
 #define S_TXFIFOTHRESH    4
 #define M_TXFIFOTHRESH    0x1ff
 
 #define V_TXFIFOTHRESH(x) ((x) << S_TXFIFOTHRESH)
+
+#define S_ENDROPPKT    21
+#define V_ENDROPPKT(x) ((x) << S_ENDROPPKT)
+#define F_ENDROPPKT    V_ENDROPPKT(1U)
 
 #define A_XGM_SERDES_CTRL 0x890
 #define A_XGM_SERDES_CTRL0 0x8e0
@@ -2103,6 +2153,8 @@
 #define F_RESETPLL01    V_RESETPLL01(1U)
 
 #define A_XGM_SERDES_STAT0 0x8f0
+#define A_XGM_SERDES_STAT1 0x8f4
+#define A_XGM_SERDES_STAT2 0x8f8
 
 #define S_LOWSIG0    0
 #define V_LOWSIG0(x) ((x) << S_LOWSIG0)
@@ -2189,6 +2241,13 @@
 #define F_CMULOCK    V_CMULOCK(1U)
 
 #define A_XGM_RX_MAX_PKT_SIZE_ERR_CNT 0x9a4
+
+#define A_XGM_TX_SPI4_SOP_EOP_CNT 0x9a8
+
+#define S_TXSPI4SOPCNT    16
+#define M_TXSPI4SOPCNT    0xffff
+#define V_TXSPI4SOPCNT(x) ((x) << S_TXSPI4SOPCNT)
+#define G_TXSPI4SOPCNT(x) (((x) >> S_TXSPI4SOPCNT) & M_TXSPI4SOPCNT)
 
 #define A_XGM_RX_SPI4_SOP_EOP_CNT 0x9ac
 

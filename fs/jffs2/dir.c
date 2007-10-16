@@ -1,13 +1,11 @@
 /*
  * JFFS2 -- Journalling Flash File System, Version 2.
  *
- * Copyright (C) 2001-2003 Red Hat, Inc.
+ * Copyright © 2001-2007 Red Hat, Inc.
  *
  * Created by David Woodhouse <dwmw2@infradead.org>
  *
  * For licensing information, see the file 'LICENCE' in this directory.
- *
- * $Id: dir.c,v 1.90 2005/11/07 11:14:39 gleixner Exp $
  *
  */
 
@@ -34,7 +32,7 @@ static int jffs2_mkdir (struct inode *,struct dentry *,int);
 static int jffs2_rmdir (struct inode *,struct dentry *);
 static int jffs2_mknod (struct inode *,struct dentry *,int,dev_t);
 static int jffs2_rename (struct inode *, struct dentry *,
-                        struct inode *, struct dentry *);
+			 struct inode *, struct dentry *);
 
 const struct file_operations jffs2_dir_operations =
 {
@@ -184,6 +182,7 @@ static int jffs2_create(struct inode *dir_i, struct dentry *dentry, int mode,
 	struct jffs2_inode_info *f, *dir_f;
 	struct jffs2_sb_info *c;
 	struct inode *inode;
+	struct posix_acl *acl;
 	int ret;
 
 	ri = jffs2_alloc_raw_inode();
@@ -194,7 +193,7 @@ static int jffs2_create(struct inode *dir_i, struct dentry *dentry, int mode,
 
 	D1(printk(KERN_DEBUG "jffs2_create()\n"));
 
-	inode = jffs2_new_inode(dir_i, mode, ri);
+	inode = jffs2_new_inode(dir_i, mode, ri, &acl);
 
 	if (IS_ERR(inode)) {
 		D1(printk(KERN_DEBUG "jffs2_new_inode() failed\n"));
@@ -214,12 +213,12 @@ static int jffs2_create(struct inode *dir_i, struct dentry *dentry, int mode,
 			      dentry->d_name.name, dentry->d_name.len);
 
 	if (ret)
-		goto fail;
+		goto fail_acl;
 
 	ret = jffs2_init_security(inode, dir_i);
 	if (ret)
-		goto fail;
-	ret = jffs2_init_acl(inode, dir_i);
+		goto fail_acl;
+	ret = jffs2_init_acl(inode, acl);
 	if (ret)
 		goto fail;
 
@@ -232,6 +231,8 @@ static int jffs2_create(struct inode *dir_i, struct dentry *dentry, int mode,
 		  inode->i_ino, inode->i_mode, inode->i_nlink, f->inocache->nlink, inode->i_mapping->nrpages));
 	return 0;
 
+ fail_acl:
+	posix_acl_release(acl);
  fail:
 	make_bad_inode(inode);
 	iput(inode);
@@ -308,6 +309,7 @@ static int jffs2_symlink (struct inode *dir_i, struct dentry *dentry, const char
 	struct jffs2_full_dirent *fd;
 	int namelen;
 	uint32_t alloclen;
+	struct posix_acl *acl;
 	int ret, targetlen = strlen(target);
 
 	/* FIXME: If you care. We'd need to use frags for the target
@@ -334,7 +336,7 @@ static int jffs2_symlink (struct inode *dir_i, struct dentry *dentry, const char
 		return ret;
 	}
 
-	inode = jffs2_new_inode(dir_i, S_IFLNK | S_IRWXUGO, ri);
+	inode = jffs2_new_inode(dir_i, S_IFLNK | S_IRWXUGO, ri, &acl);
 
 	if (IS_ERR(inode)) {
 		jffs2_free_raw_inode(ri);
@@ -364,6 +366,7 @@ static int jffs2_symlink (struct inode *dir_i, struct dentry *dentry, const char
 		up(&f->sem);
 		jffs2_complete_reservation(c);
 		jffs2_clear_inode(inode);
+		posix_acl_release(acl);
 		return PTR_ERR(fn);
 	}
 
@@ -374,6 +377,7 @@ static int jffs2_symlink (struct inode *dir_i, struct dentry *dentry, const char
 		up(&f->sem);
 		jffs2_complete_reservation(c);
 		jffs2_clear_inode(inode);
+		posix_acl_release(acl);
 		return -ENOMEM;
 	}
 
@@ -391,9 +395,10 @@ static int jffs2_symlink (struct inode *dir_i, struct dentry *dentry, const char
 	ret = jffs2_init_security(inode, dir_i);
 	if (ret) {
 		jffs2_clear_inode(inode);
+		posix_acl_release(acl);
 		return ret;
 	}
-	ret = jffs2_init_acl(inode, dir_i);
+	ret = jffs2_init_acl(inode, acl);
 	if (ret) {
 		jffs2_clear_inode(inode);
 		return ret;
@@ -471,6 +476,7 @@ static int jffs2_mkdir (struct inode *dir_i, struct dentry *dentry, int mode)
 	struct jffs2_full_dirent *fd;
 	int namelen;
 	uint32_t alloclen;
+	struct posix_acl *acl;
 	int ret;
 
 	mode |= S_IFDIR;
@@ -493,7 +499,7 @@ static int jffs2_mkdir (struct inode *dir_i, struct dentry *dentry, int mode)
 		return ret;
 	}
 
-	inode = jffs2_new_inode(dir_i, mode, ri);
+	inode = jffs2_new_inode(dir_i, mode, ri, &acl);
 
 	if (IS_ERR(inode)) {
 		jffs2_free_raw_inode(ri);
@@ -520,6 +526,7 @@ static int jffs2_mkdir (struct inode *dir_i, struct dentry *dentry, int mode)
 		up(&f->sem);
 		jffs2_complete_reservation(c);
 		jffs2_clear_inode(inode);
+		posix_acl_release(acl);
 		return PTR_ERR(fn);
 	}
 	/* No data here. Only a metadata node, which will be
@@ -533,9 +540,10 @@ static int jffs2_mkdir (struct inode *dir_i, struct dentry *dentry, int mode)
 	ret = jffs2_init_security(inode, dir_i);
 	if (ret) {
 		jffs2_clear_inode(inode);
+		posix_acl_release(acl);
 		return ret;
 	}
-	ret = jffs2_init_acl(inode, dir_i);
+	ret = jffs2_init_acl(inode, acl);
 	if (ret) {
 		jffs2_clear_inode(inode);
 		return ret;
@@ -631,6 +639,7 @@ static int jffs2_mknod (struct inode *dir_i, struct dentry *dentry, int mode, de
 	union jffs2_device_node dev;
 	int devlen = 0;
 	uint32_t alloclen;
+	struct posix_acl *acl;
 	int ret;
 
 	if (!new_valid_dev(rdev))
@@ -657,7 +666,7 @@ static int jffs2_mknod (struct inode *dir_i, struct dentry *dentry, int mode, de
 		return ret;
 	}
 
-	inode = jffs2_new_inode(dir_i, mode, ri);
+	inode = jffs2_new_inode(dir_i, mode, ri, &acl);
 
 	if (IS_ERR(inode)) {
 		jffs2_free_raw_inode(ri);
@@ -686,6 +695,7 @@ static int jffs2_mknod (struct inode *dir_i, struct dentry *dentry, int mode, de
 		up(&f->sem);
 		jffs2_complete_reservation(c);
 		jffs2_clear_inode(inode);
+		posix_acl_release(acl);
 		return PTR_ERR(fn);
 	}
 	/* No data here. Only a metadata node, which will be
@@ -699,9 +709,10 @@ static int jffs2_mknod (struct inode *dir_i, struct dentry *dentry, int mode, de
 	ret = jffs2_init_security(inode, dir_i);
 	if (ret) {
 		jffs2_clear_inode(inode);
+		posix_acl_release(acl);
 		return ret;
 	}
-	ret = jffs2_init_acl(inode, dir_i);
+	ret = jffs2_init_acl(inode, acl);
 	if (ret) {
 		jffs2_clear_inode(inode);
 		return ret;
@@ -772,7 +783,7 @@ static int jffs2_mknod (struct inode *dir_i, struct dentry *dentry, int mode, de
 }
 
 static int jffs2_rename (struct inode *old_dir_i, struct dentry *old_dentry,
-                        struct inode *new_dir_i, struct dentry *new_dentry)
+			 struct inode *new_dir_i, struct dentry *new_dentry)
 {
 	int ret;
 	struct jffs2_sb_info *c = JFFS2_SB_INFO(old_dir_i->i_sb);

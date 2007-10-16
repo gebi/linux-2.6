@@ -359,7 +359,7 @@ end:
 	return res;
 }
 
-int inet6_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
+static int inet6_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
 {
 	unsigned int h, s_h;
 	unsigned int e = 0, s_e;
@@ -619,14 +619,6 @@ static int fib6_add_rt2node(struct fib6_node *fn, struct rt6_info *rt,
 
 	ins = &fn->leaf;
 
-	if (fn->fn_flags&RTN_TL_ROOT &&
-	    fn->leaf == &ip6_null_entry &&
-	    !(rt->rt6i_flags & (RTF_DEFAULT | RTF_ADDRCONF)) ){
-		fn->leaf = rt;
-		rt->u.dst.rt6_next = NULL;
-		goto out;
-	}
-
 	for (iter = fn->leaf; iter; iter=iter->u.dst.rt6_next) {
 		/*
 		 *	Search for duplicates
@@ -658,11 +650,14 @@ static int fib6_add_rt2node(struct fib6_node *fn, struct rt6_info *rt,
 		ins = &iter->u.dst.rt6_next;
 	}
 
+	/* Reset round-robin state, if necessary */
+	if (ins == &fn->leaf)
+		fn->rr_ptr = NULL;
+
 	/*
 	 *	insert node
 	 */
 
-out:
 	rt->u.dst.rt6_next = iter;
 	*ins = rt;
 	rt->rt6i_node = fn;
@@ -1109,6 +1104,10 @@ static void fib6_del_route(struct fib6_node *fn, struct rt6_info **rtp,
 	rt6_stats.fib_rt_entries--;
 	rt6_stats.fib_discarded_routes++;
 
+	/* Reset round-robin state, if necessary */
+	if (fn->rr_ptr == rt)
+		fn->rr_ptr = NULL;
+
 	/* Adjust walkers */
 	read_lock(&fib6_walker_lock);
 	FOR_WALKERS(w) {
@@ -1314,7 +1313,7 @@ static int fib6_clean_node(struct fib6_walker_t *w)
 {
 	int res;
 	struct rt6_info *rt;
-	struct fib6_cleaner_t *c = (struct fib6_cleaner_t*)w;
+	struct fib6_cleaner_t *c = container_of(w, struct fib6_cleaner_t, w);
 
 	for (rt = w->leaf; rt; rt = rt->u.dst.rt6_next) {
 		res = c->func(rt, c->arg);
@@ -1475,9 +1474,11 @@ void __init fib6_init(void)
 	fib6_node_kmem = kmem_cache_create("fib6_nodes",
 					   sizeof(struct fib6_node),
 					   0, SLAB_HWCACHE_ALIGN|SLAB_PANIC,
-					   NULL, NULL);
+					   NULL);
 
 	fib6_tables_init();
+
+	__rtnl_register(PF_INET6, RTM_GETROUTE, NULL, inet6_dump_fib);
 }
 
 void fib6_gc_cleanup(void)

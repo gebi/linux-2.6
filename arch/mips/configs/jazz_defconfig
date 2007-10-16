@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
 # Linux kernel version: 2.6.20
-# Sun Feb 18 21:27:52 2007
+# Tue Feb 20 21:47:33 2007
 #
 CONFIG_MIPS=y
 
@@ -25,24 +25,16 @@ CONFIG_ZONE_DMA=y
 # CONFIG_BASLER_EXCITE is not set
 # CONFIG_MIPS_COBALT is not set
 # CONFIG_MACH_DECSTATION is not set
-# CONFIG_MIPS_EV64120 is not set
 CONFIG_MACH_JAZZ=y
-# CONFIG_LASAT is not set
 # CONFIG_MIPS_ATLAS is not set
 # CONFIG_MIPS_MALTA is not set
 # CONFIG_MIPS_SEAD is not set
 # CONFIG_WR_PPMC is not set
 # CONFIG_MIPS_SIM is not set
 # CONFIG_MOMENCO_JAGUAR_ATX is not set
-# CONFIG_MOMENCO_OCELOT is not set
-# CONFIG_MOMENCO_OCELOT_3 is not set
-# CONFIG_MOMENCO_OCELOT_C is not set
-# CONFIG_MOMENCO_OCELOT_G is not set
 # CONFIG_MIPS_XXS1500 is not set
-# CONFIG_PNX8550_V2PCI is not set
 # CONFIG_PNX8550_JBS is not set
 # CONFIG_PNX8550_STB810 is not set
-# CONFIG_DDB5477 is not set
 # CONFIG_MACH_VR41XX is not set
 # CONFIG_PMC_YOSEMITE is not set
 # CONFIG_QEMU is not set
@@ -246,7 +238,7 @@ CONFIG_DEFAULT_IOSCHED="anticipatory"
 #
 CONFIG_ISA=y
 CONFIG_MMU=y
-CONFIG_I8253=y
+CONFIG_PCSPEAKER=y
 
 #
 # PCCARD (PCMCIA/CardBus) support
@@ -646,6 +638,7 @@ CONFIG_PARPORT_1284=y
 # Plug and Play support
 #
 # CONFIG_PNP is not set
+# CONFIG_PNPACPI is not set
 
 #
 # Block devices

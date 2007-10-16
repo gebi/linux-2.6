@@ -663,11 +663,11 @@ static enum action pd_identify(struct pd_unit *disk)
 		return Fail;
 	pi_read_block(disk->pi, pd_scratch, 512);
 	disk->can_lba = pd_scratch[99] & 2;
-	disk->sectors = le16_to_cpu(*(u16 *) (pd_scratch + 12));
-	disk->heads = le16_to_cpu(*(u16 *) (pd_scratch + 6));
-	disk->cylinders = le16_to_cpu(*(u16 *) (pd_scratch + 2));
+	disk->sectors = le16_to_cpu(*(__le16 *) (pd_scratch + 12));
+	disk->heads = le16_to_cpu(*(__le16 *) (pd_scratch + 6));
+	disk->cylinders = le16_to_cpu(*(__le16 *) (pd_scratch + 2));
 	if (disk->can_lba)
-		disk->capacity = le32_to_cpu(*(u32 *) (pd_scratch + 120));
+		disk->capacity = le32_to_cpu(*(__le32 *) (pd_scratch + 120));
 	else
 		disk->capacity = disk->sectors * disk->heads * disk->cylinders;
 
@@ -698,7 +698,7 @@ static enum action pd_identify(struct pd_unit *disk)
 
 /* end of io request engine */
 
-static void do_pd_request(request_queue_t * q)
+static void do_pd_request(struct request_queue * q)
 {
 	if (pd_req)
 		return;

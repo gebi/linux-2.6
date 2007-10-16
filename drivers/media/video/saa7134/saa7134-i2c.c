@@ -23,7 +23,6 @@
 #include <linux/init.h>
 #include <linux/list.h>
 #include <linux/module.h>
-#include <linux/moduleparam.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
@@ -120,9 +119,9 @@ static inline int i2c_is_error(enum i2c_status status)
 	case ARB_LOST:
 	case SEQ_ERR:
 	case ST_ERR:
-		return TRUE;
+		return true;
 	default:
-		return FALSE;
+		return false;
 	}
 }
 
@@ -131,9 +130,9 @@ static inline int i2c_is_idle(enum i2c_status status)
 	switch (status) {
 	case IDLE:
 	case DONE_STOP:
-		return TRUE;
+		return true;
 	default:
-		return FALSE;
+		return false;
 	}
 }
 
@@ -141,9 +140,9 @@ static inline int i2c_is_busy(enum i2c_status status)
 {
 	switch (status) {
 	case BUSY:
-		return TRUE;
+		return true;
 	default:
-		return FALSE;
+		return false;
 	}
 }
 
@@ -159,8 +158,8 @@ static int i2c_is_busy_wait(struct saa7134_dev *dev)
 		saa_wait(I2C_WAIT_DELAY);
 	}
 	if (I2C_WAIT_RETRY == count)
-		return FALSE;
-	return TRUE;
+		return false;
+	return true;
 }
 
 static int i2c_reset(struct saa7134_dev *dev)
@@ -171,7 +170,7 @@ static int i2c_reset(struct saa7134_dev *dev)
 	d2printk(KERN_DEBUG "%s: i2c reset\n",dev->name);
 	status = i2c_get_status(dev);
 	if (!i2c_is_error(status))
-		return TRUE;
+		return true;
 	i2c_set_status(dev,status);
 
 	for (count = 0; count < I2C_WAIT_RETRY; count++) {
@@ -181,13 +180,13 @@ static int i2c_reset(struct saa7134_dev *dev)
 		udelay(I2C_WAIT_DELAY);
 	}
 	if (I2C_WAIT_RETRY == count)
-		return FALSE;
+		return false;
 
 	if (!i2c_is_idle(status))
-		return FALSE;
+		return false;
 
 	i2c_set_attr(dev,NOP);
-	return TRUE;
+	return true;
 }
 
 static inline int i2c_send_byte(struct saa7134_dev *dev,
@@ -315,12 +314,6 @@ static int saa7134_i2c_xfer(struct i2c_adapter *i2c_adap,
 
 /* ----------------------------------------------------------- */
 
-static int algo_control(struct i2c_adapter *adapter,
-			unsigned int cmd, unsigned long arg)
-{
-	return 0;
-}
-
 static u32 functionality(struct i2c_adapter *adap)
 {
 	return I2C_FUNC_SMBUS_EMUL;
@@ -370,6 +363,8 @@ static int attach_inform(struct i2c_client *client)
 
 		tun_setup.type = tuner;
 		tun_setup.addr = saa7134_boards[dev->board].tuner_addr;
+		tun_setup.config = saa7134_boards[dev->board].tuner_config;
+		tun_setup.tuner_callback = saa7134_tuner_callback;
 
 		if ((tun_setup.addr == ADDR_UNSET)||(tun_setup.addr == client->addr)) {
 
@@ -386,7 +381,6 @@ static int attach_inform(struct i2c_client *client)
 
 static struct i2c_algorithm saa7134_algo = {
 	.master_xfer   = saa7134_i2c_xfer,
-	.algo_control  = algo_control,
 	.functionality = functionality,
 };
 
@@ -445,7 +439,7 @@ static void do_i2c_scan(char *name, struct i2c_client *c)
 	unsigned char buf;
 	int i,rc;
 
-	for (i = 0; i < 128; i++) {
+	for (i = 0; i < ARRAY_SIZE(i2c_devs); i++) {
 		c->addr = i;
 		rc = i2c_master_recv(c,&buf,0);
 		if (rc < 0)

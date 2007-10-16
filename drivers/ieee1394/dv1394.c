@@ -94,7 +94,6 @@
 #include <linux/pci.h>
 #include <linux/fs.h>
 #include <linux/poll.h>
-#include <linux/smp_lock.h>
 #include <linux/mutex.h>
 #include <linux/bitops.h>
 #include <asm/byteorder.h>
@@ -2281,7 +2280,7 @@ static void dv1394_remove_host(struct hpsb_host *host)
 	} while (video);
 
 	if (found_ohci_card)
-		class_device_destroy(hpsb_protocol_class, MKDEV(IEEE1394_MAJOR,
+		device_destroy(hpsb_protocol_class, MKDEV(IEEE1394_MAJOR,
 			   IEEE1394_MINOR_BLOCK_DV1394 * 16 + (host->id << 2)));
 }
 
@@ -2296,9 +2295,9 @@ static void dv1394_add_host(struct hpsb_host *host)
 
 	ohci = (struct ti_ohci *)host->hostdata;
 
-	class_device_create(hpsb_protocol_class, NULL, MKDEV(
-		IEEE1394_MAJOR,	IEEE1394_MINOR_BLOCK_DV1394 * 16 + (id<<2)), 
-		NULL, "dv1394-%d", id);
+	device_create(hpsb_protocol_class, NULL, MKDEV(
+		IEEE1394_MAJOR,	IEEE1394_MINOR_BLOCK_DV1394 * 16 + (id<<2)),
+		"dv1394-%d", id);
 
 	dv1394_init(ohci, DV1394_NTSC, MODE_RECEIVE);
 	dv1394_init(ohci, DV1394_NTSC, MODE_TRANSMIT);
@@ -2564,8 +2563,8 @@ static int __init dv1394_init_module(void)
 	int ret;
 
 	printk(KERN_WARNING
-	       "WARNING: The dv1394 driver is unsupported and will be removed "
-	       "from Linux soon. Use raw1394 instead.\n");
+	       "NOTE: The dv1394 driver is unsupported and may be removed in a "
+	       "future Linux release. Use raw1394 instead.\n");
 
 	cdev_init(&dv1394_cdev, &dv1394_fops);
 	dv1394_cdev.owner = THIS_MODULE;

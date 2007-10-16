@@ -11,7 +11,16 @@
 
 #include <linux/proc_fs.h>
 
+#ifdef CONFIG_PROC_SYSCTL
 extern int proc_sys_init(void);
+#else
+static inline void proc_sys_init(void) { }
+#endif
+#ifdef CONFIG_NET
+extern int proc_net_init(void);
+#else
+static inline int proc_net_init(void) { return 0; }
+#endif
 
 struct vmalloc_info {
 	unsigned long	used;
@@ -32,6 +41,8 @@ do {						\
 
 extern int nommu_vma_show(struct seq_file *, struct vm_area_struct *);
 #endif
+
+extern int maps_protect;
 
 extern void create_seq_entry(char *name, mode_t mode, const struct file_operations *f);
 extern int proc_exe_link(struct inode *, struct dentry **, struct vfsmount **);

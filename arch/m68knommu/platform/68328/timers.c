@@ -17,10 +17,11 @@
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
+#include <linux/interrupt.h>
+#include <linux/irq.h>
 #include <asm/setup.h>
 #include <asm/system.h>
 #include <asm/pgtable.h>
-#include <asm/irq.h>
 #include <asm/machdep.h>
 #include <asm/MC68VZ328.h>
 
@@ -52,14 +53,19 @@
 
 /***************************************************************************/
 
-void m68328_timer_init(irqreturn_t (*timer_routine) (int, void *, struct pt_regs *))
+static struct irqaction m68328_timer_irq = {
+	.name    = "timer",
+	.flags   = IRQF_DISABLED | IRQF_TIMER,
+};
+
+void m68328_timer_init(irq_handler_t timer_routine)
 {
 	/* disable timer 1 */
 	TCTL = 0;
 
 	/* set ISR */
-	if (request_irq(TMR_IRQ_NUM, timer_routine, IRQ_FLG_LOCK, "timer", NULL)) 
-		panic("Unable to attach timer interrupt\n");
+	m68328_timer_irq.handler = timer_routine;
+	setup_irq(TMR_IRQ_NUM, &m68328_timer_irq);
 
 	/* Restart mode, Enable int, Set clock source */
 	TCTL = TCTL_OM | TCTL_IRQEN | CLOCK_SOURCE;

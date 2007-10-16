@@ -36,8 +36,8 @@
 
 #define NO_SUPPORT -1
 
-static inline int iwch_build_rdma_send(union t3_wr *wqe, struct ib_send_wr *wr,
-				       u8 * flit_cnt)
+static int iwch_build_rdma_send(union t3_wr *wqe, struct ib_send_wr *wr,
+				u8 * flit_cnt)
 {
 	int i;
 	u32 plen;
@@ -96,8 +96,8 @@ static inline int iwch_build_rdma_send(union t3_wr *wqe, struct ib_send_wr *wr,
 	return 0;
 }
 
-static inline int iwch_build_rdma_write(union t3_wr *wqe, struct ib_send_wr *wr,
-					u8 *flit_cnt)
+static int iwch_build_rdma_write(union t3_wr *wqe, struct ib_send_wr *wr,
+				 u8 *flit_cnt)
 {
 	int i;
 	u32 plen;
@@ -137,8 +137,8 @@ static inline int iwch_build_rdma_write(union t3_wr *wqe, struct ib_send_wr *wr,
 	return 0;
 }
 
-static inline int iwch_build_rdma_read(union t3_wr *wqe, struct ib_send_wr *wr,
-				       u8 *flit_cnt)
+static int iwch_build_rdma_read(union t3_wr *wqe, struct ib_send_wr *wr,
+				u8 *flit_cnt)
 {
 	if (wr->num_sge > 1)
 		return -EINVAL;
@@ -158,9 +158,8 @@ static inline int iwch_build_rdma_read(union t3_wr *wqe, struct ib_send_wr *wr,
 /*
  * TBD: this is going to be moved to firmware. Missing pdid/qpid check for now.
  */
-static inline int iwch_sgl2pbl_map(struct iwch_dev *rhp,
-				   struct ib_sge *sg_list, u32 num_sgle,
-				   u32 * pbl_addr, u8 * page_size)
+static int iwch_sgl2pbl_map(struct iwch_dev *rhp, struct ib_sge *sg_list,
+			    u32 num_sgle, u32 * pbl_addr, u8 * page_size)
 {
 	int i;
 	struct iwch_mr *mhp;
@@ -206,9 +205,8 @@ static inline int iwch_sgl2pbl_map(struct iwch_dev *rhp,
 	return 0;
 }
 
-static inline int iwch_build_rdma_recv(struct iwch_dev *rhp,
-						    union t3_wr *wqe,
-						    struct ib_recv_wr *wr)
+static int iwch_build_rdma_recv(struct iwch_dev *rhp, union t3_wr *wqe,
+				struct ib_recv_wr *wr)
 {
 	int i, err = 0;
 	u32 pbl_addr[4];
@@ -441,7 +439,7 @@ int iwch_bind_mw(struct ib_qp *qp,
 	wqe->bind.type = T3_VA_BASED_TO;
 
 	/* TBD: check perms */
-	wqe->bind.perms = iwch_convert_access(mw_bind->mw_access_flags);
+	wqe->bind.perms = iwch_ib_to_mwbind_access(mw_bind->mw_access_flags);
 	wqe->bind.mr_stag = cpu_to_be32(mw_bind->mr->lkey);
 	wqe->bind.mw_stag = cpu_to_be32(mw->rkey);
 	wqe->bind.mw_len = cpu_to_be32(mw_bind->length);
@@ -473,44 +471,62 @@ int iwch_bind_mw(struct ib_qp *qp,
 	return err;
 }
 
-static inline void build_term_codes(int t3err, u8 *layer_type, u8 *ecode,
-				    int tagged)
+static inline void build_term_codes(struct respQ_msg_t *rsp_msg,
+				    u8 *layer_type, u8 *ecode)
 {
-	switch (t3err) {
+	int status = TPT_ERR_INTERNAL_ERR;
+	int tagged = 0;
+	int opcode = -1;
+	int rqtype = 0;
+	int send_inv = 0;
+
+	if (rsp_msg) {
+		status = CQE_STATUS(rsp_msg->cqe);
+		opcode = CQE_OPCODE(rsp_msg->cqe);
+		rqtype = RQ_TYPE(rsp_msg->cqe);
+		send_inv = (opcode == T3_SEND_WITH_INV) ||
+		           (opcode == T3_SEND_WITH_SE_INV);
+		tagged = (opcode == T3_RDMA_WRITE) ||
+			 (rqtype && (opcode == T3_READ_RESP));
+	}
+
+	switch (status) {
 	case TPT_ERR_STAG:
-		if (tagged == 1) {
-			*layer_type = LAYER_DDP|DDP_TAGGED_ERR;
-			*ecode = DDPT_INV_STAG;
-		} else if (tagged == 2) {
+		if (send_inv) {
+			*layer_type = LAYER_RDMAP|RDMAP_REMOTE_OP;
+			*ecode = RDMAP_CANT_INV_STAG;
+		} else {
 			*layer_type = LAYER_RDMAP|RDMAP_REMOTE_PROT;
 			*ecode = RDMAP_INV_STAG;
 		}
 		break;
 	case TPT_ERR_PDID:
-	case TPT_ERR_QPID:
-	case TPT_ERR_ACCESS:
-		if (tagged == 1) {
-			*layer_type = LAYER_DDP|DDP_TAGGED_ERR;
-			*ecode = DDPT_STAG_NOT_ASSOC;
-		} else if (tagged == 2) {
-			*layer_type = LAYER_RDMAP|RDMAP_REMOTE_PROT;
+		*layer_type = LAYER_RDMAP|RDMAP_REMOTE_PROT;
+		if ((opcode == T3_SEND_WITH_INV) ||
+		    (opcode == T3_SEND_WITH_SE_INV))
+			*ecode = RDMAP_CANT_INV_STAG;
+		else
 			*ecode = RDMAP_STAG_NOT_ASSOC;
-		}
+		break;
+	case TPT_ERR_QPID:
+		*layer_type = LAYER_RDMAP|RDMAP_REMOTE_PROT;
+		*ecode = RDMAP_STAG_NOT_ASSOC;
+		break;
+	case TPT_ERR_ACCESS:
+		*layer_type = LAYER_RDMAP|RDMAP_REMOTE_PROT;
+		*ecode = RDMAP_ACC_VIOL;
 		break;
 	case TPT_ERR_WRAP:
 		*layer_type = LAYER_RDMAP|RDMAP_REMOTE_PROT;
 		*ecode = RDMAP_TO_WRAP;
 		break;
 	case TPT_ERR_BOUND:
-		if (tagged == 1) {
+		if (tagged) {
 			*layer_type = LAYER_DDP|DDP_TAGGED_ERR;
 			*ecode = DDPT_BASE_BOUNDS;
-		} else if (tagged == 2) {
+		} else {
 			*layer_type = LAYER_RDMAP|RDMAP_REMOTE_PROT;
 			*ecode = RDMAP_BASE_BOUNDS;
-		} else {
-			*layer_type = LAYER_DDP|DDP_UNTAGGED_ERR;
-			*ecode = DDPU_MSG_TOOBIG;
 		}
 		break;
 	case TPT_ERR_INVALIDATE_SHARED_MR:
@@ -594,8 +610,6 @@ int iwch_post_terminate(struct iwch_qp *qhp, struct respQ_msg_t *rsp_msg)
 {
 	union t3_wr *wqe;
 	struct terminate_message *term;
-	int status;
-	int tagged = 0;
 	struct sk_buff *skb;
 
 	PDBG("%s %d\n", __FUNCTION__, __LINE__);
@@ -613,20 +627,10 @@ int iwch_post_terminate(struct iwch_qp *qhp, struct respQ_msg_t *rsp_msg)
 
 	/* immediate data starts here. */
 	term = (struct terminate_message *)wqe->send.sgl;
-	if (rsp_msg) {
-		status = CQE_STATUS(rsp_msg->cqe);
-		if (CQE_OPCODE(rsp_msg->cqe) == T3_RDMA_WRITE)
-			tagged = 1;
-		if ((CQE_OPCODE(rsp_msg->cqe) == T3_READ_REQ) ||
-		    (CQE_OPCODE(rsp_msg->cqe) == T3_READ_RESP))
-			tagged = 2;
-	} else {
-		status = TPT_ERR_INTERNAL_ERR;
-	}
-	build_term_codes(status, &term->layer_etype, &term->ecode, tagged);
-	build_fw_riwrh((void *)wqe, T3_WR_SEND,
-		       T3_COMPLETION_FLAG | T3_NOTIFY_FLAG, 1,
-		       qhp->ep->hwtid, 5);
+	build_term_codes(rsp_msg, &term->layer_etype, &term->ecode);
+	wqe->send.wrh.op_seop_flags = cpu_to_be32(V_FW_RIWR_OP(T3_WR_SEND) |
+			 V_FW_RIWR_FLAGS(T3_COMPLETION_FLAG | T3_NOTIFY_FLAG));
+	wqe->send.wrh.gen_tid_len = cpu_to_be32(V_FW_RIWR_TID(qhp->ep->hwtid));
 	skb->priority = CPL_PRIORITY_DATA;
 	return cxgb3_ofld_send(qhp->rhp->rdev.t3cdev_p, skb);
 }
@@ -672,7 +676,7 @@ static void __flush_qp(struct iwch_qp *qhp, unsigned long *flag)
 	spin_lock_irqsave(&qhp->lock, *flag);
 }
 
-static inline void flush_qp(struct iwch_qp *qhp, unsigned long *flag)
+static void flush_qp(struct iwch_qp *qhp, unsigned long *flag)
 {
 	if (t3b_device(qhp->rhp))
 		cxio_set_wq_in_error(&qhp->wq);
@@ -684,7 +688,7 @@ static inline void flush_qp(struct iwch_qp *qhp, unsigned long *flag)
 /*
  * Return non zero if at least one RECV was pre-posted.
  */
-static inline int rqes_posted(struct iwch_qp *qhp)
+static int rqes_posted(struct iwch_qp *qhp)
 {
 	return fw_riwrh_opcode((struct fw_riwrh *)qhp->wq.queue) == T3_WR_RCV;
 }
@@ -728,6 +732,7 @@ static int rdma_init(struct iwch_dev *rhp, struct iwch_qp *qhp,
 	init_attr.qp_dma_addr = qhp->wq.dma_addr;
 	init_attr.qp_dma_size = (1UL << qhp->wq.size_log2);
 	init_attr.flags = rqes_posted(qhp) ? RECVS_POSTED : 0;
+	init_attr.irs = qhp->ep->rcv_seq;
 	PDBG("%s init_attr.rq_addr 0x%x init_attr.rq_size = %d "
 	     "flags 0x%x qpcaps 0x%x\n", __FUNCTION__,
 	     init_attr.rq_addr, init_attr.rq_size,

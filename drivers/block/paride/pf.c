@@ -154,7 +154,7 @@ enum {D_PRT, D_PRO, D_UNI, D_MOD, D_SLV, D_LUN, D_DLY};
 #include <linux/blkpg.h>
 #include <asm/uaccess.h>
 
-static spinlock_t pf_spin_lock;
+static DEFINE_SPINLOCK(pf_spin_lock);
 
 module_param(verbose, bool, 0644);
 module_param(major, int, 0);
@@ -202,7 +202,7 @@ module_param_array(drive3, int, NULL, 0);
 #define ATAPI_WRITE_10		0x2a
 
 static int pf_open(struct inode *inode, struct file *file);
-static void do_pf_request(request_queue_t * q);
+static void do_pf_request(struct request_queue * q);
 static int pf_ioctl(struct inode *inode, struct file *file,
 		    unsigned int cmd, unsigned long arg);
 static int pf_getgeo(struct block_device *bdev, struct hd_geometry *geo);
@@ -760,7 +760,7 @@ static void pf_end_request(int uptodate)
 	}
 }
 
-static void do_pf_request(request_queue_t * q)
+static void do_pf_request(struct request_queue * q)
 {
 	if (pf_busy)
 		return;

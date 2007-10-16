@@ -31,7 +31,6 @@
 #include <linux/fs.h>
 #include <linux/timer.h>
 #include <linux/poll.h>
-#include <linux/smp_lock.h>
 
 #include "av7110.h"
 #include "av7110_hw.h"
@@ -130,34 +129,25 @@ static struct v4l2_input inputs[4] = {
 
 static int ves1820_writereg(struct saa7146_dev *dev, u8 addr, u8 reg, u8 data)
 {
+	struct av7110 *av7110 = dev->ext_priv;
 	u8 buf[] = { 0x00, reg, data };
 	struct i2c_msg msg = { .addr = addr, .flags = 0, .buf = buf, .len = 3 };
 
 	dprintk(4, "dev: %p\n", dev);
 
-	if (1 != saa7146_i2c_transfer(dev, &msg, 1, 1))
+	if (1 != i2c_transfer(&av7110->i2c_adap, &msg, 1))
 		return -1;
 	return 0;
 }
-
-static int stv0297_writereg(struct saa7146_dev *dev, u8 addr, u8 reg, u8 data)
-{
-	u8 buf [] = { reg, data };
-	struct i2c_msg msg = { .addr = addr, .flags = 0, .buf = buf, .len = 2 };
-
-	if (1 != saa7146_i2c_transfer(dev, &msg, 1, 1))
-		return -1;
-	return 0;
-}
-
 
 static int tuner_write(struct saa7146_dev *dev, u8 addr, u8 data [4])
 {
+	struct av7110 *av7110 = dev->ext_priv;
 	struct i2c_msg msg = { .addr = addr, .flags = 0, .buf = data, .len = 4 };
 
 	dprintk(4, "dev: %p\n", dev);
 
-	if (1 != saa7146_i2c_transfer(dev, &msg, 1, 1))
+	if (1 != i2c_transfer(&av7110->i2c_adap, &msg, 1))
 		return -1;
 	return 0;
 }
@@ -193,6 +183,7 @@ static int ves1820_set_tv_freq(struct saa7146_dev *dev, u32 freq)
 
 static int stv0297_set_tv_freq(struct saa7146_dev *dev, u32 freq)
 {
+	struct av7110 *av7110 = (struct av7110*)dev->ext_priv;
 	u32 div;
 	u8 data[4];
 
@@ -213,8 +204,8 @@ static int stv0297_set_tv_freq(struct saa7146_dev *dev, u32 freq)
 	else
 		return -EINVAL;
 
-	stv0297_writereg(dev, 0x1C, 0x87, 0x78);
-	stv0297_writereg(dev, 0x1C, 0x86, 0xc8);
+	if (av7110->fe->ops.i2c_gate_ctrl)
+		av7110->fe->ops.i2c_gate_ctrl(av7110->fe, 1);
 	return tuner_write(dev, 0x63, data);
 }
 
@@ -344,7 +335,7 @@ static int av7110_ioctl(struct saa7146_fh *fh, unsigned int cmd, void *arg)
 			return -EINVAL;
 
 		memset(t, 0, sizeof(*t));
-		strcpy(t->name, "Television");
+		strcpy((char *)t->name, "Television");
 
 		t->type = V4L2_TUNER_ANALOG_TV;
 		t->capability = V4L2_TUNER_CAP_NORM | V4L2_TUNER_CAP_STEREO |
@@ -817,20 +808,20 @@ int av7110_init_v4l(struct av7110 *av7110)
 		saa7146_vv_release(dev);
 		return -ENODEV;
 	}
-	if (saa7146_register_device(&av7110->vbi_dev, dev, "av7110", VFL_TYPE_VBI)) {
+	if (saa7146_register_device(&av7110->vbi_dev, dev, "av7110", VFL_TYPE_VBI))
 		ERR(("cannot register vbi v4l2 device. skipping.\n"));
-	} else {
-		if (av7110->analog_tuner_flags)
-			av7110->analog_tuner_flags |= ANALOG_TUNER_VBI;
-	}
 	return 0;
 }
 
 int av7110_exit_v4l(struct av7110 *av7110)
 {
+	struct saa7146_dev* dev = av7110->dev;
+
 	saa7146_unregister_device(&av7110->v4l_dev, av7110->dev);
-	if (av7110->analog_tuner_flags & ANALOG_TUNER_VBI)
-		saa7146_unregister_device(&av7110->vbi_dev, av7110->dev);
+	saa7146_unregister_device(&av7110->vbi_dev, av7110->dev);
+
+	saa7146_vv_release(dev);
+
 	return 0;
 }
 

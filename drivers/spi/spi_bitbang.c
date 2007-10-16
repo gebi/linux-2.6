@@ -187,12 +187,10 @@ int spi_bitbang_setup(struct spi_device *spi)
 
 	bitbang = spi_master_get_devdata(spi->master);
 
-	/* REVISIT: some systems will want to support devices using lsb-first
-	 * bit encodings on the wire.  In pure software that would be trivial,
-	 * just bitbang_txrx_le_cphaX() routines shifting the other way, and
-	 * some hardware controllers also have this support.
+	/* Bitbangers can support SPI_CS_HIGH, SPI_3WIRE, and so on;
+	 * add those to master->flags, and provide the other support.
 	 */
-	if ((spi->mode & SPI_LSB_FIRST) != 0)
+	if ((spi->mode & ~(SPI_CPOL|SPI_CPHA|bitbang->flags)) != 0)
 		return -EINVAL;
 
 	if (!cs) {
@@ -302,10 +300,6 @@ static void bitbang_work(struct work_struct *work)
 		setup_transfer = NULL;
 
 		list_for_each_entry (t, &m->transfers, transfer_list) {
-			if (bitbang->shutdown) {
-				status = -ESHUTDOWN;
-				break;
-			}
 
 			/* override or restore speed and wordsize */
 			if (t->speed_hz || t->bits_per_word) {
@@ -410,8 +404,6 @@ int spi_bitbang_transfer(struct spi_device *spi, struct spi_message *m)
 	m->status = -EINPROGRESS;
 
 	bitbang = spi_master_get_devdata(spi->master);
-	if (bitbang->shutdown)
-		return -ESHUTDOWN;
 
 	spin_lock_irqsave(&bitbang->lock, flags);
 	if (!spi->max_speed_hz)
@@ -507,27 +499,11 @@ EXPORT_SYMBOL_GPL(spi_bitbang_start);
  */
 int spi_bitbang_stop(struct spi_bitbang *bitbang)
 {
-	unsigned	limit = 500;
+	spi_unregister_master(bitbang->master);
 
-	spin_lock_irq(&bitbang->lock);
-	bitbang->shutdown = 0;
-	while (!list_empty(&bitbang->queue) && limit--) {
-		spin_unlock_irq(&bitbang->lock);
-
-		dev_dbg(bitbang->master->cdev.dev, "wait for queue\n");
-		msleep(10);
-
-		spin_lock_irq(&bitbang->lock);
-	}
-	spin_unlock_irq(&bitbang->lock);
-	if (!list_empty(&bitbang->queue)) {
-		dev_err(bitbang->master->cdev.dev, "queue didn't empty\n");
-		return -EBUSY;
-	}
+	WARN_ON(!list_empty(&bitbang->queue));
 
 	destroy_workqueue(bitbang->workqueue);
-
-	spi_unregister_master(bitbang->master);
 
 	return 0;
 }

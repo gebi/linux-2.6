@@ -740,10 +740,6 @@ static void imm_interrupt(struct work_struct *work)
 	struct Scsi_Host *host = cmd->device->host;
 	unsigned long flags;
 
-	if (!cmd) {
-		printk("IMM: bug in imm_interrupt\n");
-		return;
-	}
 	if (imm_engine(dev, cmd)) {
 		schedule_delayed_work(&dev->imm_tq, 1);
 		return;
@@ -1159,11 +1155,10 @@ static int __imm_attach(struct parport *pb)
 
 	init_waitqueue_head(&waiting);
 
-	dev = kmalloc(sizeof(imm_struct), GFP_KERNEL);
+	dev = kzalloc(sizeof(imm_struct), GFP_KERNEL);
 	if (!dev)
 		return -ENOMEM;
 
-	memset(dev, 0, sizeof(imm_struct));
 
 	dev->base = -1;
 	dev->mode = IMM_AUTODETECT;

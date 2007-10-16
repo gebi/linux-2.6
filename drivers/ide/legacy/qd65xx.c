@@ -16,16 +16,14 @@
  * Please set local bus speed using kernel parameter idebus
  * 	for example, "idebus=33" stands for 33Mhz VLbus
  * To activate controller support, use "ide0=qd65xx"
- * To enable tuning, use "ide0=autotune"
- * To enable second channel tuning (qd6580 only), use "ide1=autotune"
+ * To enable tuning, use "hda=autotune hdb=autotune"
+ * To enable 2nd channel tuning (qd6580 only), use "hdc=autotune hdd=autotune"
  */
 
 /*
  * Rewritten from the work of Colten Edwards <pje120@cs.usask.ca> by
  * Samuel Thibault <samuel.thibault@fnac.net>
  */
-
-#undef REALLY_SLOW_IO		/* most systems can safely undef this */
 
 #include <linux/module.h>
 #include <linux/types.h>
@@ -226,15 +224,14 @@ static void qd_set_timing (ide_drive_t *drive, u8 timing)
 	printk(KERN_DEBUG "%s: %#x\n", drive->name, timing);
 }
 
-/*
- * qd6500_tune_drive
- */
-
-static void qd6500_tune_drive (ide_drive_t *drive, u8 pio)
+static void qd6500_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
 	int active_time   = 175;
 	int recovery_time = 415; /* worst case values from the dos driver */
 
+	/*
+	 * FIXME: use "pio" value
+	 */
 	if (drive->id && !qd_find_disk_type(drive, &active_time, &recovery_time)
 		&& drive->id->tPIO && (drive->id->field_valid & 0x02)
 		&& drive->id->eide_pio >= 240) {
@@ -248,45 +245,39 @@ static void qd6500_tune_drive (ide_drive_t *drive, u8 pio)
 	qd_set_timing(drive, qd6500_compute_timing(HWIF(drive), active_time, recovery_time));
 }
 
-/*
- * qd6580_tune_drive
- */
-
-static void qd6580_tune_drive (ide_drive_t *drive, u8 pio)
+static void qd6580_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
-	ide_pio_data_t d;
 	int base = HWIF(drive)->select_data;
+	unsigned int cycle_time;
 	int active_time   = 175;
 	int recovery_time = 415; /* worst case values from the dos driver */
 
 	if (drive->id && !qd_find_disk_type(drive, &active_time, &recovery_time)) {
-		pio = ide_get_best_pio_mode(drive, pio, 255, &d);
-		pio = min_t(u8, pio, 4);
+		cycle_time = ide_pio_cycle_time(drive, pio);
 
 		switch (pio) {
 			case 0: break;
 			case 3:
-				if (d.cycle_time >= 110) {
+				if (cycle_time >= 110) {
 					active_time = 86;
-					recovery_time = d.cycle_time - 102;
+					recovery_time = cycle_time - 102;
 				} else
 					printk(KERN_WARNING "%s: Strange recovery time !\n",drive->name);
 				break;
 			case 4:
-				if (d.cycle_time >= 69) {
+				if (cycle_time >= 69) {
 					active_time = 70;
-					recovery_time = d.cycle_time - 61;
+					recovery_time = cycle_time - 61;
 				} else
 					printk(KERN_WARNING "%s: Strange recovery time !\n",drive->name);
 				break;
 			default:
-				if (d.cycle_time >= 180) {
+				if (cycle_time >= 180) {
 					active_time = 110;
-					recovery_time = d.cycle_time - 120;
+					recovery_time = cycle_time - 120;
 				} else {
 					active_time = ide_pio_timings[pio].active_time;
-					recovery_time = d.cycle_time
-							-active_time;
+					recovery_time = cycle_time - active_time;
 				}
 		}
 		printk(KERN_INFO "%s: PIO mode%d\n", drive->name,pio);
@@ -338,8 +329,7 @@ static int __init qd_testreg(int port)
  */
 
 static void __init qd_setup(ide_hwif_t *hwif, int base, int config,
-			    unsigned int data0, unsigned int data1,
-			    void (*tuneproc) (ide_drive_t *, u8 pio))
+			    unsigned int data0, unsigned int data1)
 {
 	hwif->chipset = ide_qd65xx;
 	hwif->channel = hwif->index;
@@ -349,8 +339,7 @@ static void __init qd_setup(ide_hwif_t *hwif, int base, int config,
 	hwif->drives[1].drive_data = data1;
 	hwif->drives[0].io_32bit =
 	hwif->drives[1].io_32bit = 1;
-	hwif->tuneproc = tuneproc;
-	probe_hwif_init(hwif);
+	hwif->pio_mask = ATA_PIO4;
 }
 
 /*
@@ -363,7 +352,7 @@ static void __exit qd_unsetup(ide_hwif_t *hwif)
 {
 	u8 config = hwif->config_data;
 	int base = hwif->select_data;
-	void *tuneproc = (void *) hwif->tuneproc;
+	void *set_pio_mode = (void *)hwif->set_pio_mode;
 
 	if (hwif->chipset != ide_qd65xx)
 		return;
@@ -371,12 +360,12 @@ static void __exit qd_unsetup(ide_hwif_t *hwif)
 	printk(KERN_NOTICE "%s: back to defaults\n", hwif->name);
 
 	hwif->selectproc = NULL;
-	hwif->tuneproc = NULL;
+	hwif->set_pio_mode = NULL;
 
-	if (tuneproc == (void *) qd6500_tune_drive) {
+	if (set_pio_mode == (void *)qd6500_set_pio_mode) {
 		// will do it for both
 		qd_write_reg(QD6500_DEF_DATA, QD_TIMREG(&hwif->drives[0]));
-	} else if (tuneproc == (void *) qd6580_tune_drive) {
+	} else if (set_pio_mode == (void *)qd6580_set_pio_mode) {
 		if (QD_CONTROL(hwif) & QD_CONTR_SEC_DISABLED) {
 			qd_write_reg(QD6580_DEF_DATA, QD_TIMREG(&hwif->drives[0]));
 			qd_write_reg(QD6580_DEF_DATA2, QD_TIMREG(&hwif->drives[1]));
@@ -426,10 +415,13 @@ static int __init qd_probe(int base)
 			return 1;
 		}
 
-		qd_setup(hwif, base, config, QD6500_DEF_DATA, QD6500_DEF_DATA,
-			 &qd6500_tune_drive);
+		qd_setup(hwif, base, config, QD6500_DEF_DATA, QD6500_DEF_DATA);
 
-		create_proc_ide_interfaces();
+		hwif->set_pio_mode = &qd6500_set_pio_mode;
+
+		probe_hwif_init(hwif);
+
+		ide_proc_register_port(hwif);
 
 		return 1;
 	}
@@ -457,11 +449,15 @@ static int __init qd_probe(int base)
 			printk(KERN_INFO "%s: qd6580: single IDE board\n",
 					 hwif->name);
 			qd_setup(hwif, base, config | (control << 8),
-				 QD6580_DEF_DATA, QD6580_DEF_DATA2,
-				 &qd6580_tune_drive);
+				 QD6580_DEF_DATA, QD6580_DEF_DATA2);
+
+			hwif->set_pio_mode = &qd6580_set_pio_mode;
+
+			probe_hwif_init(hwif);
+
 			qd_write_reg(QD_DEF_CONTR,QD_CONTROL_PORT);
 
-			create_proc_ide_interfaces();
+			ide_proc_register_port(hwif);
 
 			return 1;
 		} else {
@@ -474,14 +470,23 @@ static int __init qd_probe(int base)
 					hwif->name, mate->name);
 
 			qd_setup(hwif, base, config | (control << 8),
-				 QD6580_DEF_DATA, QD6580_DEF_DATA,
-				 &qd6580_tune_drive);
+				 QD6580_DEF_DATA, QD6580_DEF_DATA);
+
+			hwif->set_pio_mode = &qd6580_set_pio_mode;
+
+			probe_hwif_init(hwif);
+
 			qd_setup(mate, base, config | (control << 8),
-				 QD6580_DEF_DATA2, QD6580_DEF_DATA2,
-				 &qd6580_tune_drive);
+				 QD6580_DEF_DATA2, QD6580_DEF_DATA2);
+
+			mate->set_pio_mode = &qd6580_set_pio_mode;
+
+			probe_hwif_init(mate);
+
 			qd_write_reg(QD_DEF_CONTR,QD_CONTROL_PORT);
 
-			create_proc_ide_interfaces();
+			ide_proc_register_port(hwif);
+			ide_proc_register_port(mate);
 
 			return 0; /* no other qd65xx possible */
 		}
@@ -490,9 +495,17 @@ static int __init qd_probe(int base)
 	return 1;
 }
 
+int probe_qd65xx = 0;
+
+module_param_named(probe, probe_qd65xx, bool, 0);
+MODULE_PARM_DESC(probe, "probe for QD65xx chipsets");
+
 /* Can be called directly from ide.c. */
 int __init qd65xx_init(void)
 {
+	if (probe_qd65xx == 0)
+		return -ENODEV;
+
 	if (qd_probe(0x30))
 		qd_probe(0xb0);
 	if (ide_hwifs[0].chipset != ide_qd65xx &&

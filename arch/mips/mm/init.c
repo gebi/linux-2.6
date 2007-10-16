@@ -8,6 +8,7 @@
  * Kevin D. Kissell, kevink@mips.com and Carsten Langgaard, carstenl@mips.com
  * Copyright (C) 2000 MIPS Technologies, Inc.  All rights reserved.
  */
+#include <linux/bug.h>
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/signal.h>
@@ -26,6 +27,7 @@
 #include <linux/proc_fs.h>
 #include <linux/pfn.h>
 
+#include <asm/asm-offsets.h>
 #include <asm/bootinfo.h>
 #include <asm/cachectl.h>
 #include <asm/cpu.h>
@@ -123,13 +125,15 @@ static void __init kmap_coherent_init(void)
 static inline void kmap_coherent_init(void) {}
 #endif
 
-static inline void *kmap_coherent(struct page *page, unsigned long addr)
+void *kmap_coherent(struct page *page, unsigned long addr)
 {
 	enum fixed_addresses idx;
 	unsigned long vaddr, flags, entrylo;
 	unsigned long old_ctx;
 	pte_t pte;
 	int tlbidx;
+
+	BUG_ON(Page_dcache_dirty(page));
 
 	inc_preempt_count();
 	idx = (addr >> PAGE_SHIFT) & (FIX_N_COLOURS - 1);
@@ -177,7 +181,7 @@ static inline void *kmap_coherent(struct page *page, unsigned long addr)
 
 #define UNIQUE_ENTRYHI(idx) (CKSEG0 + ((idx) << (PAGE_SHIFT + 1)))
 
-static inline void kunmap_coherent(struct page *page)
+void kunmap_coherent(void)
 {
 #ifndef CONFIG_MIPS_MT_SMTC
 	unsigned int wired;
@@ -207,10 +211,10 @@ void copy_user_highpage(struct page *to, struct page *from,
 	void *vfrom, *vto;
 
 	vto = kmap_atomic(to, KM_USER1);
-	if (cpu_has_dc_aliases) {
+	if (cpu_has_dc_aliases && !Page_dcache_dirty(from)) {
 		vfrom = kmap_coherent(from, vaddr);
 		copy_page(vto, vfrom);
-		kunmap_coherent(from);
+		kunmap_coherent();
 	} else {
 		vfrom = kmap_atomic(from, KM_USER0);
 		copy_page(vto, vfrom);
@@ -233,7 +237,7 @@ void copy_to_user_page(struct vm_area_struct *vma,
 	if (cpu_has_dc_aliases) {
 		void *vto = kmap_coherent(page, vaddr) + (vaddr & ~PAGE_MASK);
 		memcpy(vto, src, len);
-		kunmap_coherent(page);
+		kunmap_coherent();
 	} else
 		memcpy(dst, src, len);
 	if ((vma->vm_flags & VM_EXEC) && !cpu_has_ic_fills_f_dc)
@@ -250,7 +254,7 @@ void copy_from_user_page(struct vm_area_struct *vma,
 		void *vfrom =
 			kmap_coherent(page, vaddr) + (vaddr & ~PAGE_MASK);
 		memcpy(dst, vfrom, len);
-		kunmap_coherent(page);
+		kunmap_coherent();
 	} else
 		memcpy(dst, src, len);
 }
@@ -351,18 +355,15 @@ void __init paging_init(void)
 #endif
 	kmap_coherent_init();
 
-#ifdef CONFIG_ISA
-	if (max_low_pfn >= MAX_DMA_PFN)
-		if (min_low_pfn >= MAX_DMA_PFN) {
-			zones_size[ZONE_DMA] = 0;
-			zones_size[ZONE_NORMAL] = max_low_pfn - min_low_pfn;
-		} else {
-			zones_size[ZONE_DMA] = MAX_DMA_PFN - min_low_pfn;
-			zones_size[ZONE_NORMAL] = max_low_pfn - MAX_DMA_PFN;
-		}
+#ifdef CONFIG_ZONE_DMA
+	if (min_low_pfn < MAX_DMA_PFN && MAX_DMA_PFN <= max_low_pfn) {
+		zones_size[ZONE_DMA] = MAX_DMA_PFN - min_low_pfn;
+		zones_size[ZONE_NORMAL] = max_low_pfn - MAX_DMA_PFN;
+	} else if (max_low_pfn < MAX_DMA_PFN)
+		zones_size[ZONE_DMA] = max_low_pfn - min_low_pfn;
 	else
 #endif
-	zones_size[ZONE_DMA] = max_low_pfn - min_low_pfn;
+	zones_size[ZONE_NORMAL] = max_low_pfn - min_low_pfn;
 
 #ifdef CONFIG_HIGHMEM
 	zones_size[ZONE_HIGHMEM] = highend_pfn - highstart_pfn;
@@ -377,7 +378,7 @@ void __init paging_init(void)
 #ifdef CONFIG_FLATMEM
 	free_area_init(zones_size);
 #else
-	pfn = 0;
+	pfn = min_low_pfn;
 	for (i = 0; i < MAX_NR_ZONES; i++)
 		for (j = 0; j < zones_size[i]; j++, pfn++)
 			if (!page_is_ram(pfn))
@@ -427,9 +428,6 @@ void __init mem_init(void)
 			continue;
 		}
 		ClearPageReserved(page);
-#ifdef CONFIG_LIMITED_DMA
-		set_page_address(page, lowmem_page_address(page));
-#endif
 		init_page_count(page);
 		__free_page(page);
 		totalhigh_pages++;
@@ -490,7 +488,7 @@ void free_initrd_mem(unsigned long start, unsigned long end)
 }
 #endif
 
-void free_initmem(void)
+void __init_refok free_initmem(void)
 {
 	prom_free_prom_memory();
 	free_init_pages("unused kernel memory",
@@ -504,7 +502,13 @@ unsigned long pgd_current[NR_CPUS];
  * different layout ...
  */
 #define __page_aligned(order) __attribute__((__aligned__(PAGE_SIZE<<order)))
-pgd_t swapper_pg_dir[PTRS_PER_PGD] __page_aligned(PGD_ORDER);
+
+/*
+ * gcc 3.3 and older have trouble determining that PTRS_PER_PGD and PGD_ORDER
+ * are constants.  So we use the variants from asm-offset.h until that gcc
+ * will officially be retired.
+ */
+pgd_t swapper_pg_dir[_PTRS_PER_PGD] __page_aligned(_PGD_ORDER);
 #ifdef CONFIG_64BIT
 #ifdef MODULE_START
 pgd_t module_pg_dir[PTRS_PER_PGD] __page_aligned(PGD_ORDER);

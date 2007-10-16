@@ -110,6 +110,10 @@ void __init at32_select_gpio(unsigned int pin, unsigned long flags)
 			pio_writel(pio, SODR, mask);
 		else
 			pio_writel(pio, CODR, mask);
+		if (flags & AT32_GPIOF_MULTIDRV)
+			pio_writel(pio, MDER, mask);
+		else
+			pio_writel(pio, MDDR, mask);
 		pio_writel(pio, PUDR, mask);
 		pio_writel(pio, OER, mask);
 	} else {
@@ -214,7 +218,7 @@ int gpio_direction_input(unsigned int gpio)
 }
 EXPORT_SYMBOL(gpio_direction_input);
 
-int gpio_direction_output(unsigned int gpio)
+int gpio_direction_output(unsigned int gpio, int value)
 {
 	struct pio_device *pio;
 	unsigned int pin;
@@ -222,6 +226,8 @@ int gpio_direction_output(unsigned int gpio)
 	pio = gpio_to_pio(gpio);
 	if (!pio)
 		return -ENODEV;
+
+	gpio_set_value(gpio, value);
 
 	pin = gpio & 0x1f;
 	pio_writel(pio, OER, 1 << pin);

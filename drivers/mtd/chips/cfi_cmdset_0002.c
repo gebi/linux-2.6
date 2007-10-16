@@ -359,6 +359,8 @@ struct mtd_info *cfi_cmdset_0002(struct map_info *map, int primary)
 		cfi->chips[i].word_write_time = 1<<cfi->cfiq->WordWriteTimeoutTyp;
 		cfi->chips[i].buffer_write_time = 1<<cfi->cfiq->BufWriteTimeoutTyp;
 		cfi->chips[i].erase_time = 1<<cfi->cfiq->BlockEraseTimeoutTyp;
+		cfi->chips[i].ref_point_counter = 0;
+		init_waitqueue_head(&(cfi->chips[i].wq));
 	}
 
 	map->fldrv = &cfi_amdstd_chipdrv;
@@ -1607,7 +1609,7 @@ static int __xipram do_erase_oneblock(struct map_info *map, struct flchip *chip,
 }
 
 
-int cfi_amdstd_erase_varsize(struct mtd_info *mtd, struct erase_info *instr)
+static int cfi_amdstd_erase_varsize(struct mtd_info *mtd, struct erase_info *instr)
 {
 	unsigned long ofs, len;
 	int ret;

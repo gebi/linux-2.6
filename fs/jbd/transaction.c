@@ -1,5 +1,5 @@
 /*
- * linux/fs/transaction.c
+ * linux/fs/jbd/transaction.c
  *
  * Written by Stephen C. Tweedie <sct@redhat.com>, 1998
  *
@@ -23,7 +23,6 @@
 #include <linux/errno.h>
 #include <linux/slab.h>
 #include <linux/timer.h>
-#include <linux/smp_lock.h>
 #include <linux/mm.h>
 #include <linux/highmem.h>
 
@@ -234,6 +233,8 @@ out:
 	return ret;
 }
 
+static struct lock_class_key jbd_handle_key;
+
 /* Allocate a new handle.  This should probably be in a slab... */
 static handle_t *new_handle(int nblocks)
 {
@@ -243,6 +244,8 @@ static handle_t *new_handle(int nblocks)
 	memset(handle, 0, sizeof(*handle));
 	handle->h_buffer_credits = nblocks;
 	handle->h_ref = 1;
+
+	lockdep_init_map(&handle->h_lockdep_map, "jbd_handle", &jbd_handle_key, 0);
 
 	return handle;
 }
@@ -287,6 +290,9 @@ handle_t *journal_start(journal_t *journal, int nblocks)
 		current->journal_info = NULL;
 		handle = ERR_PTR(err);
 	}
+
+	lock_acquire(&handle->h_lockdep_map, 0, 0, 0, 2, _THIS_IP_);
+
 	return handle;
 }
 
@@ -1411,6 +1417,8 @@ int journal_stop(handle_t *handle)
 		spin_unlock(&transaction->t_handle_lock);
 		spin_unlock(&journal->j_state_lock);
 	}
+
+	lock_release(&handle->h_lockdep_map, 1, _THIS_IP_);
 
 	jbd_free_handle(handle);
 	return err;

@@ -247,13 +247,35 @@ sn_io_slot_fixup(struct pci_dev *dev)
 		addr = ((addr << 4) >> 4) | __IA64_UNCACHED_OFFSET;
 		dev->resource[idx].start = addr;
 		dev->resource[idx].end = addr + size;
+
+		/*
+		 * if it's already in the device structure, remove it before
+		 * inserting
+		 */
+		if (dev->resource[idx].parent && dev->resource[idx].parent->child)
+			release_resource(&dev->resource[idx]);
+
 		if (dev->resource[idx].flags & IORESOURCE_IO)
-			dev->resource[idx].parent = &ioport_resource;
+			insert_resource(&ioport_resource, &dev->resource[idx]);
 		else
-			dev->resource[idx].parent = &iomem_resource;
-		/* If ROM, mark as shadowed in PROM */
-		if (idx == PCI_ROM_RESOURCE)
-			dev->resource[idx].flags |= IORESOURCE_ROM_BIOS_COPY;
+			insert_resource(&iomem_resource, &dev->resource[idx]);
+		/*
+		 * If ROM, set the actual ROM image size, and mark as
+		 * shadowed in PROM.
+		 */
+		if (idx == PCI_ROM_RESOURCE) {
+			size_t image_size;
+			void __iomem *rom;
+
+			rom = ioremap(pci_resource_start(dev, PCI_ROM_RESOURCE),
+				      size + 1);
+			image_size = pci_get_rom_size(rom, size + 1);
+			dev->resource[PCI_ROM_RESOURCE].end =
+				dev->resource[PCI_ROM_RESOURCE].start +
+				image_size - 1;
+			dev->resource[PCI_ROM_RESOURCE].flags |=
+						 IORESOURCE_ROM_BIOS_COPY;
+		}
 	}
 	/* Create a pci_window in the pci_controller struct for
 	 * each device resource.

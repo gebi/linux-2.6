@@ -21,6 +21,7 @@
 #include <linux/console.h>
 #include <linux/kd.h>
 #include <linux/netdevice.h>
+#include <linux/interrupt.h>
 
 #include <asm/setup.h>
 #include <asm/system.h>
@@ -36,7 +37,7 @@
 
 /***************************************************************************/
 
-void m68328_timer_init(irqreturn_t (*timer_routine) (int, void *, struct pt_regs *));
+void m68328_timer_init(irq_handler_t timer_routine);
 void m68328_timer_tick(void);
 unsigned long m68328_timer_gettimeoffset(void);
 void m68328_timer_gettod(int *year, int *mon, int *day, int *hour, int *min, int *sec);
@@ -189,13 +190,6 @@ static void init_hardware(char *command, int size)
 void config_BSP(char *command, int size)
 {
 	printk(KERN_INFO "68VZ328 DragonBallVZ support (c) 2001 Lineo, Inc.\n");
-
-#if defined(CONFIG_BOOTPARAM)
-	strncpy(command, CONFIG_BOOTPARAM_STRING, size);
-	command[size-1] = 0;
-#else
-	memset(command, 0, size);
-#endif
 
 	init_hardware(command, size);
 

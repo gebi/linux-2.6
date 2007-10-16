@@ -57,7 +57,7 @@ static DEFINE_RWLOCK(adapter_list_lock);
 static LIST_HEAD(adapter_list);
 
 static const unsigned int MAX_ATIDS = 64 * 1024;
-static const unsigned int ATID_BASE = 0x100000;
+static const unsigned int ATID_BASE = 0x10000;
 
 static inline int offload_activated(struct t3cdev *tdev)
 {
@@ -160,14 +160,16 @@ static struct net_device *get_iff_from_mac(struct adapter *adapter,
 	int i;
 
 	for_each_port(adapter, i) {
-		const struct vlan_group *grp;
+		struct vlan_group *grp;
 		struct net_device *dev = adapter->port[i];
 		const struct port_info *p = netdev_priv(dev);
 
 		if (!memcmp(dev->dev_addr, mac, ETH_ALEN)) {
 			if (vlan && vlan != VLAN_VID_MASK) {
 				grp = p->vlan_grp;
-				dev = grp ? grp->vlan_devices[vlan] : NULL;
+				dev = NULL;
+				if (grp)
+					dev = vlan_group_get_device(grp, vlan);
 			} else
 				while (dev->master)
 					dev = dev->master;
@@ -220,32 +222,32 @@ static int cxgb_rdma_ctl(struct adapter *adapter, unsigned int req, void *data)
 	int ret = 0;
 
 	switch (req) {
-	case RDMA_GET_PARAMS:{
-		struct rdma_info *req = data;
+	case RDMA_GET_PARAMS: {
+		struct rdma_info *rdma = data;
 		struct pci_dev *pdev = adapter->pdev;
 
-		req->udbell_physbase = pci_resource_start(pdev, 2);
-		req->udbell_len = pci_resource_len(pdev, 2);
-		req->tpt_base =
+		rdma->udbell_physbase = pci_resource_start(pdev, 2);
+		rdma->udbell_len = pci_resource_len(pdev, 2);
+		rdma->tpt_base =
 			t3_read_reg(adapter, A_ULPTX_TPT_LLIMIT);
-		req->tpt_top = t3_read_reg(adapter, A_ULPTX_TPT_ULIMIT);
-		req->pbl_base =
+		rdma->tpt_top = t3_read_reg(adapter, A_ULPTX_TPT_ULIMIT);
+		rdma->pbl_base =
 			t3_read_reg(adapter, A_ULPTX_PBL_LLIMIT);
-		req->pbl_top = t3_read_reg(adapter, A_ULPTX_PBL_ULIMIT);
-		req->rqt_base = t3_read_reg(adapter, A_ULPRX_RQ_LLIMIT);
-		req->rqt_top = t3_read_reg(adapter, A_ULPRX_RQ_ULIMIT);
-		req->kdb_addr = adapter->regs + A_SG_KDOORBELL;
-		req->pdev = pdev;
+		rdma->pbl_top = t3_read_reg(adapter, A_ULPTX_PBL_ULIMIT);
+		rdma->rqt_base = t3_read_reg(adapter, A_ULPRX_RQ_LLIMIT);
+		rdma->rqt_top = t3_read_reg(adapter, A_ULPRX_RQ_ULIMIT);
+		rdma->kdb_addr = adapter->regs + A_SG_KDOORBELL;
+		rdma->pdev = pdev;
 		break;
 	}
 	case RDMA_CQ_OP:{
 		unsigned long flags;
-		struct rdma_cq_op *req = data;
+		struct rdma_cq_op *rdma = data;
 
 		/* may be called in any context */
 		spin_lock_irqsave(&adapter->sge.reg_lock, flags);
-		ret = t3_sge_cqcntxt_op(adapter, req->id, req->op,
-					req->credits);
+		ret = t3_sge_cqcntxt_op(adapter, rdma->id, rdma->op,
+					rdma->credits);
 		spin_unlock_irqrestore(&adapter->sge.reg_lock, flags);
 		break;
 	}
@@ -272,15 +274,15 @@ static int cxgb_rdma_ctl(struct adapter *adapter, unsigned int req, void *data)
 		break;
 	}
 	case RDMA_CQ_SETUP:{
-		struct rdma_cq_setup *req = data;
+		struct rdma_cq_setup *rdma = data;
 
 		spin_lock_irq(&adapter->sge.reg_lock);
 		ret =
-			t3_sge_init_cqcntxt(adapter, req->id,
-					req->base_addr, req->size,
+			t3_sge_init_cqcntxt(adapter, rdma->id,
+					rdma->base_addr, rdma->size,
 					ASYNC_NOTIF_RSPQ,
-					req->ovfl_mode, req->credits,
-					req->credit_thres);
+					rdma->ovfl_mode, rdma->credits,
+					rdma->credit_thres);
 		spin_unlock_irq(&adapter->sge.reg_lock);
 		break;
 	}
@@ -290,13 +292,13 @@ static int cxgb_rdma_ctl(struct adapter *adapter, unsigned int req, void *data)
 		spin_unlock_irq(&adapter->sge.reg_lock);
 		break;
 	case RDMA_CTRL_QP_SETUP:{
-		struct rdma_ctrlqp_setup *req = data;
+		struct rdma_ctrlqp_setup *rdma = data;
 
 		spin_lock_irq(&adapter->sge.reg_lock);
 		ret = t3_sge_init_ecntxt(adapter, FW_RI_SGEEC_START, 0,
 						SGE_CNTXT_RDMA,
 						ASYNC_NOTIF_RSPQ,
-						req->base_addr, req->size,
+						rdma->base_addr, rdma->size,
 						FW_RI_TID_START, 1, 0);
 		spin_unlock_irq(&adapter->sge.reg_lock);
 		break;
@@ -315,6 +317,8 @@ static int cxgb_offload_ctl(struct t3cdev *tdev, unsigned int req, void *data)
 	struct iff_mac *iffmacp;
 	struct ddp_params *ddpp;
 	struct adap_ports *ports;
+	struct ofld_page_info *rx_page_info;
+	struct tp_params *tp = &adapter->params.tp;
 	int i;
 
 	switch (req) {
@@ -380,6 +384,11 @@ static int cxgb_offload_ctl(struct t3cdev *tdev, unsigned int req, void *data)
 		if (!offload_running(adapter))
 			return -EAGAIN;
 		return cxgb_rdma_ctl(adapter, req, data);
+	case GET_RX_PAGE_INFO:
+		rx_page_info = data;
+		rx_page_info->page_size = tp->rx_pg_size;
+		rx_page_info->num = tp->rx_num_pgs;
+		break;
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -506,6 +515,7 @@ void cxgb3_queue_tid_release(struct t3cdev *tdev, unsigned int tid)
 
 	spin_lock_bh(&td->tid_release_lock);
 	p->ctx = (void *)td->tid_release_list;
+	p->client = NULL;
 	td->tid_release_list = p;
 	if (!p->ctx)
 		schedule_work(&td->tid_release_task);
@@ -551,7 +561,9 @@ int cxgb3_alloc_atid(struct t3cdev *tdev, struct cxgb3_client *client,
 	struct tid_info *t = &(T3C_DATA(tdev))->tid_maps;
 
 	spin_lock_bh(&t->atid_lock);
-	if (t->afree) {
+	if (t->afree &&
+	    t->atids_in_use + atomic_read(&t->tids_in_use) + MC5_MIN_TIDS <=
+	    t->ntids) {
 		union active_open_entry *p = t->afree;
 
 		atid = (p - t->atid_tab) + t->atid_base;
@@ -588,6 +600,16 @@ int cxgb3_alloc_stid(struct t3cdev *tdev, struct cxgb3_client *client,
 
 EXPORT_SYMBOL(cxgb3_alloc_stid);
 
+/* Get the t3cdev associated with a net_device */
+struct t3cdev *dev2t3cdev(struct net_device *dev)
+{
+	const struct port_info *pi = netdev_priv(dev);
+
+	return (struct t3cdev *)pi->adapter;
+}
+
+EXPORT_SYMBOL(dev2t3cdev);
+
 static int do_smt_write_rpl(struct t3cdev *dev, struct sk_buff *skb)
 {
 	struct cpl_smt_write_rpl *rpl = cplhdr(skb);
@@ -619,7 +641,8 @@ static int do_act_open_rpl(struct t3cdev *dev, struct sk_buff *skb)
 	struct t3c_tid_entry *t3c_tid;
 
 	t3c_tid = lookup_atid(&(T3C_DATA(dev))->tid_maps, atid);
-	if (t3c_tid->ctx && t3c_tid->client && t3c_tid->client->handlers &&
+	if (t3c_tid && t3c_tid->ctx && t3c_tid->client &&
+	    t3c_tid->client->handlers &&
 	    t3c_tid->client->handlers[CPL_ACT_OPEN_RPL]) {
 		return t3c_tid->client->handlers[CPL_ACT_OPEN_RPL] (dev, skb,
 								    t3c_tid->
@@ -638,7 +661,7 @@ static int do_stid_rpl(struct t3cdev *dev, struct sk_buff *skb)
 	struct t3c_tid_entry *t3c_tid;
 
 	t3c_tid = lookup_stid(&(T3C_DATA(dev))->tid_maps, stid);
-	if (t3c_tid->ctx && t3c_tid->client->handlers &&
+	if (t3c_tid && t3c_tid->ctx && t3c_tid->client->handlers &&
 	    t3c_tid->client->handlers[p->opcode]) {
 		return t3c_tid->client->handlers[p->opcode] (dev, skb,
 							     t3c_tid->ctx);
@@ -656,7 +679,7 @@ static int do_hwtid_rpl(struct t3cdev *dev, struct sk_buff *skb)
 	struct t3c_tid_entry *t3c_tid;
 
 	t3c_tid = lookup_tid(&(T3C_DATA(dev))->tid_maps, hwtid);
-	if (t3c_tid->ctx && t3c_tid->client->handlers &&
+	if (t3c_tid && t3c_tid->ctx && t3c_tid->client->handlers &&
 	    t3c_tid->client->handlers[p->opcode]) {
 		return t3c_tid->client->handlers[p->opcode]
 		    (dev, skb, t3c_tid->ctx);
@@ -671,10 +694,19 @@ static int do_cr(struct t3cdev *dev, struct sk_buff *skb)
 {
 	struct cpl_pass_accept_req *req = cplhdr(skb);
 	unsigned int stid = G_PASS_OPEN_TID(ntohl(req->tos_tid));
+	struct tid_info *t = &(T3C_DATA(dev))->tid_maps;
 	struct t3c_tid_entry *t3c_tid;
+	unsigned int tid = GET_TID(req);
 
-	t3c_tid = lookup_stid(&(T3C_DATA(dev))->tid_maps, stid);
-	if (t3c_tid->ctx && t3c_tid->client->handlers &&
+	if (unlikely(tid >= t->ntids)) {
+		printk("%s: passive open TID %u too large\n",
+		       dev->name, tid);
+		t3_fatal_err(tdev2adap(dev));
+		return CPL_RET_BUF_DONE;
+	}
+
+	t3c_tid = lookup_stid(t, stid);
+	if (t3c_tid && t3c_tid->ctx && t3c_tid->client->handlers &&
 	    t3c_tid->client->handlers[CPL_PASS_ACCEPT_REQ]) {
 		return t3c_tid->client->handlers[CPL_PASS_ACCEPT_REQ]
 		    (dev, skb, t3c_tid->ctx);
@@ -685,6 +717,28 @@ static int do_cr(struct t3cdev *dev, struct sk_buff *skb)
 	}
 }
 
+/*
+ * Returns an sk_buff for a reply CPL message of size len.  If the input
+ * sk_buff has no other users it is trimmed and reused, otherwise a new buffer
+ * is allocated.  The input skb must be of size at least len.  Note that this
+ * operation does not destroy the original skb data even if it decides to reuse
+ * the buffer.
+ */
+static struct sk_buff *cxgb3_get_cpl_reply_skb(struct sk_buff *skb, size_t len,
+					       gfp_t gfp)
+{
+	if (likely(!skb_cloned(skb))) {
+		BUG_ON(skb->len < len);
+		__skb_trim(skb, len);
+		skb_get(skb);
+	} else {
+		skb = alloc_skb(len, gfp);
+		if (skb)
+			__skb_put(skb, len);
+	}
+	return skb;
+}
+
 static int do_abort_req_rss(struct t3cdev *dev, struct sk_buff *skb)
 {
 	union opcode_tid *p = cplhdr(skb);
@@ -692,30 +746,39 @@ static int do_abort_req_rss(struct t3cdev *dev, struct sk_buff *skb)
 	struct t3c_tid_entry *t3c_tid;
 
 	t3c_tid = lookup_tid(&(T3C_DATA(dev))->tid_maps, hwtid);
-	if (t3c_tid->ctx && t3c_tid->client->handlers &&
+	if (t3c_tid && t3c_tid->ctx && t3c_tid->client->handlers &&
 	    t3c_tid->client->handlers[p->opcode]) {
 		return t3c_tid->client->handlers[p->opcode]
 		    (dev, skb, t3c_tid->ctx);
 	} else {
 		struct cpl_abort_req_rss *req = cplhdr(skb);
 		struct cpl_abort_rpl *rpl;
+		struct sk_buff *reply_skb;
+		unsigned int tid = GET_TID(req);
+		u8 cmd = req->status;
 
-		struct sk_buff *skb =
-		    alloc_skb(sizeof(struct cpl_abort_rpl), GFP_ATOMIC);
-		if (!skb) {
+		if (req->status == CPL_ERR_RTX_NEG_ADVICE ||
+		    req->status == CPL_ERR_PERSIST_NEG_ADVICE)
+			goto out;
+
+		reply_skb = cxgb3_get_cpl_reply_skb(skb,
+						    sizeof(struct
+							   cpl_abort_rpl),
+						    GFP_ATOMIC);
+
+		if (!reply_skb) {
 			printk("do_abort_req_rss: couldn't get skb!\n");
 			goto out;
 		}
-		skb->priority = CPL_PRIORITY_DATA;
-		__skb_put(skb, sizeof(struct cpl_abort_rpl));
-		rpl = cplhdr(skb);
+		reply_skb->priority = CPL_PRIORITY_DATA;
+		__skb_put(reply_skb, sizeof(struct cpl_abort_rpl));
+		rpl = cplhdr(reply_skb);
 		rpl->wr.wr_hi =
 		    htonl(V_WR_OP(FW_WROPCODE_OFLD_HOST_ABORT_CON_RPL));
-		rpl->wr.wr_lo = htonl(V_WR_TID(GET_TID(req)));
-		OPCODE_TID(rpl) =
-		    htonl(MK_OPCODE_TID(CPL_ABORT_RPL, GET_TID(req)));
-		rpl->cmd = req->status;
-		cxgb3_ofld_send(dev, skb);
+		rpl->wr.wr_lo = htonl(V_WR_TID(tid));
+		OPCODE_TID(rpl) = htonl(MK_OPCODE_TID(CPL_ABORT_RPL, tid));
+		rpl->cmd = cmd;
+		cxgb3_ofld_send(dev, reply_skb);
 out:
 		return CPL_RET_BUF_DONE;
 	}
@@ -725,29 +788,27 @@ static int do_act_establish(struct t3cdev *dev, struct sk_buff *skb)
 {
 	struct cpl_act_establish *req = cplhdr(skb);
 	unsigned int atid = G_PASS_OPEN_TID(ntohl(req->tos_tid));
+	struct tid_info *t = &(T3C_DATA(dev))->tid_maps;
 	struct t3c_tid_entry *t3c_tid;
+	unsigned int tid = GET_TID(req);
 
-	t3c_tid = lookup_atid(&(T3C_DATA(dev))->tid_maps, atid);
-	if (t3c_tid->ctx && t3c_tid->client->handlers &&
+	if (unlikely(tid >= t->ntids)) {
+		printk("%s: active establish TID %u too large\n",
+		       dev->name, tid);
+		t3_fatal_err(tdev2adap(dev));
+		return CPL_RET_BUF_DONE;
+	}
+
+	t3c_tid = lookup_atid(t, atid);
+	if (t3c_tid && t3c_tid->ctx && t3c_tid->client->handlers &&
 	    t3c_tid->client->handlers[CPL_ACT_ESTABLISH]) {
 		return t3c_tid->client->handlers[CPL_ACT_ESTABLISH]
 		    (dev, skb, t3c_tid->ctx);
 	} else {
 		printk(KERN_ERR "%s: received clientless CPL command 0x%x\n",
-		       dev->name, CPL_PASS_ACCEPT_REQ);
+		       dev->name, CPL_ACT_ESTABLISH);
 		return CPL_RET_BUF_DONE | CPL_RET_BAD_MSG;
 	}
-}
-
-static int do_set_tcb_rpl(struct t3cdev *dev, struct sk_buff *skb)
-{
-	struct cpl_set_tcb_rpl *rpl = cplhdr(skb);
-
-	if (rpl->status != CPL_ERR_NONE)
-		printk(KERN_ERR
-		       "Unexpected SET_TCB_RPL status %u for tid %u\n",
-		       rpl->status, GET_TID(rpl));
-	return CPL_RET_BUF_DONE;
 }
 
 static int do_trace(struct t3cdev *dev, struct sk_buff *skb)
@@ -757,7 +818,7 @@ static int do_trace(struct t3cdev *dev, struct sk_buff *skb)
 	skb->protocol = htons(0xffff);
 	skb->dev = dev->lldev;
 	skb_pull(skb, sizeof(*p));
-	skb->mac.raw = skb->data;
+	skb_reset_mac_header(skb);
 	netif_receive_skb(skb);
 	return 0;
 }
@@ -769,7 +830,7 @@ static int do_term(struct t3cdev *dev, struct sk_buff *skb)
 	struct t3c_tid_entry *t3c_tid;
 
 	t3c_tid = lookup_tid(&(T3C_DATA(dev))->tid_maps, hwtid);
-	if (t3c_tid->ctx && t3c_tid->client->handlers &&
+	if (t3c_tid && t3c_tid->ctx && t3c_tid->client->handlers &&
 	    t3c_tid->client->handlers[opcode]) {
 		return t3c_tid->client->handlers[opcode] (dev, skb,
 							  t3c_tid->ctx);
@@ -899,7 +960,7 @@ void cxgb_neigh_update(struct neighbour *neigh)
 	struct net_device *dev = neigh->dev;
 
 	if (dev && (is_offloading(dev))) {
-		struct t3cdev *tdev = T3CDEV(dev);
+		struct t3cdev *tdev = dev2t3cdev(dev);
 
 		BUG_ON(!tdev);
 		t3_l2t_update(tdev, neigh);
@@ -947,9 +1008,9 @@ void cxgb_redirect(struct dst_entry *old, struct dst_entry *new)
 		       "device ignored.\n", __FUNCTION__);
 		return;
 	}
-	tdev = T3CDEV(olddev);
+	tdev = dev2t3cdev(olddev);
 	BUG_ON(!tdev);
-	if (tdev != T3CDEV(newdev)) {
+	if (tdev != dev2t3cdev(newdev)) {
 		printk(KERN_WARNING "%s: Redirect to different "
 		       "offload device ignored.\n", __FUNCTION__);
 		return;
@@ -968,7 +1029,7 @@ void cxgb_redirect(struct dst_entry *old, struct dst_entry *new)
 	for (tid = 0; tid < ti->ntids; tid++) {
 		te = lookup_tid(ti, tid);
 		BUG_ON(!te);
-		if (te->ctx && te->client && te->client->redirect) {
+		if (te && te->ctx && te->client && te->client->redirect) {
 			update_tcb = te->client->redirect(te->ctx, old, new, e);
 			if (update_tcb) {
 				l2t_hold(L2DATA(tdev), e);
@@ -1211,7 +1272,8 @@ void __init cxgb3_offload_init(void)
 	t3_register_cpl_handler(CPL_CLOSE_CON_RPL, do_hwtid_rpl);
 	t3_register_cpl_handler(CPL_ABORT_REQ_RSS, do_abort_req_rss);
 	t3_register_cpl_handler(CPL_ACT_ESTABLISH, do_act_establish);
-	t3_register_cpl_handler(CPL_SET_TCB_RPL, do_set_tcb_rpl);
+	t3_register_cpl_handler(CPL_SET_TCB_RPL, do_hwtid_rpl);
+	t3_register_cpl_handler(CPL_GET_TCB_RPL, do_hwtid_rpl);
 	t3_register_cpl_handler(CPL_RDMA_TERMINATE, do_term);
 	t3_register_cpl_handler(CPL_RDMA_EC_STATUS, do_hwtid_rpl);
 	t3_register_cpl_handler(CPL_TRACE_PKT, do_trace);

@@ -21,7 +21,6 @@
 #include <linux/shm.h>
 #include <linux/init.h>
 #include <linux/msg.h>
-#include <linux/smp_lock.h>
 #include <linux/vmalloc.h>
 #include <linux/slab.h>
 #include <linux/capability.h>
@@ -51,7 +50,6 @@ struct ipc_namespace init_ipc_ns = {
 	},
 };
 
-#ifdef CONFIG_IPC_NS
 static struct ipc_namespace *clone_ipc_ns(struct ipc_namespace *old_ns)
 {
 	int err;
@@ -85,53 +83,20 @@ err_mem:
 	return ERR_PTR(err);
 }
 
-int unshare_ipcs(unsigned long unshare_flags, struct ipc_namespace **new_ipc)
+struct ipc_namespace *copy_ipcs(unsigned long flags, struct ipc_namespace *ns)
 {
-	struct ipc_namespace *new;
-
-	if (unshare_flags & CLONE_NEWIPC) {
-		if (!capable(CAP_SYS_ADMIN))
-			return -EPERM;
-
-		new = clone_ipc_ns(current->nsproxy->ipc_ns);
-		if (IS_ERR(new))
-			return PTR_ERR(new);
-
-		*new_ipc = new;
-	}
-
-	return 0;
-}
-
-int copy_ipcs(unsigned long flags, struct task_struct *tsk)
-{
-	struct ipc_namespace *old_ns = tsk->nsproxy->ipc_ns;
 	struct ipc_namespace *new_ns;
-	int err = 0;
 
-	if (!old_ns)
-		return 0;
-
-	get_ipc_ns(old_ns);
+	BUG_ON(!ns);
+	get_ipc_ns(ns);
 
 	if (!(flags & CLONE_NEWIPC))
-		return 0;
+		return ns;
 
-	if (!capable(CAP_SYS_ADMIN)) {
-		err = -EPERM;
-		goto out;
-	}
+	new_ns = clone_ipc_ns(ns);
 
-	new_ns = clone_ipc_ns(old_ns);
-	if (!new_ns) {
-		err = -ENOMEM;
-		goto out;
-	}
-
-	tsk->nsproxy->ipc_ns = new_ns;
-out:
-	put_ipc_ns(old_ns);
-	return err;
+	put_ipc_ns(ns);
+	return new_ns;
 }
 
 void free_ipc_ns(struct kref *kref)
@@ -144,7 +109,6 @@ void free_ipc_ns(struct kref *kref)
 	shm_exit_ns(ns);
 	kfree(ns);
 }
-#endif
 
 /**
  *	ipc_init	-	initialise IPC subsystem
@@ -172,7 +136,7 @@ __initcall(ipc_init);
  *	array itself. 
  */
  
-void __ipc_init ipc_init_ids(struct ipc_ids* ids, int size)
+void ipc_init_ids(struct ipc_ids* ids, int size)
 {
 	int i;
 

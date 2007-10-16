@@ -907,7 +907,7 @@ palinfo_read_entry(char *page, char **start, off_t off, int count, int *eof, voi
 	return len;
 }
 
-static void
+static void __cpuinit
 create_palinfo_proc_entries(unsigned int cpu)
 {
 #	define CPUSTR	"cpu%d"
@@ -968,23 +968,25 @@ remove_palinfo_proc_entries(unsigned int hcpu)
 	}
 }
 
-static int palinfo_cpu_callback(struct notifier_block *nfb,
+static int __cpuinit palinfo_cpu_callback(struct notifier_block *nfb,
 					unsigned long action, void *hcpu)
 {
 	unsigned int hotcpu = (unsigned long)hcpu;
 
 	switch (action) {
 	case CPU_ONLINE:
+	case CPU_ONLINE_FROZEN:
 		create_palinfo_proc_entries(hotcpu);
 		break;
 	case CPU_DEAD:
+	case CPU_DEAD_FROZEN:
 		remove_palinfo_proc_entries(hotcpu);
 		break;
 	}
 	return NOTIFY_OK;
 }
 
-static struct notifier_block palinfo_cpu_notifier =
+static struct notifier_block palinfo_cpu_notifier __cpuinitdata =
 {
 	.notifier_call = palinfo_cpu_callback,
 	.priority = 0,

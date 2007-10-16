@@ -116,13 +116,13 @@ void __raw_readsl(unsigned long addr, void *data, int longlen);
  * redefined by userlevel programs.
  */
 #ifdef __readb
-# define readb(a)	({ unsigned long r_ = __raw_readb(a); mb(); r_; })
+# define readb(a)	({ unsigned int r_ = __raw_readb(a); mb(); r_; })
 #endif
 #ifdef __raw_readw
-# define readw(a)	({ unsigned long r_ = __raw_readw(a); mb(); r_; })
+# define readw(a)	({ unsigned int r_ = __raw_readw(a); mb(); r_; })
 #endif
 #ifdef __raw_readl
-# define readl(a)	({ unsigned long r_ = __raw_readl(a); mb(); r_; })
+# define readl(a)	({ unsigned int r_ = __raw_readl(a); mb(); r_; })
 #endif
 
 #ifdef __raw_writeb
@@ -135,6 +135,32 @@ void __raw_readsl(unsigned long addr, void *data, int longlen);
 # define writel(v,a)	({ __raw_writel((v),(a)); mb(); })
 #endif
 
+#define __BUILD_MEMORY_STRING(bwlq, type)				\
+									\
+static inline void writes##bwlq(volatile void __iomem *mem,		\
+				const void *addr, unsigned int count)	\
+{									\
+	const volatile type *__addr = addr;				\
+									\
+	while (count--) {						\
+		__raw_write##bwlq(*__addr, mem);			\
+		__addr++;						\
+	}								\
+}									\
+									\
+static inline void reads##bwlq(volatile void __iomem *mem, void *addr,	\
+			       unsigned int count)			\
+{									\
+	volatile type *__addr = addr;					\
+									\
+	while (count--) {						\
+		*__addr = __raw_read##bwlq(mem);			\
+		__addr++;						\
+	}								\
+}
+
+__BUILD_MEMORY_STRING(b, u8)
+__BUILD_MEMORY_STRING(w, u16)
 #define writesl __raw_writesl
 #define readsl  __raw_readsl
 
@@ -240,10 +266,6 @@ static inline void *phys_to_virt(unsigned long address)
 #define phys_to_virt(address)	((void *)(address))
 #define virt_to_phys(address)	((unsigned long)(address))
 #endif
-
-#define virt_to_bus virt_to_phys
-#define bus_to_virt phys_to_virt
-#define page_to_bus page_to_phys
 
 /*
  * readX/writeX() are used to access memory mapped devices. On some

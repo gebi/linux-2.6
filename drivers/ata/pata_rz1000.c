@@ -21,37 +21,12 @@
 #include <linux/libata.h>
 
 #define DRV_NAME	"pata_rz1000"
-#define DRV_VERSION	"0.2.3"
+#define DRV_VERSION	"0.2.4"
 
-
-/**
- *	rz1000_prereset		-	probe begin
- *	@ap: ATA port
- *
- *	Set up cable type and use generics
- */
-
-static int rz1000_prereset(struct ata_port *ap)
-{
-	ap->cbl = ATA_CBL_PATA40;
-	return ata_std_prereset(ap);
-}
-
-/**
- *	rz1000_error_handler		-	probe reset
- *	@ap: ATA port
- *
- *	Perform the ATA standard reset sequence
- */
-
-static void rz1000_error_handler(struct ata_port *ap)
-{
-	ata_bmdma_drive_eh(ap, rz1000_prereset, ata_std_softreset, NULL, ata_std_postreset);
-}
 
 /**
  *	rz1000_set_mode		-	mode setting function
- *	@ap: ATA interface
+ *	@link: ATA link
  *	@unused: returned device on set_mode failure
  *
  *	Use a non standard set_mode function. We don't want to be tuned. We
@@ -59,18 +34,18 @@ static void rz1000_error_handler(struct ata_port *ap)
  *	whacked out.
  */
 
-static int rz1000_set_mode(struct ata_port *ap, struct ata_device **unused)
+static int rz1000_set_mode(struct ata_link *link, struct ata_device **unused)
 {
-	int i;
+	struct ata_device *dev;
 
-	for (i = 0; i < ATA_MAX_DEVICES; i++) {
-		struct ata_device *dev = &ap->device[i];
-		if (ata_dev_ready(dev)) {
+	ata_link_for_each_dev(dev, link) {
+		if (ata_dev_enabled(dev)) {
 			/* We don't really care */
 			dev->pio_mode = XFER_PIO_0;
 			dev->xfer_mode = XFER_PIO_0;
 			dev->xfer_shift = ATA_SHIFT_PIO;
 			dev->flags |= ATA_DFLAG_PIO;
+			ata_dev_printk(dev, KERN_INFO, "configured for PIO\n");
 		}
 	}
 	return 0;
@@ -93,14 +68,11 @@ static struct scsi_host_template rz1000_sht = {
 	.slave_configure	= ata_scsi_slave_config,
 	.slave_destroy		= ata_scsi_slave_destroy,
 	.bios_param		= ata_std_bios_param,
-	.resume			= ata_scsi_device_resume,
-	.suspend		= ata_scsi_device_suspend,
 };
 
 static struct ata_port_operations rz1000_port_ops = {
 	.set_mode	= rz1000_set_mode,
 
-	.port_disable	= ata_port_disable,
 	.tf_load	= ata_tf_load,
 	.tf_read	= ata_tf_read,
 	.check_status 	= ata_check_status,
@@ -119,15 +91,15 @@ static struct ata_port_operations rz1000_port_ops = {
 
 	.freeze		= ata_bmdma_freeze,
 	.thaw		= ata_bmdma_thaw,
-	.error_handler	= rz1000_error_handler,
+	.error_handler	= ata_bmdma_error_handler,
 	.post_internal_cmd = ata_bmdma_post_internal_cmd,
+	.cable_detect	= ata_cable_40wire,
 
 	.irq_handler	= ata_interrupt,
 	.irq_clear	= ata_bmdma_irq_clear,
 	.irq_on		= ata_irq_on,
-	.irq_ack	= ata_irq_ack,
 
-	.port_start	= ata_port_start,
+	.port_start	= ata_sff_port_start,
 };
 
 static int rz1000_fifo_disable(struct pci_dev *pdev)
@@ -156,27 +128,26 @@ static int rz1000_fifo_disable(struct pci_dev *pdev)
 static int rz1000_init_one (struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	static int printed_version;
-	struct ata_port_info *port_info[2];
-	static struct ata_port_info info = {
+	static const struct ata_port_info info = {
 		.sht = &rz1000_sht,
-		.flags = ATA_FLAG_SLAVE_POSS | ATA_FLAG_SRST,
+		.flags = ATA_FLAG_SLAVE_POSS,
 		.pio_mask = 0x1f,
 		.port_ops = &rz1000_port_ops
 	};
+	const struct ata_port_info *ppi[] = { &info, NULL };
 
 	if (!printed_version++)
 		printk(KERN_DEBUG DRV_NAME " version " DRV_VERSION "\n");
 
-	if (rz1000_fifo_disable(pdev) == 0) {
-		port_info[0] = &info;
-		port_info[1] = &info;
-		return ata_pci_init_one(pdev, port_info, 2);
-	}
+	if (rz1000_fifo_disable(pdev) == 0)
+		return ata_pci_init_one(pdev, ppi);
+
 	printk(KERN_ERR DRV_NAME ": failed to disable read-ahead on chipset..\n");
 	/* Not safe to use so skip */
 	return -ENODEV;
 }
 
+#ifdef CONFIG_PM
 static int rz1000_reinit_one(struct pci_dev *pdev)
 {
 	/* If this fails on resume (which is a "cant happen" case), we
@@ -185,6 +156,7 @@ static int rz1000_reinit_one(struct pci_dev *pdev)
 		panic("rz1000 fifo");
 	return ata_pci_device_resume(pdev);
 }
+#endif
 
 static const struct pci_device_id pata_rz1000[] = {
 	{ PCI_VDEVICE(PCTECH, PCI_DEVICE_ID_PCTECH_RZ1000), },
@@ -198,8 +170,10 @@ static struct pci_driver rz1000_pci_driver = {
 	.id_table	= pata_rz1000,
 	.probe 		= rz1000_init_one,
 	.remove		= ata_pci_remove_one,
+#ifdef CONFIG_PM
 	.suspend	= ata_pci_device_suspend,
 	.resume		= rz1000_reinit_one,
+#endif
 };
 
 static int __init rz1000_init(void)

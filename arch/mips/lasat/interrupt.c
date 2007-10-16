@@ -19,19 +19,19 @@
  * Lasat boards.
  */
 #include <linux/init.h>
+#include <linux/irq.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/kernel_stat.h>
 
 #include <asm/bootinfo.h>
-#include <asm/irq.h>
 #include <asm/lasat/lasatint.h>
 #include <asm/time.h>
 #include <asm/gdb-stub.h>
 
-static volatile int *lasat_int_status = NULL;
-static volatile int *lasat_int_mask = NULL;
+static volatile int *lasat_int_status;
+static volatile int *lasat_int_mask;
 static volatile int lasat_int_mask_shift;
 
 void disable_lasat_irq(unsigned int irq_nr)
@@ -65,7 +65,7 @@ static inline int ls1bit32(unsigned int x)
 	return b;
 }
 
-static unsigned long (* get_int_status)(void);
+static unsigned long (*get_int_status)(void);
 
 static unsigned long get_int_status_100(void)
 {

@@ -22,8 +22,8 @@
 #include "bond_3ad.h"
 #include "bond_alb.h"
 
-#define DRV_VERSION	"3.1.2"
-#define DRV_RELDATE	"January 20, 2007"
+#define DRV_VERSION	"3.2.0"
+#define DRV_RELDATE	"September 13, 2007"
 #define DRV_NAME	"bonding"
 #define DRV_DESCRIPTION	"Ethernet Channel Bonding Driver"
 
@@ -128,11 +128,12 @@ struct bond_params {
 	int arp_interval;
 	int arp_validate;
 	int use_carrier;
+	int fail_over_mac;
 	int updelay;
 	int downdelay;
 	int lacp_fast;
 	char primary[IFNAMSIZ];
-	u32 arp_targets[BOND_MAX_ARP_TARGETS];
+	__be32 arp_targets[BOND_MAX_ARP_TARGETS];
 };
 
 struct bond_parm_tbl {
@@ -142,7 +143,7 @@ struct bond_parm_tbl {
 
 struct vlan_entry {
 	struct list_head vlan_list;
-	u32 vlan_ip;
+	__be32 vlan_ip;
 	unsigned short vlan_id;
 };
 
@@ -156,6 +157,7 @@ struct slave {
 	s8     link;    /* one of BOND_LINK_XXXX */
 	s8     state;   /* one of BOND_STATE_XXXX */
 	u32    original_flags;
+	u32    original_mtu;
 	u32    link_failure_count;
 	u16    speed;
 	u8     duplex;
@@ -185,6 +187,8 @@ struct bonding {
 	struct   timer_list mii_timer;
 	struct   timer_list arp_timer;
 	s8       kill_timers;
+	s8	 send_grat_arp;
+	s8	 setup_by_slave;
 	struct   net_device_stats stats;
 #ifdef CONFIG_PROC_FS
 	struct   proc_dir_entry *proc_entry;
@@ -193,7 +197,7 @@ struct bonding {
 	struct   list_head bond_list;
 	struct   dev_mc_list *mc_list;
 	int      (*xmit_hash_policy)(struct sk_buff *, struct net_device *, int);
-	u32      master_ip;
+	__be32   master_ip;
 	u16      flags;
 	struct   ad_bond_info ad_info;
 	struct   alb_bond_info alb_info;
@@ -292,6 +296,8 @@ static inline void bond_unset_master_alb_flags(struct bonding *bond)
 struct vlan_entry *bond_next_vlan(struct bonding *bond, struct vlan_entry *curr);
 int bond_dev_queue_xmit(struct bonding *bond, struct sk_buff *skb, struct net_device *slave_dev);
 int bond_create(char *name, struct bond_params *params, struct bonding **newbond);
+void bond_destroy(struct bonding *bond);
+int  bond_release_and_destroy(struct net_device *bond_dev, struct net_device *slave_dev);
 void bond_deinit(struct net_device *bond_dev);
 int bond_create_sysfs(void);
 void bond_destroy_sysfs(void);
@@ -301,13 +307,11 @@ int bond_create_slave_symlinks(struct net_device *master, struct net_device *sla
 void bond_destroy_slave_symlinks(struct net_device *master, struct net_device *slave);
 int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev);
 int bond_release(struct net_device *bond_dev, struct net_device *slave_dev);
-int bond_sethwaddr(struct net_device *bond_dev, struct net_device *slave_dev);
 void bond_mii_monitor(struct net_device *bond_dev);
 void bond_loadbalance_arp_mon(struct net_device *bond_dev);
 void bond_activebackup_arp_mon(struct net_device *bond_dev);
 void bond_set_mode_ops(struct bonding *bond, int mode);
 int bond_parse_parm(char *mode_arg, struct bond_parm_tbl *tbl);
-const char *bond_mode_name(int mode);
 void bond_select_active_slave(struct bonding *bond);
 void bond_change_active_slave(struct bonding *bond, struct slave *new_active);
 void bond_register_arp(struct bonding *);

@@ -49,6 +49,15 @@ static void omap1_uart_recalc(struct clk * clk)
 		clk->rate = 12000000;
 }
 
+static void omap1_sossi_recalc(struct clk *clk)
+{
+	u32 div = omap_readl(MOD_CONF_CTRL_1);
+
+	div = (div >> 17) & 0x7;
+	div++;
+	clk->rate = clk->parent->rate / div;
+}
+
 static int omap1_clk_enable_dsp_domain(struct clk *clk)
 {
 	int retval;
@@ -396,6 +405,31 @@ static int omap1_set_ext_clk_rate(struct clk * clk, unsigned long rate)
 	return 0;
 }
 
+static int omap1_set_sossi_rate(struct clk *clk, unsigned long rate)
+{
+	u32 l;
+	int div;
+	unsigned long p_rate;
+
+	p_rate = clk->parent->rate;
+	/* Round towards slower frequency */
+	div = (p_rate + rate - 1) / rate;
+	div--;
+	if (div < 0 || div > 7)
+		return -EINVAL;
+
+	l = omap_readl(MOD_CONF_CTRL_1);
+	l &= ~(7 << 17);
+	l |= div << 17;
+	omap_writel(l, MOD_CONF_CTRL_1);
+
+	clk->rate = p_rate / (div + 1);
+	if (unlikely(clk->flags & RATE_PROPAGATES))
+		propagate_rate(clk);
+
+	return 0;
+}
+
 static long omap1_round_ext_clk_rate(struct clk * clk, unsigned long rate)
 {
 	return 96000000 / calc_ext_dsor(rate);
@@ -432,8 +466,7 @@ static int omap1_clk_enable(struct clk *clk)
 			}
 
 			if (clk->flags & CLOCK_NO_IDLE_PARENT)
-				if (!cpu_is_omap24xx())
-					omap1_clk_deny_idle(clk->parent);
+				omap1_clk_deny_idle(clk->parent);
 		}
 
 		ret = clk->enable(clk);
@@ -454,8 +487,7 @@ static void omap1_clk_disable(struct clk *clk)
 		if (likely(clk->parent)) {
 			omap1_clk_disable(clk->parent);
 			if (clk->flags & CLOCK_NO_IDLE_PARENT)
-				if (!cpu_is_omap24xx())
-					omap1_clk_allow_idle(clk->parent);
+				omap1_clk_allow_idle(clk->parent);
 		}
 	}
 }
@@ -471,7 +503,7 @@ static int omap1_clk_enable_generic(struct clk *clk)
 	if (unlikely(clk->enable_reg == 0)) {
 		printk(KERN_ERR "clock.c: Enable for %s without enable code\n",
 		       clk->name);
-		return 0;
+		return -EINVAL;
 	}
 
 	if (clk->flags & ENABLE_REG_32BIT) {
@@ -651,10 +683,18 @@ int __init omap1_clk_init(void)
 	int crystal_type = 0; /* Default 12 MHz */
 	u32 reg;
 
+#ifdef CONFIG_DEBUG_LL
+	/* Resets some clocks that may be left on from bootloader,
+	 * but leaves serial clocks on.
+ 	 */
+	omap_writel(0x3 << 29, MOD_CONF_CTRL_0);
+#endif
+
 	/* USB_REQ_EN will be disabled later if necessary (usb_dc_ck) */
 	reg = omap_readw(SOFT_REQ_REG) & (1 << 4);
 	omap_writew(reg, SOFT_REQ_REG);
-	omap_writew(0, SOFT_REQ_REG2);
+	if (!cpu_is_omap15xx())
+		omap_writew(0, SOFT_REQ_REG2);
 
 	clk_init(&omap1_clk_functions);
 
@@ -685,7 +725,7 @@ int __init omap1_clk_init(void)
 
 	info = omap_get_config(OMAP_TAG_CLOCK, struct omap_clock_config);
 	if (info != NULL) {
-		if (!cpu_is_omap1510())
+		if (!cpu_is_omap15xx())
 			crystal_type = info->system_clock_type;
 	}
 

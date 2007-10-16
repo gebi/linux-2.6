@@ -39,7 +39,6 @@
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
 #include <linux/smp.h>
-#include <linux/smp_lock.h>
 #include <linux/stddef.h>
 #include <linux/unistd.h>
 
@@ -71,7 +70,7 @@
   }
 #endif				/* debug */
 
-#define POLL_WHILE_FALSE(_c) 	POLL_WHILE_TRUE(!(_c))
+#define POLL_WHILE_FALSE(_c)	POLL_WHILE_TRUE(!(_c))
 
 static inline void acquire_spu_lock(struct spu *spu)
 {
@@ -181,7 +180,7 @@ static inline void save_mfc_cntl(struct spu_state *csa, struct spu *spu)
 	case MFC_CNTL_SUSPEND_COMPLETE:
 		if (csa) {
 			csa->priv2.mfc_control_RW =
-				in_be64(&priv2->mfc_control_RW) |
+				MFC_CNTL_SUSPEND_MASK |
 				MFC_CNTL_SUSPEND_DMA_QUEUE;
 		}
 		break;
@@ -191,9 +190,7 @@ static inline void save_mfc_cntl(struct spu_state *csa, struct spu *spu)
 				  MFC_CNTL_SUSPEND_DMA_STATUS_MASK) ==
 				 MFC_CNTL_SUSPEND_COMPLETE);
 		if (csa) {
-			csa->priv2.mfc_control_RW =
-				in_be64(&priv2->mfc_control_RW) &
-				~MFC_CNTL_SUSPEND_DMA_QUEUE;
+			csa->priv2.mfc_control_RW = 0;
 		}
 		break;
 	}
@@ -252,16 +249,8 @@ static inline void save_mfc_decr(struct spu_state *csa, struct spu *spu)
 	 *     Read MFC_CNTL[Ds].  Update saved copy of
 	 *     CSA.MFC_CNTL[Ds].
 	 */
-	if (in_be64(&priv2->mfc_control_RW) & MFC_CNTL_DECREMENTER_RUNNING) {
-		csa->priv2.mfc_control_RW |= MFC_CNTL_DECREMENTER_RUNNING;
-		csa->suspend_time = get_cycles();
-		out_be64(&priv2->spu_chnlcntptr_RW, 7ULL);
-		eieio();
-		csa->spu_chnldata_RW[7] = in_be64(&priv2->spu_chnldata_RW);
-		eieio();
-	} else {
-		csa->priv2.mfc_control_RW &= ~MFC_CNTL_DECREMENTER_RUNNING;
-	}
+	csa->priv2.mfc_control_RW |=
+		in_be64(&priv2->mfc_control_RW) & MFC_CNTL_DECREMENTER_RUNNING;
 }
 
 static inline void halt_mfc_decr(struct spu_state *csa, struct spu *spu)
@@ -272,7 +261,8 @@ static inline void halt_mfc_decr(struct spu_state *csa, struct spu *spu)
 	 *     Write MFC_CNTL[Dh] set to a '1' to halt
 	 *     the decrementer.
 	 */
-	out_be64(&priv2->mfc_control_RW, MFC_CNTL_DECREMENTER_HALTED);
+	out_be64(&priv2->mfc_control_RW,
+		 MFC_CNTL_DECREMENTER_HALTED | MFC_CNTL_SUSPEND_MASK);
 	eieio();
 }
 
@@ -388,6 +378,19 @@ static inline void save_ppu_querytype(struct spu_state *csa, struct spu *spu)
 	csa->prob.dma_querytype_RW = in_be32(&prob->dma_querytype_RW);
 }
 
+static inline void save_ppu_tagstatus(struct spu_state *csa, struct spu *spu)
+{
+	struct spu_problem __iomem *prob = spu->problem;
+
+	/* Save the Prxy_TagStatus register in the CSA.
+	 *
+	 * It is unnecessary to restore dma_tagstatus_R, however,
+	 * dma_tagstatus_R in the CSA is accessed via backing_ops, so
+	 * we must save it.
+	 */
+	csa->prob.dma_tagstatus_R = in_be32(&prob->dma_tagstatus_R);
+}
+
 static inline void save_mfc_csr_tsq(struct spu_state *csa, struct spu *spu)
 {
 	struct spu_priv2 __iomem *priv2 = spu->priv2;
@@ -466,26 +469,6 @@ static inline void wait_purge_complete(struct spu_state *csa, struct spu *spu)
 	POLL_WHILE_FALSE((in_be64(&priv2->mfc_control_RW) &
 			 MFC_CNTL_PURGE_DMA_STATUS_MASK) ==
 			 MFC_CNTL_PURGE_DMA_COMPLETE);
-}
-
-static inline void save_mfc_slbs(struct spu_state *csa, struct spu *spu)
-{
-	struct spu_priv2 __iomem *priv2 = spu->priv2;
-	int i;
-
-	/* Save, Step 29:
-	 *     If MFC_SR1[R]='1', save SLBs in CSA.
-	 */
-	if (spu_mfc_sr1_get(spu) & MFC_STATE1_RELOCATE_MASK) {
-		csa->priv2.slb_index_W = in_be64(&priv2->slb_index_W);
-		for (i = 0; i < 8; i++) {
-			out_be64(&priv2->slb_index_W, i);
-			eieio();
-			csa->slb_esid_RW[i] = in_be64(&priv2->slb_esid_RW);
-			csa->slb_vsid_RW[i] = in_be64(&priv2->slb_vsid_RW);
-			eieio();
-		}
-	}
 }
 
 static inline void setup_mfc_sr1(struct spu_state *csa, struct spu *spu)
@@ -623,7 +606,7 @@ static inline void save_ppuint_mb(struct spu_state *csa, struct spu *spu)
 static inline void save_ch_part1(struct spu_state *csa, struct spu *spu)
 {
 	struct spu_priv2 __iomem *priv2 = spu->priv2;
-	u64 idx, ch_indices[7] = { 0UL, 3UL, 4UL, 24UL, 25UL, 27UL };
+	u64 idx, ch_indices[] = { 0UL, 3UL, 4UL, 24UL, 25UL, 27UL };
 	int i;
 
 	/* Save, Step 42:
@@ -634,7 +617,7 @@ static inline void save_ch_part1(struct spu_state *csa, struct spu *spu)
 	csa->spu_chnldata_RW[1] = in_be64(&priv2->spu_chnldata_RW);
 
 	/* Save the following CH: [0,3,4,24,25,27] */
-	for (i = 0; i < 7; i++) {
+	for (i = 0; i < ARRAY_SIZE(ch_indices); i++) {
 		idx = ch_indices[i];
 		out_be64(&priv2->spu_chnlcntptr_RW, idx);
 		eieio();
@@ -708,20 +691,6 @@ static inline void resume_mfc_queue(struct spu_state *csa, struct spu *spu)
 	out_be64(&priv2->mfc_control_RW, MFC_CNTL_RESUME_DMA_QUEUE);
 }
 
-static inline void invalidate_slbs(struct spu_state *csa, struct spu *spu)
-{
-	struct spu_priv2 __iomem *priv2 = spu->priv2;
-
-	/* Save, Step 45:
-	 * Restore, Step 19:
-	 *     If MFC_SR1[R]=1, write 0 to SLB_Invalidate_All.
-	 */
-	if (spu_mfc_sr1_get(spu) & MFC_STATE1_RELOCATE_MASK) {
-		out_be64(&priv2->slb_invalidate_all_W, 0UL);
-		eieio();
-	}
-}
-
 static inline void get_kernel_slb(u64 ea, u64 slb[2])
 {
 	u64 llp;
@@ -730,7 +699,7 @@ static inline void get_kernel_slb(u64 ea, u64 slb[2])
 		llp = mmu_psize_defs[mmu_linear_psize].sllp;
 	else
 		llp = mmu_psize_defs[mmu_virtual_psize].sllp;
-	slb[0] = (get_kernel_vsid(ea) << SLB_VSID_SHIFT) |
+	slb[0] = (get_kernel_vsid(ea, MMU_SEGSIZE_256M) << SLB_VSID_SHIFT) |
 		SLB_VSID_KERNEL | llp;
 	slb[1] = (ea & ESID_MASK) | SLB_ESID_V;
 }
@@ -765,7 +734,7 @@ static inline void setup_mfc_slbs(struct spu_state *csa, struct spu *spu)
 	 *     MFC_SR1[R]=1 (in other words, assume that
 	 *     translation is desired by OS environment).
 	 */
-	invalidate_slbs(csa, spu);
+	spu_invalidate_slbs(spu);
 	get_kernel_slb((unsigned long)&spu_save_code[0], code_slb);
 	get_kernel_slb((unsigned long)csa->lscsa, lscsa_slb);
 	load_mfc_slb(spu, code_slb, 0);
@@ -1005,13 +974,13 @@ static inline void terminate_spu_app(struct spu_state *csa, struct spu *spu)
 	 */
 }
 
-static inline void suspend_mfc(struct spu_state *csa, struct spu *spu)
+static inline void suspend_mfc_and_halt_decr(struct spu_state *csa,
+		struct spu *spu)
 {
 	struct spu_priv2 __iomem *priv2 = spu->priv2;
 
 	/* Restore, Step 7:
-	 * Restore, Step 47.
-	 *     Write MFC_Cntl[Dh,Sc]='1','1' to suspend
+	 *     Write MFC_Cntl[Dh,Sc,Sm]='1','1','0' to suspend
 	 *     the queue and halt the decrementer.
 	 */
 	out_be64(&priv2->mfc_control_RW, MFC_CNTL_SUSPEND_DMA_QUEUE |
@@ -1112,7 +1081,7 @@ static inline void clear_spu_status(struct spu_state *csa, struct spu *spu)
 static inline void reset_ch_part1(struct spu_state *csa, struct spu *spu)
 {
 	struct spu_priv2 __iomem *priv2 = spu->priv2;
-	u64 ch_indices[7] = { 0UL, 3UL, 4UL, 24UL, 25UL, 27UL };
+	u64 ch_indices[] = { 0UL, 3UL, 4UL, 24UL, 25UL, 27UL };
 	u64 idx;
 	int i;
 
@@ -1124,7 +1093,7 @@ static inline void reset_ch_part1(struct spu_state *csa, struct spu *spu)
 	out_be64(&priv2->spu_chnldata_RW, 0UL);
 
 	/* Reset the following CH: [0,3,4,24,25,27] */
-	for (i = 0; i < 7; i++) {
+	for (i = 0; i < ARRAY_SIZE(ch_indices); i++) {
 		idx = ch_indices[i];
 		out_be64(&priv2->spu_chnlcntptr_RW, idx);
 		eieio();
@@ -1311,7 +1280,15 @@ static inline void setup_decr(struct spu_state *csa, struct spu *spu)
 		cycles_t resume_time = get_cycles();
 		cycles_t delta_time = resume_time - csa->suspend_time;
 
+		csa->lscsa->decr_status.slot[0] = SPU_DECR_STATUS_RUNNING;
+		if (csa->lscsa->decr.slot[0] < delta_time) {
+			csa->lscsa->decr_status.slot[0] |=
+				 SPU_DECR_STATUS_WRAPPED;
+		}
+
 		csa->lscsa->decr.slot[0] -= delta_time;
+	} else {
+		csa->lscsa->decr_status.slot[0] = 0;
 	}
 }
 
@@ -1418,6 +1395,18 @@ static inline void restore_ls_16kb(struct spu_state *csa, struct spu *spu)
 	 *     16kb of local storage from CSA.
 	 */
 	send_mfc_dma(spu, addr, ls_offset, size, tag, rclass, cmd);
+}
+
+static inline void suspend_mfc(struct spu_state *csa, struct spu *spu)
+{
+	struct spu_priv2 __iomem *priv2 = spu->priv2;
+
+	/* Restore, Step 47.
+	 *     Write MFC_Cntl[Sc,Sm]='1','0' to suspend
+	 *     the queue.
+	 */
+	out_be64(&priv2->mfc_control_RW, MFC_CNTL_SUSPEND_DMA_QUEUE);
+	eieio();
 }
 
 static inline void clear_interrupts(struct spu_state *csa, struct spu *spu)
@@ -1570,32 +1559,27 @@ static inline void restore_decr_wrapped(struct spu_state *csa, struct spu *spu)
 	 *     "wrapped" flag is set, OR in a '1' to
 	 *     CSA.SPU_Event_Status[Tm].
 	 */
-	if (csa->lscsa->decr_status.slot[0] == 1) {
-		csa->spu_chnldata_RW[0] |= 0x20;
-	}
-	if ((csa->lscsa->decr_status.slot[0] == 1) &&
-	    (csa->spu_chnlcnt_RW[0] == 0 &&
-	     ((csa->spu_chnldata_RW[2] & 0x20) == 0x0) &&
-	     ((csa->spu_chnldata_RW[0] & 0x20) != 0x1))) {
+	if (!(csa->lscsa->decr_status.slot[0] & SPU_DECR_STATUS_WRAPPED))
+		return;
+
+	if ((csa->spu_chnlcnt_RW[0] == 0) &&
+	    (csa->spu_chnldata_RW[1] & 0x20) &&
+	    !(csa->spu_chnldata_RW[0] & 0x20))
 		csa->spu_chnlcnt_RW[0] = 1;
-	}
+
+	csa->spu_chnldata_RW[0] |= 0x20;
 }
 
 static inline void restore_ch_part1(struct spu_state *csa, struct spu *spu)
 {
 	struct spu_priv2 __iomem *priv2 = spu->priv2;
-	u64 idx, ch_indices[7] = { 0UL, 3UL, 4UL, 24UL, 25UL, 27UL };
+	u64 idx, ch_indices[] = { 0UL, 3UL, 4UL, 24UL, 25UL, 27UL };
 	int i;
 
 	/* Restore, Step 59:
+	 *	Restore the following CH: [0,3,4,24,25,27]
 	 */
-
-	/* Restore CH 1 without count */
-	out_be64(&priv2->spu_chnlcntptr_RW, 1);
-	out_be64(&priv2->spu_chnldata_RW, csa->spu_chnldata_RW[1]);
-
-	/* Restore the following CH: [0,3,4,24,25,27] */
-	for (i = 0; i < 7; i++) {
+	for (i = 0; i < ARRAY_SIZE(ch_indices); i++) {
 		idx = ch_indices[i];
 		out_be64(&priv2->spu_chnlcntptr_RW, idx);
 		eieio();
@@ -1714,27 +1698,6 @@ static inline void check_ppuint_mb_stat(struct spu_state *csa, struct spu *spu)
 		dummy = in_be64(&priv2->puint_mb_R);
 		eieio();
 		spu_int_stat_clear(spu, 2, CLASS2_ENABLE_MAILBOX_INTR);
-		eieio();
-	}
-}
-
-static inline void restore_mfc_slbs(struct spu_state *csa, struct spu *spu)
-{
-	struct spu_priv2 __iomem *priv2 = spu->priv2;
-	int i;
-
-	/* Restore, Step 68:
-	 *     If MFC_SR1[R]='1', restore SLBs from CSA.
-	 */
-	if (csa->priv1.mfc_sr1_RW & MFC_STATE1_RELOCATE_MASK) {
-		for (i = 0; i < 8; i++) {
-			out_be64(&priv2->slb_index_W, i);
-			eieio();
-			out_be64(&priv2->slb_esid_RW, csa->slb_esid_RW[i]);
-			out_be64(&priv2->slb_vsid_RW, csa->slb_vsid_RW[i]);
-			eieio();
-		}
-		out_be64(&priv2->slb_index_W, csa->priv2.slb_index_W);
 		eieio();
 	}
 }
@@ -1868,6 +1831,7 @@ static void save_csa(struct spu_state *prev, struct spu *spu)
 	save_mfc_queues(prev, spu);	/* Step 19. */
 	save_ppu_querymask(prev, spu);	/* Step 20. */
 	save_ppu_querytype(prev, spu);	/* Step 21. */
+	save_ppu_tagstatus(prev, spu);  /* NEW.     */
 	save_mfc_csr_tsq(prev, spu);	/* Step 22. */
 	save_mfc_csr_cmd(prev, spu);	/* Step 23. */
 	save_mfc_csr_ato(prev, spu);	/* Step 24. */
@@ -1875,7 +1839,6 @@ static void save_csa(struct spu_state *prev, struct spu *spu)
 	set_mfc_tclass_id(prev, spu);	/* Step 26. */
 	purge_mfc_queue(prev, spu);	/* Step 27. */
 	wait_purge_complete(prev, spu);	/* Step 28. */
-	save_mfc_slbs(prev, spu);	/* Step 29. */
 	setup_mfc_sr1(prev, spu);	/* Step 30. */
 	save_spu_npc(prev, spu);	/* Step 31. */
 	save_spu_privcntl(prev, spu);	/* Step 32. */
@@ -1975,7 +1938,7 @@ static void harvest(struct spu_state *prev, struct spu *spu)
 	set_switch_pending(prev, spu);	        /* Step 5.  */
 	stop_spu_isolate(spu);			/* NEW.     */
 	remove_other_spu_access(prev, spu);	/* Step 6.  */
-	suspend_mfc(prev, spu);	                /* Step 7.  */
+	suspend_mfc_and_halt_decr(prev, spu);	/* Step 7.  */
 	wait_suspend_mfc_complete(prev, spu);	/* Step 8.  */
 	if (!suspend_spe(prev, spu))	        /* Step 9.  */
 		clear_spu_status(prev, spu);	/* Step 10. */
@@ -1987,7 +1950,7 @@ static void harvest(struct spu_state *prev, struct spu *spu)
 	reset_spu_privcntl(prev, spu);	        /* Step 16. */
 	reset_spu_lslr(prev, spu);              /* Step 17. */
 	setup_mfc_sr1(prev, spu);	        /* Step 18. */
-	invalidate_slbs(prev, spu);	        /* Step 19. */
+	spu_invalidate_slbs(spu);		/* Step 19. */
 	reset_ch_part1(prev, spu);	        /* Step 20. */
 	reset_ch_part2(prev, spu);	        /* Step 21. */
 	enable_interrupts(prev, spu);	        /* Step 22. */
@@ -2055,7 +2018,7 @@ static void restore_csa(struct spu_state *next, struct spu *spu)
 	restore_spu_mb(next, spu);	        /* Step 65. */
 	check_ppu_mb_stat(next, spu);	        /* Step 66. */
 	check_ppuint_mb_stat(next, spu);	/* Step 67. */
-	restore_mfc_slbs(next, spu);	        /* Step 68. */
+	spu_invalidate_slbs(spu);		/* Modified Step 68. */
 	restore_mfc_sr1(next, spu);	        /* Step 69. */
 	restore_other_spu_access(next, spu);	/* Step 70. */
 	restore_spu_runcntl(next, spu);	        /* Step 71. */
@@ -2140,6 +2103,10 @@ int spu_save(struct spu_state *prev, struct spu *spu)
 	int rc;
 
 	acquire_spu_lock(spu);	        /* Step 1.     */
+	prev->dar = spu->dar;
+	prev->dsisr = spu->dsisr;
+	spu->dar = 0;
+	spu->dsisr = 0;
 	rc = __do_spu_save(prev, spu);	/* Steps 2-53. */
 	release_spu_lock(spu);
 	if (rc != 0 && rc != 2 && rc != 6) {
@@ -2165,9 +2132,9 @@ int spu_restore(struct spu_state *new, struct spu *spu)
 
 	acquire_spu_lock(spu);
 	harvest(NULL, spu);
-	spu->dar = 0;
-	spu->dsisr = 0;
 	spu->slb_replace = 0;
+	new->dar = 0;
+	new->dsisr = 0;
 	spu->class_0_pending = 0;
 	rc = __do_spu_restore(new, spu);
 	release_spu_lock(spu);
@@ -2178,19 +2145,6 @@ int spu_restore(struct spu_state *new, struct spu *spu)
 	return rc;
 }
 EXPORT_SYMBOL_GPL(spu_restore);
-
-/**
- * spu_harvest - SPU harvest (reset) operation
- * @spu: pointer to SPU iomem structure.
- *
- * Perform SPU harvest (reset) operation.
- */
-void spu_harvest(struct spu *spu)
-{
-	acquire_spu_lock(spu);
-	harvest(NULL, spu);
-	release_spu_lock(spu);
-}
 
 static void init_prob(struct spu_state *csa)
 {
@@ -2241,40 +2195,30 @@ static void init_priv2(struct spu_state *csa)
  * as it is by far the largest of the context save regions,
  * and may need to be pinned or otherwise specially aligned.
  */
-void spu_init_csa(struct spu_state *csa)
+int spu_init_csa(struct spu_state *csa)
 {
-	struct spu_lscsa *lscsa;
-	unsigned char *p;
+	int rc;
 
 	if (!csa)
-		return;
+		return -EINVAL;
 	memset(csa, 0, sizeof(struct spu_state));
 
-	lscsa = vmalloc(sizeof(struct spu_lscsa));
-	if (!lscsa)
-		return;
+	rc = spu_alloc_lscsa(csa);
+	if (rc)
+		return rc;
 
-	memset(lscsa, 0, sizeof(struct spu_lscsa));
-	csa->lscsa = lscsa;
 	spin_lock_init(&csa->register_lock);
-
-	/* Set LS pages reserved to allow for user-space mapping. */
-	for (p = lscsa->ls; p < lscsa->ls + LS_SIZE; p += PAGE_SIZE)
-		SetPageReserved(vmalloc_to_page(p));
 
 	init_prob(csa);
 	init_priv1(csa);
 	init_priv2(csa);
+
+	return 0;
 }
 EXPORT_SYMBOL_GPL(spu_init_csa);
 
 void spu_fini_csa(struct spu_state *csa)
 {
-	/* Clear reserved bit before vfree. */
-	unsigned char *p;
-	for (p = csa->lscsa->ls; p < csa->lscsa->ls + LS_SIZE; p += PAGE_SIZE)
-		ClearPageReserved(vmalloc_to_page(p));
-
-	vfree(csa->lscsa);
+	spu_free_lscsa(csa);
 }
 EXPORT_SYMBOL_GPL(spu_fini_csa);

@@ -58,6 +58,9 @@ struct gatt_mask {
 	 * devices this will probably be ignored */
 };
 
+#define AGP_PAGE_DESTROY_UNMAP 1
+#define AGP_PAGE_DESTROY_FREE 2
+
 struct aper_size_info_8 {
 	int size;
 	int num_entries;
@@ -93,12 +96,12 @@ struct aper_size_info_fixed {
 
 struct agp_bridge_driver {
 	struct module *owner;
-	void *aperture_sizes;
+	const void *aperture_sizes;
 	int num_aperture_sizes;
 	enum aper_size_type size_type;
 	int cant_use_aperture;
 	int needs_scratch_page;
-	struct gatt_mask *masks;
+	const struct gatt_mask *masks;
 	int (*fetch_size)(void);
 	int (*configure)(void);
 	void (*agp_enable)(struct agp_bridge_data *, u32);
@@ -113,13 +116,13 @@ struct agp_bridge_driver {
 	struct agp_memory *(*alloc_by_type) (size_t, int);
 	void (*free_by_type)(struct agp_memory *);
 	void *(*agp_alloc_page)(struct agp_bridge_data *);
-	void (*agp_destroy_page)(void *);
+	void (*agp_destroy_page)(void *, int flags);
         int (*agp_type_to_mask_type) (struct agp_bridge_data *, int);
 };
 
 struct agp_bridge_data {
 	const struct agp_version *version;
-	struct agp_bridge_driver *driver;
+	const struct agp_bridge_driver *driver;
 	struct vm_operations_struct *vm_ops;
 	void *previous_size;
 	void *current_size;
@@ -190,6 +193,7 @@ struct agp_bridge_data {
 #define INTEL_I830_ERRSTS	0x92
 
 /* Intel 855GM/852GM registers */
+#define I855_GMCH_GMS_MASK		0xF0
 #define I855_GMCH_GMS_STOLEN_0M		0x0
 #define I855_GMCH_GMS_STOLEN_1M		(0x1 << 4)
 #define I855_GMCH_GMS_STOLEN_4M		(0x2 << 4)
@@ -231,6 +235,10 @@ struct agp_bridge_data {
 #define I965_PGETBL_SIZE_512KB	(0 << 1)
 #define I965_PGETBL_SIZE_256KB	(1 << 1)
 #define I965_PGETBL_SIZE_128KB	(2 << 1)
+#define G33_PGETBL_SIZE_MASK    (3 << 8)
+#define G33_PGETBL_SIZE_1M      (1 << 8)
+#define G33_PGETBL_SIZE_2M      (2 << 8)
+
 #define I810_DRAM_CTL		0x3000
 #define I810_DRAM_ROW_0		0x00000001
 #define I810_DRAM_ROW_0_SDRAM	0x00000001
@@ -262,7 +270,7 @@ int agp_generic_remove_memory(struct agp_memory *mem, off_t pg_start, int type);
 struct agp_memory *agp_generic_alloc_by_type(size_t page_count, int type);
 void agp_generic_free_by_type(struct agp_memory *curr);
 void *agp_generic_alloc_page(struct agp_bridge_data *bridge);
-void agp_generic_destroy_page(void *addr);
+void agp_generic_destroy_page(void *addr, int flags);
 void agp_free_key(int key);
 int agp_num_entries(void);
 u32 agp_collect_device_status(struct agp_bridge_data *bridge, u32 mode, u32 command);
@@ -290,7 +298,7 @@ void agp3_generic_cleanup(void);
 
 /* aperture sizes have been standardised since v3 */
 #define AGP_GENERIC_SIZES_ENTRIES 11
-extern struct aper_size_info_16 agp3_generic_sizes[];
+extern const struct aper_size_info_16 agp3_generic_sizes[];
 
 #define virt_to_gart(x) (phys_to_gart(virt_to_phys(x)))
 #define gart_to_virt(x) (phys_to_virt(gart_to_phys(x)))

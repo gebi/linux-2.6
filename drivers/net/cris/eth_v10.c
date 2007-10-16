@@ -618,12 +618,8 @@ e100_set_mac_address(struct net_device *dev, void *p)
 
 	/* show it in the log as well */
 
-	printk(KERN_INFO "%s: changed MAC to ", dev->name);
-
-	for (i = 0; i < 5; i++)
-		printk("%02X:", dev->dev_addr[i]);
-
-	printk("%02X\n", dev->dev_addr[i]);
+	printk(KERN_INFO "%s: changed MAC to %s\n",
+	       dev->name, print_mac(mac, dev->dev_addr));
 
 	spin_unlock(&np->lock);
 
@@ -1348,7 +1344,8 @@ e100_rx(struct net_device *dev)
 
 #ifdef ETHDEBUG
 		printk("head = 0x%x, data = 0x%x, tail = 0x%x, end = 0x%x\n",
-		  skb->head, skb->data, skb->tail, skb->end);
+		       skb->head, skb->data, skb_tail_pointer(skb),
+		       skb_end_pointer(skb));
 		printk("copying packet to 0x%x.\n", skb_data_ptr);
 #endif
 
@@ -1375,7 +1372,6 @@ e100_rx(struct net_device *dev)
 		myNextRxDesc->descr.buf = L1_CACHE_ALIGN(virt_to_phys(myNextRxDesc->skb->data));
 	}
 
-	skb->dev = dev;
 	skb->protocol = eth_type_trans(skb, dev);
 
 	/* Send the packet to the upper layers */

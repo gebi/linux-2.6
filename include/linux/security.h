@@ -54,7 +54,7 @@ extern int cap_inode_removexattr(struct dentry *dentry, char *name);
 extern int cap_task_post_setuid (uid_t old_ruid, uid_t old_euid, uid_t old_suid, int flags);
 extern void cap_task_reparent_to_init (struct task_struct *p);
 extern int cap_syslog (int type);
-extern int cap_vm_enough_memory (long pages);
+extern int cap_vm_enough_memory (struct mm_struct *mm, long pages);
 
 struct msghdr;
 struct sk_buff;
@@ -71,6 +71,7 @@ struct xfrm_user_sec_ctx;
 extern int cap_netlink_send(struct sock *sk, struct sk_buff *skb);
 extern int cap_netlink_recv(struct sk_buff *skb, int cap);
 
+extern unsigned long mmap_min_addr;
 /*
  * Values used in the task_security_ops calls
  */
@@ -322,7 +323,7 @@ struct request_sock;
  *	@dir contains the inode structure of parent of the new file.
  *	@dentry contains the dentry structure of the new file.
  *	@mode contains the mode of the new file.
- *	@dev contains the the device number.
+ *	@dev contains the device number.
  *	Return 0 if permission is granted.
  * @inode_rename:
  *	Check for permission to rename a file or directory.
@@ -1124,6 +1125,7 @@ struct request_sock;
  *	Return 0 if permission is granted.
  * @vm_enough_memory:
  *	Check permissions for allocating a new virtual mapping.
+ *	@mm contains the mm struct it is being added to.
  *      @pages contains the number of pages.
  *	Return 0 if permission is granted.
  *
@@ -1168,7 +1170,7 @@ struct security_operations {
 	int (*quota_on) (struct dentry * dentry);
 	int (*syslog) (int type);
 	int (*settime) (struct timespec *ts, struct timezone *tz);
-	int (*vm_enough_memory) (long pages);
+	int (*vm_enough_memory) (struct mm_struct *mm, long pages);
 
 	int (*bprm_alloc_security) (struct linux_binprm * bprm);
 	void (*bprm_free_security) (struct linux_binprm * bprm);
@@ -1241,8 +1243,9 @@ struct security_operations {
 	int (*file_ioctl) (struct file * file, unsigned int cmd,
 			   unsigned long arg);
 	int (*file_mmap) (struct file * file,
-			  unsigned long reqprot,
-			  unsigned long prot, unsigned long flags);
+			  unsigned long reqprot, unsigned long prot,
+			  unsigned long flags, unsigned long addr,
+			  unsigned long addr_only);
 	int (*file_mprotect) (struct vm_area_struct * vma,
 			      unsigned long reqprot,
 			      unsigned long prot);
@@ -1324,7 +1327,7 @@ struct security_operations {
 
 	void (*d_instantiate) (struct dentry *dentry, struct inode *inode);
 
- 	int (*getprocattr)(struct task_struct *p, char *name, void *value, size_t size);
+ 	int (*getprocattr)(struct task_struct *p, char *name, char **value);
  	int (*setprocattr)(struct task_struct *p, char *name, void *value, size_t size);
 	int (*secid_to_secctx)(u32 secid, char **secdata, u32 *seclen);
 	void (*release_secctx)(char *secdata, u32 seclen);
@@ -1467,10 +1470,14 @@ static inline int security_settime(struct timespec *ts, struct timezone *tz)
 	return security_ops->settime(ts, tz);
 }
 
-
 static inline int security_vm_enough_memory(long pages)
 {
-	return security_ops->vm_enough_memory(pages);
+	return security_ops->vm_enough_memory(current->mm, pages);
+}
+
+static inline int security_vm_enough_memory_mm(struct mm_struct *mm, long pages)
+{
+	return security_ops->vm_enough_memory(mm, pages);
 }
 
 static inline int security_bprm_alloc (struct linux_binprm *bprm)
@@ -1814,9 +1821,12 @@ static inline int security_file_ioctl (struct file *file, unsigned int cmd,
 
 static inline int security_file_mmap (struct file *file, unsigned long reqprot,
 				      unsigned long prot,
-				      unsigned long flags)
+				      unsigned long flags,
+				      unsigned long addr,
+				      unsigned long addr_only)
 {
-	return security_ops->file_mmap (file, reqprot, prot, flags);
+	return security_ops->file_mmap (file, reqprot, prot, flags, addr,
+					addr_only);
 }
 
 static inline int security_file_mprotect (struct vm_area_struct *vma,
@@ -2092,9 +2102,9 @@ static inline void security_d_instantiate (struct dentry *dentry, struct inode *
 	security_ops->d_instantiate (dentry, inode);
 }
 
-static inline int security_getprocattr(struct task_struct *p, char *name, void *value, size_t size)
+static inline int security_getprocattr(struct task_struct *p, char *name, char **value)
 {
-	return security_ops->getprocattr(p, name, value, size);
+	return security_ops->getprocattr(p, name, value);
 }
 
 static inline int security_setprocattr(struct task_struct *p, char *name, void *value, size_t size)
@@ -2214,7 +2224,12 @@ static inline int security_settime(struct timespec *ts, struct timezone *tz)
 
 static inline int security_vm_enough_memory(long pages)
 {
-	return cap_vm_enough_memory(pages);
+	return cap_vm_enough_memory(current->mm, pages);
+}
+
+static inline int security_vm_enough_memory_mm(struct mm_struct *mm, long pages)
+{
+	return cap_vm_enough_memory(mm, pages);
 }
 
 static inline int security_bprm_alloc (struct linux_binprm *bprm)
@@ -2489,7 +2504,9 @@ static inline int security_file_ioctl (struct file *file, unsigned int cmd,
 
 static inline int security_file_mmap (struct file *file, unsigned long reqprot,
 				      unsigned long prot,
-				      unsigned long flags)
+				      unsigned long flags,
+				      unsigned long addr,
+				      unsigned long addr_only)
 {
 	return 0;
 }
@@ -2749,7 +2766,7 @@ static inline int security_sem_semop (struct sem_array * sma,
 static inline void security_d_instantiate (struct dentry *dentry, struct inode *inode)
 { }
 
-static inline int security_getprocattr(struct task_struct *p, char *name, void *value, size_t size)
+static inline int security_getprocattr(struct task_struct *p, char *name, char **value)
 {
 	return -EINVAL;
 }

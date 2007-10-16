@@ -373,13 +373,10 @@ static inline void dvb_dmx_swfilter_packet_type(struct dvb_demux_feed *feed,
 static void dvb_dmx_swfilter_packet(struct dvb_demux *demux, const u8 *buf)
 {
 	struct dvb_demux_feed *feed;
-	struct list_head *pos, *head = &demux->feed_list;
 	u16 pid = ts_pid(buf);
 	int dvr_done = 0;
 
-	list_for_each(pos, head) {
-		feed = list_entry(pos, struct dvb_demux_feed, list_head);
-
+	list_for_each_entry(feed, &demux->feed_list, list_head) {
 		if ((feed->pid != pid) && (feed->pid != 0x2000))
 			continue;
 
@@ -673,8 +670,7 @@ static int dmx_ts_feed_stop_filtering(struct dmx_ts_feed *ts_feed)
 	struct dvb_demux *demux = feed->demux;
 	int ret;
 
-	if (mutex_lock_interruptible(&demux->mutex))
-		return -ERESTARTSYS;
+	mutex_lock(&demux->mutex);
 
 	if (feed->state < DMX_STATE_GO) {
 		mutex_unlock(&demux->mutex);
@@ -748,8 +744,7 @@ static int dvbdmx_release_ts_feed(struct dmx_demux *dmx,
 	struct dvb_demux *demux = (struct dvb_demux *)dmx;
 	struct dvb_demux_feed *feed = (struct dvb_demux_feed *)ts_feed;
 
-	if (mutex_lock_interruptible(&demux->mutex))
-		return -ERESTARTSYS;
+	mutex_lock(&demux->mutex);
 
 	if (feed->state == DMX_STATE_FREE) {
 		mutex_unlock(&demux->mutex);
@@ -916,8 +911,7 @@ static int dmx_section_feed_stop_filtering(struct dmx_section_feed *feed)
 	struct dvb_demux *dvbdmx = dvbdmxfeed->demux;
 	int ret;
 
-	if (mutex_lock_interruptible(&dvbdmx->mutex))
-		return -ERESTARTSYS;
+	mutex_lock(&dvbdmx->mutex);
 
 	if (!dvbdmx->stop_feed) {
 		mutex_unlock(&dvbdmx->mutex);
@@ -942,8 +936,7 @@ static int dmx_section_feed_release_filter(struct dmx_section_feed *feed,
 	struct dvb_demux_feed *dvbdmxfeed = (struct dvb_demux_feed *)feed;
 	struct dvb_demux *dvbdmx = dvbdmxfeed->demux;
 
-	if (mutex_lock_interruptible(&dvbdmx->mutex))
-		return -ERESTARTSYS;
+	mutex_lock(&dvbdmx->mutex);
 
 	if (dvbdmxfilter->feed != dvbdmxfeed) {
 		mutex_unlock(&dvbdmx->mutex);
@@ -1016,8 +1009,7 @@ static int dvbdmx_release_section_feed(struct dmx_demux *demux,
 	struct dvb_demux_feed *dvbdmxfeed = (struct dvb_demux_feed *)feed;
 	struct dvb_demux *dvbdmx = (struct dvb_demux *)demux;
 
-	if (mutex_lock_interruptible(&dvbdmx->mutex))
-		return -ERESTARTSYS;
+	mutex_lock(&dvbdmx->mutex);
 
 	if (dvbdmxfeed->state == DMX_STATE_FREE) {
 		mutex_unlock(&dvbdmx->mutex);
@@ -1073,7 +1065,7 @@ static int dvbdmx_write(struct dmx_demux *demux, const char *buf, size_t count)
 
 	if (mutex_lock_interruptible(&dvbdemux->mutex))
 		return -ERESTARTSYS;
-	dvb_dmx_swfilter(dvbdemux, buf, count);
+	dvb_dmx_swfilter(dvbdemux, (u8 *)buf, count);
 	mutex_unlock(&dvbdemux->mutex);
 
 	if (signal_pending(current))
@@ -1126,8 +1118,7 @@ static int dvbdmx_connect_frontend(struct dmx_demux *demux,
 	if (demux->frontend)
 		return -EINVAL;
 
-	if (mutex_lock_interruptible(&dvbdemux->mutex))
-		return -ERESTARTSYS;
+	mutex_lock(&dvbdemux->mutex);
 
 	demux->frontend = frontend;
 	mutex_unlock(&dvbdemux->mutex);
@@ -1138,8 +1129,7 @@ static int dvbdmx_disconnect_frontend(struct dmx_demux *demux)
 {
 	struct dvb_demux *dvbdemux = (struct dvb_demux *)demux;
 
-	if (mutex_lock_interruptible(&dvbdemux->mutex))
-		return -ERESTARTSYS;
+	mutex_lock(&dvbdemux->mutex);
 
 	demux->frontend = NULL;
 	mutex_unlock(&dvbdemux->mutex);

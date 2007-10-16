@@ -113,16 +113,6 @@ int clockevents_register_notifier(struct notifier_block *nb)
 	return ret;
 }
 
-/**
- * clockevents_unregister_notifier - unregister a clock events change listener
- */
-void clockevents_unregister_notifier(struct notifier_block *nb)
-{
-	spin_lock(&clockevents_lock);
-	raw_notifier_chain_unregister(&clockevents_chain, nb);
-	spin_unlock(&clockevents_lock);
-}
-
 /*
  * Notify about a clock event change. Called with clockevents_lock
  * held.
@@ -204,47 +194,7 @@ void clockevents_exchange_device(struct clock_event_device *old,
 	local_irq_restore(flags);
 }
 
-/**
- * clockevents_request_device
- */
-struct clock_event_device *clockevents_request_device(unsigned int features,
-						      cpumask_t cpumask)
-{
-	struct clock_event_device *cur, *dev = NULL;
-	struct list_head *tmp;
-
-	spin_lock(&clockevents_lock);
-
-	list_for_each(tmp, &clockevent_devices) {
-		cur = list_entry(tmp, struct clock_event_device, list);
-
-		if ((cur->features & features) == features &&
-		    cpus_equal(cpumask, cur->cpumask)) {
-			if (!dev || dev->rating < cur->rating)
-				dev = cur;
-		}
-	}
-
-	clockevents_exchange_device(NULL, dev);
-
-	spin_unlock(&clockevents_lock);
-
-	return dev;
-}
-
-/**
- * clockevents_release_device
- */
-void clockevents_release_device(struct clock_event_device *dev)
-{
-	spin_lock(&clockevents_lock);
-
-	clockevents_exchange_device(dev, NULL);
-	clockevents_notify_released();
-
-	spin_unlock(&clockevents_lock);
-}
-
+#ifdef CONFIG_GENERIC_CLOCKEVENTS
 /**
  * clockevents_notify - notification about relevant events
  */
@@ -273,73 +223,4 @@ void clockevents_notify(unsigned long reason, void *arg)
 	spin_unlock(&clockevents_lock);
 }
 EXPORT_SYMBOL_GPL(clockevents_notify);
-
-#ifdef CONFIG_SYSFS
-
-/**
- * clockevents_show_registered - sysfs interface for listing clockevents
- * @dev:	unused
- * @buf:	char buffer to be filled with clock events list
- *
- * Provides sysfs interface for listing registered clock event devices
- */
-static ssize_t clockevents_show_registered(struct sys_device *dev, char *buf)
-{
-	struct list_head *tmp;
-	char *p = buf;
-	int cpu;
-
-	spin_lock(&clockevents_lock);
-
-	list_for_each(tmp, &clockevent_devices) {
-		struct clock_event_device *ce;
-
-		ce = list_entry(tmp, struct clock_event_device, list);
-		p += sprintf(p, "%-20s F:%04x M:%d", ce->name,
-			     ce->features, ce->mode);
-		p += sprintf(p, " C:");
-		if (!cpus_equal(ce->cpumask, cpu_possible_map)) {
-			for_each_cpu_mask(cpu, ce->cpumask)
-				p += sprintf(p, " %d", cpu);
-		} else {
-			/*
-			 * FIXME: Add the cpu which is handling this sucker
-			 */
-		}
-		p += sprintf(p, "\n");
-	}
-
-	spin_unlock(&clockevents_lock);
-
-	return p - buf;
-}
-
-/*
- * Sysfs setup bits:
- */
-static SYSDEV_ATTR(registered, 0600,
-		   clockevents_show_registered, NULL);
-
-static struct sysdev_class clockevents_sysclass = {
-	set_kset_name("clockevents"),
-};
-
-static struct sys_device clockevents_sys_device = {
-	.id	= 0,
-	.cls	= &clockevents_sysclass,
-};
-
-static int __init clockevents_sysfs_init(void)
-{
-	int error = sysdev_class_register(&clockevents_sysclass);
-
-	if (!error)
-		error = sysdev_register(&clockevents_sys_device);
-	if (!error)
-		error = sysdev_create_file(
-				&clockevents_sys_device,
-				&attr_registered);
-	return error;
-}
-device_initcall(clockevents_sysfs_init);
 #endif

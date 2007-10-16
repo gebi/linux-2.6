@@ -17,6 +17,7 @@
 
 #include <net/fib_rules.h>
 #include <net/ipv6.h>
+#include <net/addrconf.h>
 #include <net/ip6_route.h>
 #include <net/netlink.h>
 
@@ -48,8 +49,6 @@ static struct fib6_rule local_rule = {
 		.flags =	FIB_RULE_PERMANENT,
 	},
 };
-
-static LIST_HEAD(fib6_rules);
 
 struct dst_entry *fib6_rule_lookup(struct flowi *fl, int flags,
 				   pol_lookup_t lookup)
@@ -95,8 +94,27 @@ static int fib6_rule_action(struct fib_rule *rule, struct flowi *flp,
 	if (table)
 		rt = lookup(table, flp, flags);
 
-	if (rt != &ip6_null_entry)
+	if (rt != &ip6_null_entry) {
+		struct fib6_rule *r = (struct fib6_rule *)rule;
+
+		/*
+		 * If we need to find a source address for this traffic,
+		 * we check the result if it meets requirement of the rule.
+		 */
+		if ((rule->flags & FIB_RULE_FIND_SADDR) &&
+		    r->src.plen && !(flags & RT6_LOOKUP_F_HAS_SADDR)) {
+			struct in6_addr saddr;
+			if (ipv6_get_saddr(&rt->u.dst, &flp->fl6_dst,
+					   &saddr))
+				goto again;
+			if (!ipv6_prefix_equal(&saddr, &r->src.addr,
+					       r->src.plen))
+				goto again;
+			ipv6_addr_copy(&flp->fl6_src, &saddr);
+		}
 		goto out;
+	}
+again:
 	dst_release(&rt->u.dst);
 	rt = NULL;
 	goto out;
@@ -117,9 +135,17 @@ static int fib6_rule_match(struct fib_rule *rule, struct flowi *fl, int flags)
 	    !ipv6_prefix_equal(&fl->fl6_dst, &r->dst.addr, r->dst.plen))
 		return 0;
 
+	/*
+	 * If FIB_RULE_FIND_SADDR is set and we do not have a
+	 * source address for the traffic, we defer check for
+	 * source address.
+	 */
 	if (r->src.plen) {
-		if (!(flags & RT6_LOOKUP_F_HAS_SADDR) ||
-		    !ipv6_prefix_equal(&fl->fl6_src, &r->src.addr, r->src.plen))
+		if (flags & RT6_LOOKUP_F_HAS_SADDR) {
+			if (!ipv6_prefix_equal(&fl->fl6_src, &r->src.addr,
+					       r->src.plen))
+				return 0;
+		} else if (!(r->common.flags & FIB_RULE_FIND_SADDR))
 			return 0;
 	}
 
@@ -129,10 +155,8 @@ static int fib6_rule_match(struct fib_rule *rule, struct flowi *fl, int flags)
 	return 1;
 }
 
-static struct nla_policy fib6_rule_policy[FRA_MAX+1] __read_mostly = {
+static const struct nla_policy fib6_rule_policy[FRA_MAX+1] = {
 	FRA_GENERIC_POLICY,
-	[FRA_SRC]	= { .len = sizeof(struct in6_addr) },
-	[FRA_DST]	= { .len = sizeof(struct in6_addr) },
 };
 
 static int fib6_rule_configure(struct fib_rule *rule, struct sk_buff *skb,
@@ -141,9 +165,6 @@ static int fib6_rule_configure(struct fib_rule *rule, struct sk_buff *skb,
 {
 	int err = -EINVAL;
 	struct fib6_rule *rule6 = (struct fib6_rule *) rule;
-
-	if (frh->src_len > 128 || frh->dst_len > 128)
-		goto errout;
 
 	if (rule->action == FR_ACT_TO_TBL) {
 		if (rule->table == RT6_TABLE_UNSPEC)
@@ -155,11 +176,11 @@ static int fib6_rule_configure(struct fib_rule *rule, struct sk_buff *skb,
 		}
 	}
 
-	if (tb[FRA_SRC])
+	if (frh->src_len)
 		nla_memcpy(&rule6->src.addr, tb[FRA_SRC],
 			   sizeof(struct in6_addr));
 
-	if (tb[FRA_DST])
+	if (frh->dst_len)
 		nla_memcpy(&rule6->dst.addr, tb[FRA_DST],
 			   sizeof(struct in6_addr));
 
@@ -186,11 +207,11 @@ static int fib6_rule_compare(struct fib_rule *rule, struct fib_rule_hdr *frh,
 	if (frh->tos && (rule6->tclass != frh->tos))
 		return 0;
 
-	if (tb[FRA_SRC] &&
+	if (frh->src_len &&
 	    nla_memcmp(tb[FRA_SRC], &rule6->src.addr, sizeof(struct in6_addr)))
 		return 0;
 
-	if (tb[FRA_DST] &&
+	if (frh->dst_len &&
 	    nla_memcmp(tb[FRA_DST], &rule6->dst.addr, sizeof(struct in6_addr)))
 		return 0;
 
@@ -221,11 +242,6 @@ nla_put_failure:
 	return -ENOBUFS;
 }
 
-int fib6_rules_dump(struct sk_buff *skb, struct netlink_callback *cb)
-{
-	return fib_rules_dump(skb, cb, AF_INET6);
-}
-
 static u32 fib6_rule_default_pref(void)
 {
 	return 0x3FFF;
@@ -240,6 +256,7 @@ static size_t fib6_rule_nlmsg_payload(struct fib_rule *rule)
 static struct fib_rules_ops fib6_rules_ops = {
 	.family			= AF_INET6,
 	.rule_size		= sizeof(struct fib6_rule),
+	.addr_size		= sizeof(struct in6_addr),
 	.action			= fib6_rule_action,
 	.match			= fib6_rule_match,
 	.configure		= fib6_rule_configure,
@@ -249,14 +266,14 @@ static struct fib_rules_ops fib6_rules_ops = {
 	.nlmsg_payload		= fib6_rule_nlmsg_payload,
 	.nlgroup		= RTNLGRP_IPV6_RULE,
 	.policy			= fib6_rule_policy,
-	.rules_list		= &fib6_rules,
+	.rules_list		= LIST_HEAD_INIT(fib6_rules_ops.rules_list),
 	.owner			= THIS_MODULE,
 };
 
 void __init fib6_rules_init(void)
 {
-	list_add_tail(&local_rule.common.list, &fib6_rules);
-	list_add_tail(&main_rule.common.list, &fib6_rules);
+	list_add_tail(&local_rule.common.list, &fib6_rules_ops.rules_list);
+	list_add_tail(&main_rule.common.list, &fib6_rules_ops.rules_list);
 
 	fib_rules_register(&fib6_rules_ops);
 }

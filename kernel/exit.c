@@ -7,7 +7,6 @@
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
-#include <linux/smp_lock.h>
 #include <linux/module.h>
 #include <linux/capability.h>
 #include <linux/completion.h>
@@ -27,9 +26,11 @@
 #include <linux/profile.h>
 #include <linux/mount.h>
 #include <linux/proc_fs.h>
+#include <linux/kthread.h>
 #include <linux/mempolicy.h>
 #include <linux/taskstats_kern.h>
 #include <linux/delayacct.h>
+#include <linux/freezer.h>
 #include <linux/cpuset.h>
 #include <linux/syscalls.h>
 #include <linux/signal.h>
@@ -42,6 +43,8 @@
 #include <linux/audit.h> /* for audit_free() */
 #include <linux/resource.h>
 #include <linux/blkdev.h>
+#include <linux/task_io_accounting_ops.h>
+#include <linux/freezer.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -108,11 +111,14 @@ static void __exit_signal(struct task_struct *tsk)
 		 */
 		sig->utime = cputime_add(sig->utime, tsk->utime);
 		sig->stime = cputime_add(sig->stime, tsk->stime);
+		sig->gtime = cputime_add(sig->gtime, tsk->gtime);
 		sig->min_flt += tsk->min_flt;
 		sig->maj_flt += tsk->maj_flt;
 		sig->nvcsw += tsk->nvcsw;
 		sig->nivcsw += tsk->nivcsw;
-		sig->sched_time += tsk->sched_time;
+		sig->inblock += task_io_get_inblock(tsk);
+		sig->oublock += task_io_get_oublock(tsk);
+		sig->sum_sched_runtime += tsk->se.sum_exec_runtime;
 		sig = NULL; /* Marker for below. */
 	}
 
@@ -170,7 +176,6 @@ repeat:
 		zap_leader = (leader->exit_signal == -1);
 	}
 
-	sched_exit(p);
 	write_unlock_irq(&tasklist_lock);
 	proc_flush_task(p);
 	release_thread(p);
@@ -255,32 +260,31 @@ static int has_stopped_jobs(struct pid *pgrp)
 }
 
 /**
- * reparent_to_init - Reparent the calling kernel thread to the init task of the pid space that the thread belongs to.
+ * reparent_to_kthreadd - Reparent the calling kernel thread to kthreadd
  *
  * If a kernel thread is launched as a result of a system call, or if
- * it ever exits, it should generally reparent itself to init so that
- * it is correctly cleaned up on exit.
+ * it ever exits, it should generally reparent itself to kthreadd so it
+ * isn't in the way of other processes and is correctly cleaned up on exit.
  *
  * The various task state such as scheduling policy and priority may have
  * been inherited from a user process, so we reset them to sane values here.
  *
- * NOTE that reparent_to_init() gives the caller full capabilities.
+ * NOTE that reparent_to_kthreadd() gives the caller full capabilities.
  */
-static void reparent_to_init(void)
+static void reparent_to_kthreadd(void)
 {
 	write_lock_irq(&tasklist_lock);
 
 	ptrace_unlink(current);
 	/* Reparent to init */
 	remove_parent(current);
-	current->parent = child_reaper(current);
-	current->real_parent = child_reaper(current);
+	current->real_parent = current->parent = kthreadd_task;
 	add_parent(current);
 
 	/* Set the exit signal to SIGCHLD so we signal init on exit */
 	current->exit_signal = SIGCHLD;
 
-	if (!has_rt_policy(current) && (task_nice(current) < 0))
+	if (task_nice(current) < 0)
 		set_user_nice(current, 0);
 	/* cpus_allowed? */
 	/* rt_priority? */
@@ -300,12 +304,12 @@ void __set_special_pids(pid_t session, pid_t pgrp)
 	if (process_session(curr) != session) {
 		detach_pid(curr, PIDTYPE_SID);
 		set_signal_session(curr->signal, session);
-		attach_pid(curr, PIDTYPE_SID, session);
+		attach_pid(curr, PIDTYPE_SID, find_pid(session));
 	}
 	if (process_group(curr) != pgrp) {
 		detach_pid(curr, PIDTYPE_PGID);
 		curr->signal->pgrp = pgrp;
-		attach_pid(curr, PIDTYPE_PGID, pgrp);
+		attach_pid(curr, PIDTYPE_PGID, find_pid(pgrp));
 	}
 }
 
@@ -348,7 +352,7 @@ int disallow_signal(int sig)
 		return -EINVAL;
 
 	spin_lock_irq(&current->sighand->siglock);
-	sigaddset(&current->blocked, sig);
+	current->sighand->action[(sig)-1].sa.sa_handler = SIG_IGN;
 	recalc_sigpending();
 	spin_unlock_irq(&current->sighand->siglock);
 	return 0;
@@ -377,6 +381,11 @@ void daemonize(const char *name, ...)
 	 * they would be locked into memory.
 	 */
 	exit_mm(current);
+	/*
+	 * We don't want to have TIF_FREEZE set if the system-wide hibernation
+	 * or suspend transition begins right now.
+	 */
+	current->flags |= PF_NOFREEZE;
 
 	set_special_pids(1, 1);
 	proc_clear_tty(current);
@@ -401,7 +410,7 @@ void daemonize(const char *name, ...)
 	current->files = init_task.files;
 	atomic_inc(&current->files->count);
 
-	reparent_to_init();
+	reparent_to_kthreadd();
 }
 
 EXPORT_SYMBOL(daemonize);
@@ -578,6 +587,8 @@ static void exit_mm(struct task_struct * tsk)
 	tsk->mm = NULL;
 	up_read(&mm->mmap_sem);
 	enter_lazy_tlb(mm, current);
+	/* We don't want this task to be frozen prematurely */
+	clear_freeze_flag(tsk);
 	task_unlock(tsk);
 	mmput(mm);
 }
@@ -751,11 +762,8 @@ static void exit_notify(struct task_struct *tsk)
 		read_lock(&tasklist_lock);
 		spin_lock_irq(&tsk->sighand->siglock);
 		for (t = next_thread(tsk); t != tsk; t = next_thread(t))
-			if (!signal_pending(t) && !(t->flags & PF_EXITING)) {
-				recalc_sigpending_tsk(t);
-				if (signal_pending(t))
-					signal_wake_up(t, 0);
-			}
+			if (!signal_pending(t) && !(t->flags & PF_EXITING))
+				recalc_sigpending_and_wake(t);
 		spin_unlock_irq(&tsk->sighand->siglock);
 		read_unlock(&tasklist_lock);
 	}
@@ -790,14 +798,14 @@ static void exit_notify(struct task_struct *tsk)
 	
 	pgrp = task_pgrp(tsk);
 	if ((task_pgrp(t) != pgrp) &&
-	    (task_session(t) != task_session(tsk)) &&
+	    (task_session(t) == task_session(tsk)) &&
 	    will_become_orphaned_pgrp(pgrp, tsk) &&
 	    has_stopped_jobs(pgrp)) {
 		__kill_pgrp_info(SIGHUP, SEND_SIG_PRIV, pgrp);
 		__kill_pgrp_info(SIGCONT, SEND_SIG_PRIV, pgrp);
 	}
 
-	/* Let father know we died 
+	/* Let father know we died
 	 *
 	 * Thread signals are configurable, but you aren't going to use
 	 * that to send signals to arbitary processes. 
@@ -810,9 +818,7 @@ static void exit_notify(struct task_struct *tsk)
 	 * If our self_exec id doesn't match our parent_exec_id then
 	 * we have changed execution domain as these two values started
 	 * the same after a fork.
-	 *	
 	 */
-	
 	if (tsk->exit_signal != SIGCHLD && tsk->exit_signal != -1 &&
 	    ( tsk->parent_exec_id != t->self_exec_id  ||
 	      tsk->self_exec_id != tsk->parent_exec_id)
@@ -832,9 +838,7 @@ static void exit_notify(struct task_struct *tsk)
 	}
 
 	state = EXIT_ZOMBIE;
-	if (tsk->exit_signal == -1 &&
-	    (likely(tsk->ptrace == 0) ||
-	     unlikely(tsk->parent->signal->flags & SIGNAL_GROUP_EXIT)))
+	if (tsk->exit_signal == -1 && likely(!tsk->ptrace))
 		state = EXIT_DEAD;
 	tsk->exit_state = state;
 
@@ -850,6 +854,34 @@ static void exit_notify(struct task_struct *tsk)
 	if (state == EXIT_DEAD)
 		release_task(tsk);
 }
+
+#ifdef CONFIG_DEBUG_STACK_USAGE
+static void check_stack_usage(void)
+{
+	static DEFINE_SPINLOCK(low_water_lock);
+	static int lowest_to_date = THREAD_SIZE;
+	unsigned long *n = end_of_stack(current);
+	unsigned long free;
+
+	while (*n == 0)
+		n++;
+	free = (unsigned long)n - (unsigned long)end_of_stack(current);
+
+	if (free >= lowest_to_date)
+		return;
+
+	spin_lock(&low_water_lock);
+	if (free < lowest_to_date) {
+		printk(KERN_WARNING "%s used greatest stack depth: %lu bytes "
+				"left\n",
+				current->comm, free);
+		lowest_to_date = free;
+	}
+	spin_unlock(&low_water_lock);
+}
+#else
+static inline void check_stack_usage(void) {}
+#endif
 
 fastcall NORET_TYPE void do_exit(long code)
 {
@@ -884,13 +916,29 @@ fastcall NORET_TYPE void do_exit(long code)
 	if (unlikely(tsk->flags & PF_EXITING)) {
 		printk(KERN_ALERT
 			"Fixing recursive fault but reboot is needed!\n");
+		/*
+		 * We can do this unlocked here. The futex code uses
+		 * this flag just to verify whether the pi state
+		 * cleanup has been done or not. In the worst case it
+		 * loops once more. We pretend that the cleanup was
+		 * done as there is no way to return. Either the
+		 * OWNER_DIED bit is set by now or we push the blocked
+		 * task into the wait for ever nirwana as well.
+		 */
+		tsk->flags |= PF_EXITPIDONE;
 		if (tsk->io_context)
 			exit_io_context();
 		set_current_state(TASK_UNINTERRUPTIBLE);
 		schedule();
 	}
 
+	/*
+	 * tsk->flags are checked in the futex code to protect against
+	 * an exiting task cleaning up the robust pi futexes.
+	 */
+	spin_lock_irq(&tsk->pi_lock);
 	tsk->flags |= PF_EXITING;
+	spin_unlock_irq(&tsk->pi_lock);
 
 	if (unlikely(in_atomic()))
 		printk(KERN_INFO "note: %s[%d] exited with preempt_count %d\n",
@@ -904,7 +952,7 @@ fastcall NORET_TYPE void do_exit(long code)
 	}
 	group_dead = atomic_dec_and_test(&tsk->signal->live);
 	if (group_dead) {
- 		hrtimer_cancel(&tsk->signal->real_timer);
+		hrtimer_cancel(&tsk->signal->real_timer);
 		exit_itimers(tsk->signal);
 	}
 	acct_collect(code, group_dead);
@@ -914,9 +962,12 @@ fastcall NORET_TYPE void do_exit(long code)
 	if (unlikely(tsk->compat_robust_list))
 		compat_exit_robust_list(tsk);
 #endif
+	if (group_dead)
+		tty_audit_exit();
 	if (unlikely(tsk->audit_context))
 		audit_free(tsk);
 
+	tsk->exit_code = code;
 	taskstats_exit(tsk, group_dead);
 
 	exit_mm(tsk);
@@ -926,6 +977,7 @@ fastcall NORET_TYPE void do_exit(long code)
 	exit_sem(tsk);
 	__exit_files(tsk);
 	__exit_fs(tsk);
+	check_stack_usage();
 	exit_thread();
 	cpuset_exit(tsk);
 	exit_keys(tsk);
@@ -937,7 +989,6 @@ fastcall NORET_TYPE void do_exit(long code)
 	if (tsk->binfmt)
 		module_put(tsk->binfmt->module);
 
-	tsk->exit_code = code;
 	proc_exit_connector(tsk);
 	exit_task_namespaces(tsk);
 	exit_notify(tsk);
@@ -957,6 +1008,12 @@ fastcall NORET_TYPE void do_exit(long code)
 	 * Make sure we are holding no locks:
 	 */
 	debug_check_no_locks_held(tsk);
+	/*
+	 * We can do this unlocked here. The futex code uses this flag
+	 * just to verify whether the pi state cleanup has been done
+	 * or not. In the worst case it loops once more.
+	 */
+	tsk->flags |= PF_EXITPIDONE;
 
 	if (tsk->io_context)
 		exit_io_context();
@@ -1033,6 +1090,8 @@ asmlinkage void sys_exit_group(int error_code)
 
 static int eligible_child(pid_t pid, int options, struct task_struct *p)
 {
+	int err;
+
 	if (pid > 0) {
 		if (p->pid != pid)
 			return 0;
@@ -1066,8 +1125,9 @@ static int eligible_child(pid_t pid, int options, struct task_struct *p)
 	if (delay_group_leader(p))
 		return 2;
 
-	if (security_task_wait(p))
-		return 0;
+	err = security_task_wait(p);
+	if (err)
+		return err;
 
 	return 1;
 }
@@ -1183,6 +1243,11 @@ static int wait_task_zombie(struct task_struct *p, int noreap,
 			cputime_add(p->stime,
 			cputime_add(sig->stime,
 				    sig->cstime)));
+		psig->cgtime =
+			cputime_add(psig->cgtime,
+			cputime_add(p->gtime,
+			cputime_add(sig->gtime,
+				    sig->cgtime)));
 		psig->cmin_flt +=
 			p->min_flt + sig->min_flt + sig->cmin_flt;
 		psig->cmaj_flt +=
@@ -1191,6 +1256,12 @@ static int wait_task_zombie(struct task_struct *p, int noreap,
 			p->nvcsw + sig->nvcsw + sig->cnvcsw;
 		psig->cnivcsw +=
 			p->nivcsw + sig->nivcsw + sig->cnivcsw;
+		psig->cinblock +=
+			task_io_get_inblock(p) +
+			sig->inblock + sig->cinblock;
+		psig->coublock +=
+			task_io_get_oublock(p) +
+			sig->oublock + sig->coublock;
 		spin_unlock_irq(&p->parent->sighand->siglock);
 	}
 
@@ -1449,6 +1520,7 @@ static long do_wait(pid_t pid, int options, struct siginfo __user *infop,
 	DECLARE_WAITQUEUE(wait, current);
 	struct task_struct *tsk;
 	int flag, retval;
+	int allowed, denied;
 
 	add_wait_queue(&current->signal->wait_chldexit,&wait);
 repeat:
@@ -1457,6 +1529,7 @@ repeat:
 	 * match our criteria, even if we are not able to reap it yet.
 	 */
 	flag = 0;
+	allowed = denied = 0;
 	current->state = TASK_INTERRUPTIBLE;
 	read_lock(&tasklist_lock);
 	tsk = current;
@@ -1471,6 +1544,12 @@ repeat:
 			ret = eligible_child(pid, options, p);
 			if (!ret)
 				continue;
+
+			if (unlikely(ret < 0)) {
+				denied = ret;
+				continue;
+			}
+			allowed = 1;
 
 			switch (p->state) {
 			case TASK_TRACED:
@@ -1570,6 +1649,8 @@ check_continued:
 		goto repeat;
 	}
 	retval = -ECHILD;
+	if (unlikely(denied) && !allowed)
+		retval = denied;
 end:
 	current->state = TASK_RUNNING;
 	remove_wait_queue(&current->signal->wait_chldexit,&wait);

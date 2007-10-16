@@ -252,10 +252,8 @@ static int em28xx_v4l2_open(struct inode *inode, struct file *filp)
 	int minor = iminor(inode);
 	int errCode = 0;
 	struct em28xx *h,*dev = NULL;
-	struct list_head *list;
 
-	list_for_each(list,&em28xx_devlist) {
-		h = list_entry(list, struct em28xx, devlist);
+	list_for_each_entry(h, &em28xx_devlist, devlist) {
 		if (h->vdev->minor == minor) {
 			dev  = h;
 			dev->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -267,8 +265,6 @@ static int em28xx_v4l2_open(struct inode *inode, struct file *filp)
 	}
 	if (NULL == dev)
 		return -ENODEV;
-
-	filp->private_data=dev;
 
 	em28xx_videodbg("open minor=%d type=%s users=%d\n",
 				minor,v4l2_type_names[dev->type],dev->users);
@@ -1729,7 +1725,7 @@ static int em28xx_usb_probe(struct usb_interface *interface,
 
 	endpoint = &interface->cur_altsetting->endpoint[1].desc;
 
-	/* check if the the device has the iso in endpoint at the correct place */
+	/* check if the device has the iso in endpoint at the correct place */
 	if ((endpoint->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK) !=
 	    USB_ENDPOINT_XFER_ISOC) {
 		em28xx_err(DRIVER_NAME " probing error: endpoint is non-ISO endpoint!\n");
@@ -1772,6 +1768,7 @@ static int em28xx_usb_probe(struct usb_interface *interface,
 	if (dev->alt_max_pkt_size == NULL) {
 		em28xx_errdev("out of memory!\n");
 		em28xx_devused&=~(1<<nr);
+		kfree(dev);
 		return -ENOMEM;
 	}
 

@@ -107,11 +107,18 @@ extern char empty_zero_page[PAGE_SIZE];
  * any out-of-bounds memory accesses will hopefully be caught.
  * The vmalloc() routines leaves a hole of 4kB between each vmalloced
  * area for the same reason. ;)
+ * vmalloc area starts at 4GB to prevent syscall table entry exchanging
+ * from modules.
  */
 extern unsigned long vmalloc_end;
-#define VMALLOC_OFFSET  (8*1024*1024)
-#define VMALLOC_START   (((unsigned long) high_memory + VMALLOC_OFFSET) \
-			 & ~(VMALLOC_OFFSET-1))
+
+#ifdef CONFIG_64BIT
+#define VMALLOC_ADDR	(max(0x100000000UL, (unsigned long) high_memory))
+#else
+#define VMALLOC_ADDR	((unsigned long) high_memory)
+#endif
+#define VMALLOC_OFFSET	(8*1024*1024)
+#define VMALLOC_START	((VMALLOC_ADDR + VMALLOC_OFFSET) & ~(VMALLOC_OFFSET-1))
 #define VMALLOC_END	vmalloc_end
 
 /*
@@ -530,14 +537,6 @@ static inline int pte_young(pte_t pte)
 	return 0;
 }
 
-static inline int pte_read(pte_t pte)
-{
-	/* All pages are readable since we don't use the fetch
-	 * protection bit in the storage key.
-	 */
-	return 1;
-}
-
 /*
  * pgd/pmd/pte modification functions
  */
@@ -677,19 +676,6 @@ ptep_clear_flush_young(struct vm_area_struct *vma,
 	return ptep_test_and_clear_young(vma, address, ptep);
 }
 
-static inline int ptep_test_and_clear_dirty(struct vm_area_struct *vma, unsigned long addr, pte_t *ptep)
-{
-	return 0;
-}
-
-static inline int
-ptep_clear_flush_dirty(struct vm_area_struct *vma,
-			unsigned long address, pte_t *ptep)
-{
-	/* No need to flush TLB; bits are in storage key */
-	return ptep_test_and_clear_dirty(vma, address, ptep);
-}
-
 static inline pte_t ptep_get_and_clear(struct mm_struct *mm, unsigned long addr, pte_t *ptep)
 {
 	pte_t pte = *ptep;
@@ -715,16 +701,19 @@ static inline void __ptep_ipte(unsigned long address, pte_t *ptep)
 	pte_val(*ptep) = _PAGE_TYPE_EMPTY;
 }
 
-static inline pte_t
-ptep_clear_flush(struct vm_area_struct *vma,
-		 unsigned long address, pte_t *ptep)
+static inline void ptep_invalidate(unsigned long address, pte_t *ptep)
+{
+	__ptep_ipte(address, ptep);
+	ptep = get_shadow_pte(ptep);
+	if (ptep)
+		__ptep_ipte(address, ptep);
+}
+
+static inline pte_t ptep_clear_flush(struct vm_area_struct *vma,
+				     unsigned long address, pte_t *ptep)
 {
 	pte_t pte = *ptep;
-	pte_t *shadow_pte = get_shadow_pte(ptep);
-
-	__ptep_ipte(address, ptep);
-	if (shadow_pte)
-		__ptep_ipte(address, shadow_pte);
+	ptep_invalidate(address, ptep);
 	return pte;
 }
 
@@ -734,17 +723,15 @@ static inline void ptep_set_wrprotect(struct mm_struct *mm, unsigned long addr, 
 	set_pte_at(mm, addr, ptep, pte_wrprotect(old_pte));
 }
 
-static inline void
-ptep_establish(struct vm_area_struct *vma, 
-	       unsigned long address, pte_t *ptep,
-	       pte_t entry)
-{
-	ptep_clear_flush(vma, address, ptep);
-	set_pte(ptep, entry);
-}
-
-#define ptep_set_access_flags(__vma, __address, __ptep, __entry, __dirty) \
-	ptep_establish(__vma, __address, __ptep, __entry)
+#define ptep_set_access_flags(__vma, __addr, __ptep, __entry, __dirty)	\
+({									\
+	int __changed = !pte_same(*(__ptep), __entry);			\
+	if (__changed) {						\
+		ptep_invalidate(__addr, __ptep);			\
+		set_pte_at((__vma)->vm_mm, __addr, __ptep, __entry);	\
+	}								\
+	__changed;							\
+})
 
 /*
  * Test and clear dirty bit in storage key.
@@ -753,14 +740,14 @@ ptep_establish(struct vm_area_struct *vma,
  * should therefore only be called if it is not mapped in any
  * address space.
  */
-static inline int page_test_and_clear_dirty(struct page *page)
+static inline int page_test_dirty(struct page *page)
 {
-	unsigned long physpage = page_to_phys(page);
-	int skey = page_get_storage_key(physpage);
+	return (page_get_storage_key(page_to_phys(page)) & _PAGE_CHANGED) != 0;
+}
 
-	if (skey & _PAGE_CHANGED)
-		page_set_storage_key(physpage, skey & ~_PAGE_CHANGED);
-	return skey & _PAGE_CHANGED;
+static inline void page_clear_dirty(struct page *page)
+{
+	page_set_storage_key(page_to_phys(page), PAGE_DEFAULT_KEY);
 }
 
 /*
@@ -943,17 +930,15 @@ extern int remove_shared_memory(unsigned long start, unsigned long size);
 #define __HAVE_ARCH_MEMMAP_INIT
 extern void memmap_init(unsigned long, int, unsigned long, unsigned long);
 
-#define __HAVE_ARCH_PTEP_ESTABLISH
 #define __HAVE_ARCH_PTEP_SET_ACCESS_FLAGS
 #define __HAVE_ARCH_PTEP_TEST_AND_CLEAR_YOUNG
 #define __HAVE_ARCH_PTEP_CLEAR_YOUNG_FLUSH
-#define __HAVE_ARCH_PTEP_TEST_AND_CLEAR_DIRTY
-#define __HAVE_ARCH_PTEP_CLEAR_DIRTY_FLUSH
 #define __HAVE_ARCH_PTEP_GET_AND_CLEAR
 #define __HAVE_ARCH_PTEP_CLEAR_FLUSH
 #define __HAVE_ARCH_PTEP_SET_WRPROTECT
 #define __HAVE_ARCH_PTE_SAME
-#define __HAVE_ARCH_PAGE_TEST_AND_CLEAR_DIRTY
+#define __HAVE_ARCH_PAGE_TEST_DIRTY
+#define __HAVE_ARCH_PAGE_CLEAR_DIRTY
 #define __HAVE_ARCH_PAGE_TEST_AND_CLEAR_YOUNG
 #include <asm-generic/pgtable.h>
 

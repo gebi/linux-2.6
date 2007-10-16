@@ -1,7 +1,8 @@
 /*
- * Network device driver for Cell Processor-Based Blade
+ * Network device driver for Cell Processor-Based Blade and Celleb platform
  *
  * (C) Copyright IBM Corp. 2005
+ * (C) Copyright 2006 TOSHIBA CORPORATION
  *
  * Authors : Utz Bacher <utz.bacher@de.ibm.com>
  *           Jens Osterkamp <Jens.Osterkamp@de.ibm.com>
@@ -166,6 +167,39 @@ spider_net_read_phy(struct net_device *netdev, int mii_id, int reg)
 }
 
 /**
+ * spider_net_setup_aneg - initial auto-negotiation setup
+ * @card: device structure
+ **/
+static void
+spider_net_setup_aneg(struct spider_net_card *card)
+{
+	struct mii_phy *phy = &card->phy;
+	u32 advertise = 0;
+	u16 bmsr, estat;
+
+	bmsr  = spider_net_read_phy(card->netdev, phy->mii_id, MII_BMSR);
+	estat = spider_net_read_phy(card->netdev, phy->mii_id, MII_ESTATUS);
+
+	if (bmsr & BMSR_10HALF)
+		advertise |= ADVERTISED_10baseT_Half;
+	if (bmsr & BMSR_10FULL)
+		advertise |= ADVERTISED_10baseT_Full;
+	if (bmsr & BMSR_100HALF)
+		advertise |= ADVERTISED_100baseT_Half;
+	if (bmsr & BMSR_100FULL)
+		advertise |= ADVERTISED_100baseT_Full;
+
+	if ((bmsr & BMSR_ESTATEN) && (estat & ESTATUS_1000_TFULL))
+		advertise |= SUPPORTED_1000baseT_Full;
+	if ((bmsr & BMSR_ESTATEN) && (estat & ESTATUS_1000_THALF))
+		advertise |= SUPPORTED_1000baseT_Half;
+
+	mii_phy_probe(phy, phy->mii_id);
+	phy->def->ops->setup_aneg(phy, advertise);
+
+}
+
+/**
  * spider_net_rx_irq_off - switch off rx irq on this spider card
  * @card: device structure
  *
@@ -263,9 +297,9 @@ spider_net_get_mac_address(struct net_device *netdev)
  * returns the status as in the dmac_cmd_status field of the descriptor
  */
 static inline int
-spider_net_get_descr_status(struct spider_net_descr *descr)
+spider_net_get_descr_status(struct spider_net_hw_descr *hwdescr)
 {
-	return descr->dmac_cmd_status & SPIDER_NET_DESCR_IND_PROC_MASK;
+	return hwdescr->dmac_cmd_status & SPIDER_NET_DESCR_IND_PROC_MASK;
 }
 
 /**
@@ -283,12 +317,12 @@ spider_net_free_chain(struct spider_net_card *card,
 	descr = chain->ring;
 	do {
 		descr->bus_addr = 0;
-		descr->next_descr_addr = 0;
+		descr->hwdescr->next_descr_addr = 0;
 		descr = descr->next;
 	} while (descr != chain->ring);
 
 	dma_free_coherent(&card->pdev->dev, chain->num_desc,
-	    chain->ring, chain->dma_addr);
+	    chain->hwring, chain->dma_addr);
 }
 
 /**
@@ -307,31 +341,34 @@ spider_net_init_chain(struct spider_net_card *card,
 {
 	int i;
 	struct spider_net_descr *descr;
+	struct spider_net_hw_descr *hwdescr;
 	dma_addr_t buf;
 	size_t alloc_size;
 
-	alloc_size = chain->num_desc * sizeof (struct spider_net_descr);
+	alloc_size = chain->num_desc * sizeof(struct spider_net_hw_descr);
 
-	chain->ring = dma_alloc_coherent(&card->pdev->dev, alloc_size,
+	chain->hwring = dma_alloc_coherent(&card->pdev->dev, alloc_size,
 		&chain->dma_addr, GFP_KERNEL);
 
-	if (!chain->ring)
+	if (!chain->hwring)
 		return -ENOMEM;
 
-	descr = chain->ring;
-	memset(descr, 0, alloc_size);
+	memset(chain->ring, 0, chain->num_desc * sizeof(struct spider_net_descr));
 
 	/* Set up the hardware pointers in each descriptor */
+	descr = chain->ring;
+	hwdescr = chain->hwring;
 	buf = chain->dma_addr;
-	for (i=0; i < chain->num_desc; i++, descr++) {
-		descr->dmac_cmd_status = SPIDER_NET_DESCR_NOT_IN_USE;
+	for (i=0; i < chain->num_desc; i++, descr++, hwdescr++) {
+		hwdescr->dmac_cmd_status = SPIDER_NET_DESCR_NOT_IN_USE;
+		hwdescr->next_descr_addr = 0;
 
+		descr->hwdescr = hwdescr;
 		descr->bus_addr = buf;
-		descr->next_descr_addr = 0;
 		descr->next = descr + 1;
 		descr->prev = descr - 1;
 
-		buf += sizeof(struct spider_net_descr);
+		buf += sizeof(struct spider_net_hw_descr);
 	}
 	/* do actual circular list */
 	(descr-1)->next = chain->ring;
@@ -357,10 +394,11 @@ spider_net_free_rx_chain_contents(struct spider_net_card *card)
 	descr = card->rx_chain.head;
 	do {
 		if (descr->skb) {
-			dev_kfree_skb(descr->skb);
-			pci_unmap_single(card->pdev, descr->buf_addr,
+			pci_unmap_single(card->pdev, descr->hwdescr->buf_addr,
 					 SPIDER_NET_MAX_FRAME,
 					 PCI_DMA_BIDIRECTIONAL);
+			dev_kfree_skb(descr->skb);
+			descr->skb = NULL;
 		}
 		descr = descr->next;
 	} while (descr != card->rx_chain.head);
@@ -380,6 +418,7 @@ static int
 spider_net_prepare_rx_descr(struct spider_net_card *card,
 			    struct spider_net_descr *descr)
 {
+	struct spider_net_hw_descr *hwdescr = descr->hwdescr;
 	dma_addr_t buf;
 	int offset;
 	int bufsize;
@@ -391,18 +430,20 @@ spider_net_prepare_rx_descr(struct spider_net_card *card,
 	/* and we need to have it 128 byte aligned, therefore we allocate a
 	 * bit more */
 	/* allocate an skb */
-	descr->skb = dev_alloc_skb(bufsize + SPIDER_NET_RXBUF_ALIGN - 1);
+	descr->skb = netdev_alloc_skb(card->netdev,
+				      bufsize + SPIDER_NET_RXBUF_ALIGN - 1);
 	if (!descr->skb) {
 		if (netif_msg_rx_err(card) && net_ratelimit())
-			pr_err("Not enough memory to allocate rx buffer\n");
+			dev_err(&card->netdev->dev,
+			        "Not enough memory to allocate rx buffer\n");
 		card->spider_stats.alloc_rx_skb_error++;
 		return -ENOMEM;
 	}
-	descr->buf_size = bufsize;
-	descr->result_size = 0;
-	descr->valid_size = 0;
-	descr->data_status = 0;
-	descr->data_error = 0;
+	hwdescr->buf_size = bufsize;
+	hwdescr->result_size = 0;
+	hwdescr->valid_size = 0;
+	hwdescr->data_status = 0;
+	hwdescr->data_error = 0;
 
 	offset = ((unsigned long)descr->skb->data) &
 		(SPIDER_NET_RXBUF_ALIGN - 1);
@@ -411,21 +452,18 @@ spider_net_prepare_rx_descr(struct spider_net_card *card,
 	/* iommu-map the skb */
 	buf = pci_map_single(card->pdev, descr->skb->data,
 			SPIDER_NET_MAX_FRAME, PCI_DMA_FROMDEVICE);
-	descr->buf_addr = buf;
 	if (pci_dma_mapping_error(buf)) {
 		dev_kfree_skb_any(descr->skb);
+		descr->skb = NULL;
 		if (netif_msg_rx_err(card) && net_ratelimit())
-			pr_err("Could not iommu-map rx buffer\n");
+			dev_err(&card->netdev->dev, "Could not iommu-map rx buffer\n");
 		card->spider_stats.rx_iommu_map_error++;
-		descr->dmac_cmd_status = SPIDER_NET_DESCR_NOT_IN_USE;
+		hwdescr->dmac_cmd_status = SPIDER_NET_DESCR_NOT_IN_USE;
 	} else {
-		descr->next_descr_addr = 0;
+		hwdescr->buf_addr = buf;
 		wmb();
-		descr->dmac_cmd_status = SPIDER_NET_DESCR_CARDOWNED |
+		hwdescr->dmac_cmd_status = SPIDER_NET_DESCR_CARDOWNED |
 					 SPIDER_NET_DMAC_NOINTR_COMPLETE;
-
-		wmb();
-		descr->prev->next_descr_addr = descr->bus_addr;
 	}
 
 	return 0;
@@ -463,6 +501,20 @@ spider_net_enable_rxdmac(struct spider_net_card *card)
 }
 
 /**
+ * spider_net_disable_rxdmac - disables the receive DMA controller
+ * @card: card structure
+ *
+ * spider_net_disable_rxdmac terminates processing on the DMA controller
+ * by turing off the DMA controller, with the force-end flag set.
+ */
+static inline void
+spider_net_disable_rxdmac(struct spider_net_card *card)
+{
+	spider_net_write_reg(card, SPIDER_NET_GDADMACCNTR,
+			     SPIDER_NET_DMA_RX_FEND_VALUE);
+}
+
+/**
  * spider_net_refill_rx_chain - refills descriptors/skbs in the rx chains
  * @card: card structure
  *
@@ -481,7 +533,7 @@ spider_net_refill_rx_chain(struct spider_net_card *card)
 	if (!spin_trylock_irqsave(&chain->lock, flags))
 		return;
 
-	while (spider_net_get_descr_status(chain->head) ==
+	while (spider_net_get_descr_status(chain->head->hwdescr) ==
 			SPIDER_NET_DESCR_NOT_IN_USE) {
 		if (spider_net_prepare_rx_descr(card, chain->head))
 			break;
@@ -500,12 +552,16 @@ spider_net_refill_rx_chain(struct spider_net_card *card)
 static int
 spider_net_alloc_rx_skbs(struct spider_net_card *card)
 {
-	int result;
-	struct spider_net_descr_chain *chain;
+	struct spider_net_descr_chain *chain = &card->rx_chain;
+	struct spider_net_descr *start = chain->tail;
+	struct spider_net_descr *descr = start;
 
-	result = -ENOMEM;
+	/* Link up the hardware chain pointers */
+	do {
+		descr->prev->hwdescr->next_descr_addr = descr->bus_addr;
+		descr = descr->next;
+	} while (descr != start);
 
-	chain = &card->rx_chain;
 	/* Put at least one buffer into the chain. if this fails,
 	 * we've got a problem. If not, spider_net_refill_rx_chain
 	 * will do the rest at the end of this function. */
@@ -522,7 +578,7 @@ spider_net_alloc_rx_skbs(struct spider_net_card *card)
 
 error:
 	spider_net_free_rx_chain_contents(card);
-	return result;
+	return -ENOMEM;
 }
 
 /**
@@ -614,20 +670,6 @@ write_hash:
 }
 
 /**
- * spider_net_disable_rxdmac - disables the receive DMA controller
- * @card: card structure
- *
- * spider_net_disable_rxdmac terminates processing on the DMA controller by
- * turing off DMA and issueing a force end
- */
-static void
-spider_net_disable_rxdmac(struct spider_net_card *card)
-{
-	spider_net_write_reg(card, SPIDER_NET_GDADMACCNTR,
-			     SPIDER_NET_DMA_RX_FEND_VALUE);
-}
-
-/**
  * spider_net_prepare_tx_descr - fill tx descriptor with skb data
  * @card: card structure
  * @descr: descriptor structure to fill out
@@ -642,45 +684,54 @@ static int
 spider_net_prepare_tx_descr(struct spider_net_card *card,
 			    struct sk_buff *skb)
 {
+	struct spider_net_descr_chain *chain = &card->tx_chain;
 	struct spider_net_descr *descr;
+	struct spider_net_hw_descr *hwdescr;
 	dma_addr_t buf;
 	unsigned long flags;
 
 	buf = pci_map_single(card->pdev, skb->data, skb->len, PCI_DMA_TODEVICE);
 	if (pci_dma_mapping_error(buf)) {
 		if (netif_msg_tx_err(card) && net_ratelimit())
-			pr_err("could not iommu-map packet (%p, %i). "
+			dev_err(&card->netdev->dev, "could not iommu-map packet (%p, %i). "
 				  "Dropping packet\n", skb->data, skb->len);
 		card->spider_stats.tx_iommu_map_error++;
 		return -ENOMEM;
 	}
 
-	spin_lock_irqsave(&card->tx_chain.lock, flags);
+	spin_lock_irqsave(&chain->lock, flags);
 	descr = card->tx_chain.head;
-	card->tx_chain.head = descr->next;
+	if (descr->next == chain->tail->prev) {
+		spin_unlock_irqrestore(&chain->lock, flags);
+		pci_unmap_single(card->pdev, buf, skb->len, PCI_DMA_TODEVICE);
+		return -ENOMEM;
+	}
+	hwdescr = descr->hwdescr;
+	chain->head = descr->next;
 
-	descr->buf_addr = buf;
-	descr->buf_size = skb->len;
-	descr->next_descr_addr = 0;
 	descr->skb = skb;
-	descr->data_status = 0;
+	hwdescr->buf_addr = buf;
+	hwdescr->buf_size = skb->len;
+	hwdescr->next_descr_addr = 0;
+	hwdescr->data_status = 0;
 
-	descr->dmac_cmd_status =
-			SPIDER_NET_DESCR_CARDOWNED | SPIDER_NET_DMAC_NOCS;
-	spin_unlock_irqrestore(&card->tx_chain.lock, flags);
+	hwdescr->dmac_cmd_status =
+			SPIDER_NET_DESCR_CARDOWNED | SPIDER_NET_DMAC_TXFRMTL;
+	spin_unlock_irqrestore(&chain->lock, flags);
 
-	if (skb->protocol == htons(ETH_P_IP))
-		switch (skb->nh.iph->protocol) {
+	if (skb->ip_summed == CHECKSUM_PARTIAL)
+		switch (ip_hdr(skb)->protocol) {
 		case IPPROTO_TCP:
-			descr->dmac_cmd_status |= SPIDER_NET_DMAC_TCP;
+			hwdescr->dmac_cmd_status |= SPIDER_NET_DMAC_TCP;
 			break;
 		case IPPROTO_UDP:
-			descr->dmac_cmd_status |= SPIDER_NET_DMAC_UDP;
+			hwdescr->dmac_cmd_status |= SPIDER_NET_DMAC_UDP;
 			break;
 		}
 
 	/* Chain the bus address, so that the DMA engine finds this descr. */
-	descr->prev->next_descr_addr = descr->bus_addr;
+	wmb();
+	descr->prev->hwdescr->next_descr_addr = descr->bus_addr;
 
 	card->netdev->trans_start = jiffies; /* set netdev watchdog timer */
 	return 0;
@@ -689,16 +740,17 @@ spider_net_prepare_tx_descr(struct spider_net_card *card,
 static int
 spider_net_set_low_watermark(struct spider_net_card *card)
 {
+	struct spider_net_descr *descr = card->tx_chain.tail;
+	struct spider_net_hw_descr *hwdescr;
 	unsigned long flags;
 	int status;
 	int cnt=0;
 	int i;
-	struct spider_net_descr *descr = card->tx_chain.tail;
 
 	/* Measure the length of the queue. Measurement does not
 	 * need to be precise -- does not need a lock. */
 	while (descr != card->tx_chain.head) {
-		status = descr->dmac_cmd_status & SPIDER_NET_DESCR_NOT_IN_USE;
+		status = descr->hwdescr->dmac_cmd_status & SPIDER_NET_DESCR_NOT_IN_USE;
 		if (status == SPIDER_NET_DESCR_NOT_IN_USE)
 			break;
 		descr = descr->next;
@@ -717,10 +769,12 @@ spider_net_set_low_watermark(struct spider_net_card *card)
 
 	/* Set the new watermark, clear the old watermark */
 	spin_lock_irqsave(&card->tx_chain.lock, flags);
-	descr->dmac_cmd_status |= SPIDER_NET_DESCR_TXDESFLG;
-	if (card->low_watermark && card->low_watermark != descr)
-		card->low_watermark->dmac_cmd_status =
-		     card->low_watermark->dmac_cmd_status & ~SPIDER_NET_DESCR_TXDESFLG;
+	descr->hwdescr->dmac_cmd_status |= SPIDER_NET_DESCR_TXDESFLG;
+	if (card->low_watermark && card->low_watermark != descr) {
+		hwdescr = card->low_watermark->hwdescr;
+		hwdescr->dmac_cmd_status =
+		     hwdescr->dmac_cmd_status & ~SPIDER_NET_DESCR_TXDESFLG;
+	}
 	card->low_watermark = descr;
 	spin_unlock_irqrestore(&card->tx_chain.lock, flags);
 	return cnt;
@@ -741,22 +795,29 @@ spider_net_set_low_watermark(struct spider_net_card *card)
 static int
 spider_net_release_tx_chain(struct spider_net_card *card, int brutal)
 {
+	struct net_device *dev = card->netdev;
 	struct spider_net_descr_chain *chain = &card->tx_chain;
 	struct spider_net_descr *descr;
+	struct spider_net_hw_descr *hwdescr;
 	struct sk_buff *skb;
 	u32 buf_addr;
 	unsigned long flags;
 	int status;
 
-	while (chain->tail != chain->head) {
+	while (1) {
 		spin_lock_irqsave(&chain->lock, flags);
+		if (chain->tail == chain->head) {
+			spin_unlock_irqrestore(&chain->lock, flags);
+			return 0;
+		}
 		descr = chain->tail;
+		hwdescr = descr->hwdescr;
 
-		status = spider_net_get_descr_status(descr);
+		status = spider_net_get_descr_status(hwdescr);
 		switch (status) {
 		case SPIDER_NET_DESCR_COMPLETE:
-			card->netdev_stats.tx_packets++;
-			card->netdev_stats.tx_bytes += descr->skb->len;
+			dev->stats.tx_packets++;
+			dev->stats.tx_bytes += descr->skb->len;
 			break;
 
 		case SPIDER_NET_DESCR_CARDOWNED:
@@ -773,14 +834,13 @@ spider_net_release_tx_chain(struct spider_net_card *card, int brutal)
 		case SPIDER_NET_DESCR_PROTECTION_ERROR:
 		case SPIDER_NET_DESCR_FORCE_END:
 			if (netif_msg_tx_err(card))
-				pr_err("%s: forcing end of tx descriptor "
-				       "with status x%02x\n",
-				       card->netdev->name, status);
-			card->netdev_stats.tx_errors++;
+				dev_err(&card->netdev->dev, "forcing end of tx descriptor "
+				       "with status x%02x\n", status);
+			dev->stats.tx_errors++;
 			break;
 
 		default:
-			card->netdev_stats.tx_dropped++;
+			dev->stats.tx_dropped++;
 			if (!brutal) {
 				spin_unlock_irqrestore(&chain->lock, flags);
 				return 1;
@@ -788,9 +848,10 @@ spider_net_release_tx_chain(struct spider_net_card *card, int brutal)
 		}
 
 		chain->tail = descr->next;
-		descr->dmac_cmd_status |= SPIDER_NET_DESCR_NOT_IN_USE;
+		hwdescr->dmac_cmd_status |= SPIDER_NET_DESCR_NOT_IN_USE;
 		skb = descr->skb;
-		buf_addr = descr->buf_addr;
+		descr->skb = NULL;
+		buf_addr = hwdescr->buf_addr;
 		spin_unlock_irqrestore(&chain->lock, flags);
 
 		/* unmap the skb */
@@ -826,7 +887,7 @@ spider_net_kick_tx_dma(struct spider_net_card *card)
 
 	descr = card->tx_chain.tail;
 	for (;;) {
-		if (spider_net_get_descr_status(descr) ==
+		if (spider_net_get_descr_status(descr->hwdescr) ==
 				SPIDER_NET_DESCR_CARDOWNED) {
 			spider_net_write_reg(card, SPIDER_NET_GDTDCHA,
 					descr->bus_addr);
@@ -855,14 +916,11 @@ spider_net_xmit(struct sk_buff *skb, struct net_device *netdev)
 {
 	int cnt;
 	struct spider_net_card *card = netdev_priv(netdev);
-	struct spider_net_descr_chain *chain = &card->tx_chain;
 
 	spider_net_release_tx_chain(card, 0);
 
-	if ((chain->head->next == chain->tail->prev) ||
-	   (spider_net_prepare_tx_descr(card, skb) != 0)) {
-
-		card->netdev_stats.tx_dropped++;
+	if (spider_net_prepare_tx_descr(card, skb) != 0) {
+		netdev->stats.tx_dropped++;
 		netif_stop_queue(netdev);
 		return NETDEV_TX_BUSY;
 	}
@@ -922,17 +980,13 @@ static void
 spider_net_pass_skb_up(struct spider_net_descr *descr,
 		       struct spider_net_card *card)
 {
-	struct sk_buff *skb;
-	struct net_device *netdev;
-	u32 data_status, data_error;
+	struct spider_net_hw_descr *hwdescr = descr->hwdescr;
+	struct sk_buff *skb = descr->skb;
+	struct net_device *netdev = card->netdev;
+	u32 data_status = hwdescr->data_status;
+	u32 data_error = hwdescr->data_error;
 
-	data_status = descr->data_status;
-	data_error = descr->data_error;
-	netdev = card->netdev;
-
-	skb = descr->skb;
-	skb->dev = netdev;
-	skb_put(skb, descr->valid_size);
+	skb_put(skb, hwdescr->valid_size);
 
 	/* the card seems to add 2 bytes of junk in front
 	 * of the ethernet frame */
@@ -957,60 +1011,184 @@ spider_net_pass_skb_up(struct spider_net_descr *descr,
 		 */
 	}
 
+	/* update netdevice statistics */
+	netdev->stats.rx_packets++;
+	netdev->stats.rx_bytes += skb->len;
+
 	/* pass skb up to stack */
 	netif_receive_skb(skb);
-
-	/* update netdevice statistics */
-	card->netdev_stats.rx_packets++;
-	card->netdev_stats.rx_bytes += skb->len;
 }
 
-#ifdef DEBUG
 static void show_rx_chain(struct spider_net_card *card)
 {
 	struct spider_net_descr_chain *chain = &card->rx_chain;
 	struct spider_net_descr *start= chain->tail;
 	struct spider_net_descr *descr= start;
+	struct spider_net_hw_descr *hwd = start->hwdescr;
+	struct device *dev = &card->netdev->dev;
+	u32 curr_desc, next_desc;
 	int status;
 
+	int tot = 0;
 	int cnt = 0;
-	int cstat = spider_net_get_descr_status(descr);
-	printk(KERN_INFO "RX chain tail at descr=%ld\n",
-	     (start - card->descr) - card->tx_chain.num_desc);
+	int off = start - chain->ring;
+	int cstat = hwd->dmac_cmd_status;
+
+	dev_info(dev, "Total number of descrs=%d\n",
+		chain->num_desc);
+	dev_info(dev, "Chain tail located at descr=%d, status=0x%x\n",
+		off, cstat);
+
+	curr_desc = spider_net_read_reg(card, SPIDER_NET_GDACTDPA);
+	next_desc = spider_net_read_reg(card, SPIDER_NET_GDACNEXTDA);
+
 	status = cstat;
 	do
 	{
-		status = spider_net_get_descr_status(descr);
+		hwd = descr->hwdescr;
+		off = descr - chain->ring;
+		status = hwd->dmac_cmd_status;
+
+		if (descr == chain->head)
+			dev_info(dev, "Chain head is at %d, head status=0x%x\n",
+			         off, status);
+
+		if (curr_desc == descr->bus_addr)
+			dev_info(dev, "HW curr desc (GDACTDPA) is at %d, status=0x%x\n",
+			         off, status);
+
+		if (next_desc == descr->bus_addr)
+			dev_info(dev, "HW next desc (GDACNEXTDA) is at %d, status=0x%x\n",
+			         off, status);
+
+		if (hwd->next_descr_addr == 0)
+			dev_info(dev, "chain is cut at %d\n", off);
+
 		if (cstat != status) {
-			printk(KERN_INFO "Have %d descrs with stat=x%08x\n", cnt, cstat);
+			int from = (chain->num_desc + off - cnt) % chain->num_desc;
+			int to = (chain->num_desc + off - 1) % chain->num_desc;
+			dev_info(dev, "Have %d (from %d to %d) descrs "
+			         "with stat=0x%08x\n", cnt, from, to, cstat);
 			cstat = status;
 			cnt = 0;
 		}
+
 		cnt ++;
+		tot ++;
 		descr = descr->next;
 	} while (descr != start);
-	printk(KERN_INFO "Last %d descrs with stat=x%08x\n", cnt, cstat);
-}
+
+	dev_info(dev, "Last %d descrs with stat=0x%08x "
+	         "for a total of %d descrs\n", cnt, cstat, tot);
+
+#ifdef DEBUG
+	/* Now dump the whole ring */
+	descr = start;
+	do
+	{
+		struct spider_net_hw_descr *hwd = descr->hwdescr;
+		status = spider_net_get_descr_status(hwd);
+		cnt = descr - chain->ring;
+		dev_info(dev, "Descr %d stat=0x%08x skb=%p\n",
+		         cnt, status, descr->skb);
+		dev_info(dev, "bus addr=%08x buf addr=%08x sz=%d\n",
+		         descr->bus_addr, hwd->buf_addr, hwd->buf_size);
+		dev_info(dev, "next=%08x result sz=%d valid sz=%d\n",
+		         hwd->next_descr_addr, hwd->result_size,
+		         hwd->valid_size);
+		dev_info(dev, "dmac=%08x data stat=%08x data err=%08x\n",
+		         hwd->dmac_cmd_status, hwd->data_status,
+		         hwd->data_error);
+		dev_info(dev, "\n");
+
+		descr = descr->next;
+	} while (descr != start);
 #endif
 
+}
+
 /**
- * spider_net_decode_one_descr - processes an rx descriptor
+ * spider_net_resync_head_ptr - Advance head ptr past empty descrs
+ *
+ * If the driver fails to keep up and empty the queue, then the
+ * hardware wil run out of room to put incoming packets. This
+ * will cause the hardware to skip descrs that are full (instead
+ * of halting/retrying). Thus, once the driver runs, it wil need
+ * to "catch up" to where the hardware chain pointer is at.
+ */
+static void spider_net_resync_head_ptr(struct spider_net_card *card)
+{
+	unsigned long flags;
+	struct spider_net_descr_chain *chain = &card->rx_chain;
+	struct spider_net_descr *descr;
+	int i, status;
+
+	/* Advance head pointer past any empty descrs */
+	descr = chain->head;
+	status = spider_net_get_descr_status(descr->hwdescr);
+
+	if (status == SPIDER_NET_DESCR_NOT_IN_USE)
+		return;
+
+	spin_lock_irqsave(&chain->lock, flags);
+
+	descr = chain->head;
+	status = spider_net_get_descr_status(descr->hwdescr);
+	for (i=0; i<chain->num_desc; i++) {
+		if (status != SPIDER_NET_DESCR_CARDOWNED) break;
+		descr = descr->next;
+		status = spider_net_get_descr_status(descr->hwdescr);
+	}
+	chain->head = descr;
+
+	spin_unlock_irqrestore(&chain->lock, flags);
+}
+
+static int spider_net_resync_tail_ptr(struct spider_net_card *card)
+{
+	struct spider_net_descr_chain *chain = &card->rx_chain;
+	struct spider_net_descr *descr;
+	int i, status;
+
+	/* Advance tail pointer past any empty and reaped descrs */
+	descr = chain->tail;
+	status = spider_net_get_descr_status(descr->hwdescr);
+
+	for (i=0; i<chain->num_desc; i++) {
+		if ((status != SPIDER_NET_DESCR_CARDOWNED) &&
+		    (status != SPIDER_NET_DESCR_NOT_IN_USE)) break;
+		descr = descr->next;
+		status = spider_net_get_descr_status(descr->hwdescr);
+	}
+	chain->tail = descr;
+
+	if ((i == chain->num_desc) || (i == 0))
+		return 1;
+	return 0;
+}
+
+/**
+ * spider_net_decode_one_descr - processes an RX descriptor
  * @card: card structure
  *
- * Returns 1 if a packet has been sent to the stack, otherwise 0
+ * Returns 1 if a packet has been sent to the stack, otherwise 0.
  *
- * Processes an rx descriptor by iommu-unmapping the data buffer and passing
- * the packet up to the stack. This function is called in softirq
- * context, e.g. either bottom half from interrupt or NAPI polling context
+ * Processes an RX descriptor by iommu-unmapping the data buffer
+ * and passing the packet up to the stack. This function is called
+ * in softirq context, e.g. either bottom half from interrupt or
+ * NAPI polling context.
  */
 static int
 spider_net_decode_one_descr(struct spider_net_card *card)
 {
+	struct net_device *dev = card->netdev;
 	struct spider_net_descr_chain *chain = &card->rx_chain;
 	struct spider_net_descr *descr = chain->tail;
+	struct spider_net_hw_descr *hwdescr = descr->hwdescr;
+	u32 hw_buf_addr;
 	int status;
 
-	status = spider_net_get_descr_status(descr);
+	status = spider_net_get_descr_status(hwdescr);
 
 	/* Nothing in the descriptor, or ring must be empty */
 	if ((status == SPIDER_NET_DESCR_CARDOWNED) ||
@@ -1021,50 +1199,50 @@ spider_net_decode_one_descr(struct spider_net_card *card)
 	chain->tail = descr->next;
 
 	/* unmap descriptor */
-	pci_unmap_single(card->pdev, descr->buf_addr,
+	hw_buf_addr = hwdescr->buf_addr;
+	hwdescr->buf_addr = 0xffffffff;
+	pci_unmap_single(card->pdev, hw_buf_addr,
 			SPIDER_NET_MAX_FRAME, PCI_DMA_FROMDEVICE);
 
 	if ( (status == SPIDER_NET_DESCR_RESPONSE_ERROR) ||
 	     (status == SPIDER_NET_DESCR_PROTECTION_ERROR) ||
 	     (status == SPIDER_NET_DESCR_FORCE_END) ) {
 		if (netif_msg_rx_err(card))
-			pr_err("%s: dropping RX descriptor with state %d\n",
-			       card->netdev->name, status);
-		card->netdev_stats.rx_dropped++;
+			dev_err(&dev->dev,
+			       "dropping RX descriptor with state %d\n", status);
+		dev->stats.rx_dropped++;
 		goto bad_desc;
 	}
 
 	if ( (status != SPIDER_NET_DESCR_COMPLETE) &&
 	     (status != SPIDER_NET_DESCR_FRAME_END) ) {
 		if (netif_msg_rx_err(card))
-			pr_err("%s: RX descriptor with unkown state %d\n",
-			       card->netdev->name, status);
+			dev_err(&card->netdev->dev,
+			       "RX descriptor with unknown state %d\n", status);
 		card->spider_stats.rx_desc_unk_state++;
 		goto bad_desc;
 	}
 
 	/* The cases we'll throw away the packet immediately */
-	if (descr->data_error & SPIDER_NET_DESTROY_RX_FLAGS) {
+	if (hwdescr->data_error & SPIDER_NET_DESTROY_RX_FLAGS) {
 		if (netif_msg_rx_err(card))
-			pr_err("%s: error in received descriptor found, "
+			dev_err(&card->netdev->dev,
+			       "error in received descriptor found, "
 			       "data_status=x%08x, data_error=x%08x\n",
-			       card->netdev->name,
-			       descr->data_status, descr->data_error);
+			       hwdescr->data_status, hwdescr->data_error);
 		goto bad_desc;
 	}
 
-	if (descr->dmac_cmd_status & 0xfefe) {
-		pr_err("%s: bad status, cmd_status=x%08x\n",
-			       card->netdev->name,
-			       descr->dmac_cmd_status);
-		pr_err("buf_addr=x%08x\n", descr->buf_addr);
-		pr_err("buf_size=x%08x\n", descr->buf_size);
-		pr_err("next_descr_addr=x%08x\n", descr->next_descr_addr);
-		pr_err("result_size=x%08x\n", descr->result_size);
-		pr_err("valid_size=x%08x\n", descr->valid_size);
-		pr_err("data_status=x%08x\n", descr->data_status);
-		pr_err("data_error=x%08x\n", descr->data_error);
-		pr_err("bus_addr=x%08x\n", descr->bus_addr);
+	if (hwdescr->dmac_cmd_status & SPIDER_NET_DESCR_BAD_STATUS) {
+		dev_err(&card->netdev->dev, "bad status, cmd_status=x%08x\n",
+			       hwdescr->dmac_cmd_status);
+		pr_err("buf_addr=x%08x\n", hw_buf_addr);
+		pr_err("buf_size=x%08x\n", hwdescr->buf_size);
+		pr_err("next_descr_addr=x%08x\n", hwdescr->next_descr_addr);
+		pr_err("result_size=x%08x\n", hwdescr->result_size);
+		pr_err("valid_size=x%08x\n", hwdescr->valid_size);
+		pr_err("data_status=x%08x\n", hwdescr->data_status);
+		pr_err("data_error=x%08x\n", hwdescr->data_error);
 		pr_err("which=%ld\n", descr - card->rx_chain.ring);
 
 		card->spider_stats.rx_desc_error++;
@@ -1073,12 +1251,16 @@ spider_net_decode_one_descr(struct spider_net_card *card)
 
 	/* Ok, we've got a packet in descr */
 	spider_net_pass_skb_up(descr, card);
-	descr->dmac_cmd_status = SPIDER_NET_DESCR_NOT_IN_USE;
+	descr->skb = NULL;
+	hwdescr->dmac_cmd_status = SPIDER_NET_DESCR_NOT_IN_USE;
 	return 1;
 
 bad_desc:
+	if (netif_msg_rx_err(card))
+		show_rx_chain(card);
 	dev_kfree_skb_irq(descr->skb);
-	descr->dmac_cmd_status = SPIDER_NET_DESCR_NOT_IN_USE;
+	descr->skb = NULL;
+	hwdescr->dmac_cmd_status = SPIDER_NET_DESCR_NOT_IN_USE;
 	return 0;
 }
 
@@ -1094,92 +1276,40 @@ bad_desc:
  * (using netif_receive_skb). If all/enough packets are up, the driver
  * reenables interrupts and returns 0. If not, 1 is returned.
  */
-static int
-spider_net_poll(struct net_device *netdev, int *budget)
+static int spider_net_poll(struct napi_struct *napi, int budget)
 {
-	struct spider_net_card *card = netdev_priv(netdev);
-	int packets_to_do, packets_done = 0;
-	int no_more_packets = 0;
+	struct spider_net_card *card = container_of(napi, struct spider_net_card, napi);
+	struct net_device *netdev = card->netdev;
+	int packets_done = 0;
 
-	spider_net_cleanup_tx_ring(card);
-	packets_to_do = min(*budget, netdev->quota);
-
-	while (packets_to_do) {
-		if (spider_net_decode_one_descr(card)) {
-			packets_done++;
-			packets_to_do--;
-		} else {
-			/* no more packets for the stack */
-			no_more_packets = 1;
+	while (packets_done < budget) {
+		if (!spider_net_decode_one_descr(card))
 			break;
-		}
+
+		packets_done++;
 	}
 
-	netdev->quota -= packets_done;
-	*budget -= packets_done;
+	if ((packets_done == 0) && (card->num_rx_ints != 0)) {
+		if (!spider_net_resync_tail_ptr(card))
+			packets_done = budget;
+		spider_net_resync_head_ptr(card);
+	}
+	card->num_rx_ints = 0;
+
 	spider_net_refill_rx_chain(card);
 	spider_net_enable_rxdmac(card);
 
+	spider_net_cleanup_tx_ring(card);
+
 	/* if all packets are in the stack, enable interrupts and return 0 */
 	/* if not, return 1 */
-	if (no_more_packets) {
-		netif_rx_complete(netdev);
+	if (packets_done < budget) {
+		netif_rx_complete(netdev, napi);
 		spider_net_rx_irq_on(card);
-		return 0;
+		card->ignore_rx_ramfull = 0;
 	}
 
-	return 1;
-}
-
-/**
- * spider_net_vlan_rx_reg - initializes VLAN structures in the driver and card
- * @netdev: interface device structure
- * @grp: vlan_group structure that is registered (NULL on destroying interface)
- */
-static void
-spider_net_vlan_rx_reg(struct net_device *netdev, struct vlan_group *grp)
-{
-	/* further enhancement... yet to do */
-	return;
-}
-
-/**
- * spider_net_vlan_rx_add - adds VLAN id to the card filter
- * @netdev: interface device structure
- * @vid: VLAN id to add
- */
-static void
-spider_net_vlan_rx_add(struct net_device *netdev, uint16_t vid)
-{
-	/* further enhancement... yet to do */
-	/* add vid to card's VLAN filter table */
-	return;
-}
-
-/**
- * spider_net_vlan_rx_kill - removes VLAN id to the card filter
- * @netdev: interface device structure
- * @vid: VLAN id to remove
- */
-static void
-spider_net_vlan_rx_kill(struct net_device *netdev, uint16_t vid)
-{
-	/* further enhancement... yet to do */
-	/* remove vid from card's VLAN filter table */
-}
-
-/**
- * spider_net_get_stats - get interface statistics
- * @netdev: interface device structure
- *
- * returns the interface statistics residing in the spider_net_card struct
- */
-static struct net_device_stats *
-spider_net_get_stats(struct net_device *netdev)
-{
-	struct spider_net_card *card = netdev_priv(netdev);
-	struct net_device_stats *stats = &card->netdev_stats;
-	return stats;
+	return packets_done;
 }
 
 /**
@@ -1248,6 +1378,33 @@ spider_net_set_mac(struct net_device *netdev, void *p)
 }
 
 /**
+ * spider_net_link_reset
+ * @netdev: net device structure
+ *
+ * This is called when the PHY_LINK signal is asserted. For the blade this is
+ * not connected so we should never get here.
+ *
+ */
+static void
+spider_net_link_reset(struct net_device *netdev)
+{
+
+	struct spider_net_card *card = netdev_priv(netdev);
+
+	del_timer_sync(&card->aneg_timer);
+
+	/* clear interrupt, block further interrupts */
+	spider_net_write_reg(card, SPIDER_NET_GMACST,
+			     spider_net_read_reg(card, SPIDER_NET_GMACST));
+	spider_net_write_reg(card, SPIDER_NET_GMACINTEN, 0);
+
+	/* reset phy and setup aneg */
+	spider_net_setup_aneg(card);
+	mod_timer(&card->aneg_timer, jiffies + SPIDER_NET_ANEG_TIMER);
+
+}
+
+/**
  * spider_net_handle_error_irq - handles errors raised by an interrupt
  * @card: card structure
  * @status_reg: interrupt status register 0 (GHIINT0STS)
@@ -1264,6 +1421,9 @@ spider_net_handle_error_irq(struct spider_net_card *card, u32 status_reg)
 
 	error_reg1 = spider_net_read_reg(card, SPIDER_NET_GHIINT1STS);
 	error_reg2 = spider_net_read_reg(card, SPIDER_NET_GHIINT2STS);
+
+	error_reg1 &= SPIDER_NET_INT1_MASK_VALUE;
+	error_reg2 &= SPIDER_NET_INT2_MASK_VALUE;
 
 	/* check GHIINT0STS ************************************/
 	if (status_reg)
@@ -1298,7 +1458,7 @@ spider_net_handle_error_irq(struct spider_net_card *card, u32 status_reg)
 	case SPIDER_NET_GPWFFINT:
 		/* PHY command queue full */
 		if (netif_msg_intr(card))
-			pr_err("PHY write queue full\n");
+			dev_err(&card->netdev->dev, "PHY write queue full\n");
 		show_error = 0;
 		break;
 
@@ -1359,8 +1519,8 @@ spider_net_handle_error_irq(struct spider_net_card *card, u32 status_reg)
 				switch (i)
 	{
 	case SPIDER_NET_GTMFLLINT:
-		if (netif_msg_intr(card) && net_ratelimit())
-			pr_err("Spider TX RAM full\n");
+		/* TX RAM full may happen on a usual case.
+		 * Logging is not needed. */
 		show_error = 0;
 		break;
 	case SPIDER_NET_GRFDFLLINT: /* fallthrough */
@@ -1368,11 +1528,16 @@ spider_net_handle_error_irq(struct spider_net_card *card, u32 status_reg)
 	case SPIDER_NET_GRFBFLLINT: /* fallthrough */
 	case SPIDER_NET_GRFAFLLINT: /* fallthrough */
 	case SPIDER_NET_GRMFLLINT:
-		if (netif_msg_intr(card) && net_ratelimit())
-			pr_err("Spider RX RAM full, incoming packets "
-			       "might be discarded!\n");
-		spider_net_rx_irq_off(card);
-		netif_rx_schedule(card->netdev);
+		/* Could happen when rx chain is full */
+		if (card->ignore_rx_ramfull == 0) {
+			card->ignore_rx_ramfull = 1;
+			spider_net_resync_head_ptr(card);
+			spider_net_refill_rx_chain(card);
+			spider_net_enable_rxdmac(card);
+			card->num_rx_ints ++;
+			netif_rx_schedule(card->netdev,
+					  &card->napi);
+		}
 		show_error = 0;
 		break;
 
@@ -1387,12 +1552,12 @@ spider_net_handle_error_irq(struct spider_net_card *card, u32 status_reg)
 	case SPIDER_NET_GDCDCEINT: /* fallthrough */
 	case SPIDER_NET_GDBDCEINT: /* fallthrough */
 	case SPIDER_NET_GDADCEINT:
-		if (netif_msg_intr(card) && net_ratelimit())
-			pr_err("got descriptor chain end interrupt, "
-			       "restarting DMAC %c.\n",
-			       'D'-(i-SPIDER_NET_GDDDCEINT)/3);
+		spider_net_resync_head_ptr(card);
 		spider_net_refill_rx_chain(card);
 		spider_net_enable_rxdmac(card);
+		card->num_rx_ints ++;
+		netif_rx_schedule(card->netdev,
+				  &card->napi);
 		show_error = 0;
 		break;
 
@@ -1401,9 +1566,13 @@ spider_net_handle_error_irq(struct spider_net_card *card, u32 status_reg)
 	case SPIDER_NET_GDCINVDINT: /* fallthrough */
 	case SPIDER_NET_GDBINVDINT: /* fallthrough */
 	case SPIDER_NET_GDAINVDINT:
-		/* could happen when rx chain is full */
+		/* Could happen when rx chain is full */
+		spider_net_resync_head_ptr(card);
 		spider_net_refill_rx_chain(card);
 		spider_net_enable_rxdmac(card);
+		card->num_rx_ints ++;
+		netif_rx_schedule(card->netdev,
+				  &card->napi);
 		show_error = 0;
 		break;
 
@@ -1459,9 +1628,8 @@ spider_net_handle_error_irq(struct spider_net_card *card, u32 status_reg)
 	}
 
 	if ((show_error) && (netif_msg_intr(card)) && net_ratelimit())
-		pr_err("Got error interrupt on %s, GHIINT0STS = 0x%08x, "
+		dev_err(&card->netdev->dev, "Error interrupt, GHIINT0STS = 0x%08x, "
 		       "GHIINT1STS = 0x%08x, GHIINT2STS = 0x%08x\n",
-		       card->netdev->name,
 		       status_reg, error_reg1, error_reg2);
 
 	/* clear interrupt sources */
@@ -1489,16 +1657,21 @@ spider_net_interrupt(int irq, void *ptr)
 	u32 status_reg;
 
 	status_reg = spider_net_read_reg(card, SPIDER_NET_GHIINT0STS);
+	status_reg &= SPIDER_NET_INT0_MASK_VALUE;
 
 	if (!status_reg)
 		return IRQ_NONE;
 
 	if (status_reg & SPIDER_NET_RXINT ) {
 		spider_net_rx_irq_off(card);
-		netif_rx_schedule(netdev);
+		netif_rx_schedule(netdev, &card->napi);
+		card->num_rx_ints ++;
 	}
 	if (status_reg & SPIDER_NET_TXINT)
-		netif_rx_schedule(netdev);
+		netif_rx_schedule(netdev, &card->napi);
+
+	if (status_reg & SPIDER_NET_LINKINT)
+		spider_net_link_reset(netdev);
 
 	if (status_reg & SPIDER_NET_ERRINT )
 		spider_net_handle_error_irq(card, status_reg);
@@ -1526,6 +1699,38 @@ spider_net_poll_controller(struct net_device *netdev)
 #endif /* CONFIG_NET_POLL_CONTROLLER */
 
 /**
+ * spider_net_enable_interrupts - enable interrupts
+ * @card: card structure
+ *
+ * spider_net_enable_interrupt enables several interrupts
+ */
+static void 
+spider_net_enable_interrupts(struct spider_net_card *card)
+{
+	spider_net_write_reg(card, SPIDER_NET_GHIINT0MSK,
+			     SPIDER_NET_INT0_MASK_VALUE);
+	spider_net_write_reg(card, SPIDER_NET_GHIINT1MSK,
+			     SPIDER_NET_INT1_MASK_VALUE);
+	spider_net_write_reg(card, SPIDER_NET_GHIINT2MSK,
+			     SPIDER_NET_INT2_MASK_VALUE);
+}
+
+/**
+ * spider_net_disable_interrupts - disable interrupts
+ * @card: card structure
+ *
+ * spider_net_disable_interrupts disables all the interrupts
+ */
+static void 
+spider_net_disable_interrupts(struct spider_net_card *card)
+{
+	spider_net_write_reg(card, SPIDER_NET_GHIINT0MSK, 0);
+	spider_net_write_reg(card, SPIDER_NET_GHIINT1MSK, 0);
+	spider_net_write_reg(card, SPIDER_NET_GHIINT2MSK, 0);
+	spider_net_write_reg(card, SPIDER_NET_GMACINTEN, 0);
+}
+
+/**
  * spider_net_init_card - initializes the card
  * @card: card structure
  *
@@ -1540,6 +1745,12 @@ spider_net_init_card(struct spider_net_card *card)
 
 	spider_net_write_reg(card, SPIDER_NET_CKRCTRL,
 			     SPIDER_NET_CKRCTRL_RUN_VALUE);
+
+	/* trigger ETOMOD signal */
+	spider_net_write_reg(card, SPIDER_NET_GMACOPEMD,
+		spider_net_read_reg(card, SPIDER_NET_GMACOPEMD) | 0x4);
+
+	spider_net_disable_interrupts(card);
 }
 
 /**
@@ -1624,113 +1835,11 @@ spider_net_enable_card(struct spider_net_card *card)
 
 	spider_net_write_reg(card, SPIDER_NET_GMACLENLMT,
 			     SPIDER_NET_LENLMT_VALUE);
-	spider_net_write_reg(card, SPIDER_NET_GMACMODE,
-			     SPIDER_NET_MACMODE_VALUE);
 	spider_net_write_reg(card, SPIDER_NET_GMACOPEMD,
 			     SPIDER_NET_OPMODE_VALUE);
 
-	/* set interrupt mask registers */
-	spider_net_write_reg(card, SPIDER_NET_GHIINT0MSK,
-			     SPIDER_NET_INT0_MASK_VALUE);
-	spider_net_write_reg(card, SPIDER_NET_GHIINT1MSK,
-			     SPIDER_NET_INT1_MASK_VALUE);
-	spider_net_write_reg(card, SPIDER_NET_GHIINT2MSK,
-			     SPIDER_NET_INT2_MASK_VALUE);
-
 	spider_net_write_reg(card, SPIDER_NET_GDTDMACCNTR,
 			     SPIDER_NET_GDTBSTA);
-}
-
-/**
- * spider_net_open - called upon ifonfig up
- * @netdev: interface device structure
- *
- * returns 0 on success, <0 on failure
- *
- * spider_net_open allocates all the descriptors and memory needed for
- * operation, sets up multicast list and enables interrupts
- */
-int
-spider_net_open(struct net_device *netdev)
-{
-	struct spider_net_card *card = netdev_priv(netdev);
-	int result;
-
-	result = spider_net_init_chain(card, &card->tx_chain);
-	if (result)
-		goto alloc_tx_failed;
-	card->low_watermark = NULL;
-
-	result = spider_net_init_chain(card, &card->rx_chain);
-	if (result)
-		goto alloc_rx_failed;
-
-	/* Allocate rx skbs */
-	if (spider_net_alloc_rx_skbs(card))
-		goto alloc_skbs_failed;
-
-	spider_net_set_multi(netdev);
-
-	/* further enhancement: setup hw vlan, if needed */
-
-	result = -EBUSY;
-	if (request_irq(netdev->irq, spider_net_interrupt,
-			     IRQF_SHARED, netdev->name, netdev))
-		goto register_int_failed;
-
-	spider_net_enable_card(card);
-
-	netif_start_queue(netdev);
-	netif_carrier_on(netdev);
-	netif_poll_enable(netdev);
-
-	return 0;
-
-register_int_failed:
-	spider_net_free_rx_chain_contents(card);
-alloc_skbs_failed:
-	spider_net_free_chain(card, &card->rx_chain);
-alloc_rx_failed:
-	spider_net_free_chain(card, &card->tx_chain);
-alloc_tx_failed:
-	return result;
-}
-
-/**
- * spider_net_setup_phy - setup PHY
- * @card: card structure
- *
- * returns 0 on success, <0 on failure
- *
- * spider_net_setup_phy is used as part of spider_net_probe. Sets
- * the PHY to 1000 Mbps
- **/
-static int
-spider_net_setup_phy(struct spider_net_card *card)
-{
-	struct mii_phy *phy = &card->phy;
-
-	spider_net_write_reg(card, SPIDER_NET_GDTDMASEL,
-			     SPIDER_NET_DMASEL_VALUE);
-	spider_net_write_reg(card, SPIDER_NET_GPCCTRL,
-			     SPIDER_NET_PHY_CTRL_VALUE);
-	phy->mii_id = 1;
-	phy->dev = card->netdev;
-	phy->mdio_read = spider_net_read_phy;
-	phy->mdio_write = spider_net_write_phy;
-
-	mii_phy_probe(phy, phy->mii_id);
-
-	if (phy->def->ops->setup_forced)
-		phy->def->ops->setup_forced(phy, SPEED_1000, DUPLEX_FULL);
-
-	phy->def->ops->enable_fiber(phy);
-
-	phy->def->ops->read_link(phy);
-	pr_info("Found %s with %i Mbps, %s-duplex.\n", phy->def->name,
-		phy->speed, phy->duplex==1 ? "Full" : "Half");
-
-	return 0;
 }
 
 /**
@@ -1811,7 +1920,8 @@ spider_net_init_firmware(struct spider_net_card *card)
 			     SPIDER_NET_FIRMWARE_NAME, &card->pdev->dev) == 0) {
 		if ( (firmware->size != SPIDER_NET_FIRMWARE_LEN) &&
 		     netif_msg_probe(card) ) {
-			pr_err("Incorrect size of spidernet firmware in " \
+			dev_err(&card->netdev->dev,
+			       "Incorrect size of spidernet firmware in " \
 			       "filesystem. Looking in host firmware...\n");
 			goto try_host_fw;
 		}
@@ -1829,14 +1939,14 @@ try_host_fw:
 	if (!dn)
 		goto out_err;
 
-	fw_prop = get_property(dn, "firmware", &fw_size);
+	fw_prop = of_get_property(dn, "firmware", &fw_size);
 	if (!fw_prop)
 		goto out_err;
 
 	if ( (fw_size != SPIDER_NET_FIRMWARE_LEN) &&
 	     netif_msg_probe(card) ) {
-		pr_err("Incorrect size of spidernet firmware in " \
-		       "host firmware\n");
+		dev_err(&card->netdev->dev,
+		       "Incorrect size of spidernet firmware in host firmware\n");
 		goto done;
 	}
 
@@ -1846,9 +1956,185 @@ done:
 	return err;
 out_err:
 	if (netif_msg_probe(card))
-		pr_err("Couldn't find spidernet firmware in filesystem " \
+		dev_err(&card->netdev->dev,
+		       "Couldn't find spidernet firmware in filesystem " \
 		       "or host firmware\n");
 	return err;
+}
+
+/**
+ * spider_net_open - called upon ifonfig up
+ * @netdev: interface device structure
+ *
+ * returns 0 on success, <0 on failure
+ *
+ * spider_net_open allocates all the descriptors and memory needed for
+ * operation, sets up multicast list and enables interrupts
+ */
+int
+spider_net_open(struct net_device *netdev)
+{
+	struct spider_net_card *card = netdev_priv(netdev);
+	int result;
+
+	result = spider_net_init_firmware(card);
+	if (result)
+		goto init_firmware_failed;
+
+	/* start probing with copper */
+	spider_net_setup_aneg(card);
+	if (card->phy.def->phy_id)
+		mod_timer(&card->aneg_timer, jiffies + SPIDER_NET_ANEG_TIMER);
+
+	result = spider_net_init_chain(card, &card->tx_chain);
+	if (result)
+		goto alloc_tx_failed;
+	card->low_watermark = NULL;
+
+	result = spider_net_init_chain(card, &card->rx_chain);
+	if (result)
+		goto alloc_rx_failed;
+
+	/* Allocate rx skbs */
+	if (spider_net_alloc_rx_skbs(card))
+		goto alloc_skbs_failed;
+
+	spider_net_set_multi(netdev);
+
+	/* further enhancement: setup hw vlan, if needed */
+
+	result = -EBUSY;
+	if (request_irq(netdev->irq, spider_net_interrupt,
+			     IRQF_SHARED, netdev->name, netdev))
+		goto register_int_failed;
+
+	spider_net_enable_card(card);
+
+	netif_start_queue(netdev);
+	netif_carrier_on(netdev);
+	napi_enable(&card->napi);
+
+	spider_net_enable_interrupts(card);
+
+	return 0;
+
+register_int_failed:
+	spider_net_free_rx_chain_contents(card);
+alloc_skbs_failed:
+	spider_net_free_chain(card, &card->rx_chain);
+alloc_rx_failed:
+	spider_net_free_chain(card, &card->tx_chain);
+alloc_tx_failed:
+	del_timer_sync(&card->aneg_timer);
+init_firmware_failed:
+	return result;
+}
+
+/**
+ * spider_net_link_phy
+ * @data: used for pointer to card structure
+ *
+ */
+static void spider_net_link_phy(unsigned long data)
+{
+	struct spider_net_card *card = (struct spider_net_card *)data;
+	struct mii_phy *phy = &card->phy;
+
+	/* if link didn't come up after SPIDER_NET_ANEG_TIMEOUT tries, setup phy again */
+	if (card->aneg_count > SPIDER_NET_ANEG_TIMEOUT) {
+
+		pr_info("%s: link is down trying to bring it up\n", card->netdev->name);
+
+		switch (card->medium) {
+		case BCM54XX_COPPER:
+			/* enable fiber with autonegotiation first */
+			if (phy->def->ops->enable_fiber)
+				phy->def->ops->enable_fiber(phy, 1);
+			card->medium = BCM54XX_FIBER;
+			break;
+
+		case BCM54XX_FIBER:
+			/* fiber didn't come up, try to disable fiber autoneg */
+			if (phy->def->ops->enable_fiber)
+				phy->def->ops->enable_fiber(phy, 0);
+			card->medium = BCM54XX_UNKNOWN;
+			break;
+
+		case BCM54XX_UNKNOWN:
+			/* copper, fiber with and without failed,
+			 * retry from beginning */
+			spider_net_setup_aneg(card);
+			card->medium = BCM54XX_COPPER;
+			break;
+		}
+
+		card->aneg_count = 0;
+		mod_timer(&card->aneg_timer, jiffies + SPIDER_NET_ANEG_TIMER);
+		return;
+	}
+
+	/* link still not up, try again later */
+	if (!(phy->def->ops->poll_link(phy))) {
+		card->aneg_count++;
+		mod_timer(&card->aneg_timer, jiffies + SPIDER_NET_ANEG_TIMER);
+		return;
+	}
+
+	/* link came up, get abilities */
+	phy->def->ops->read_link(phy);
+
+	spider_net_write_reg(card, SPIDER_NET_GMACST,
+			     spider_net_read_reg(card, SPIDER_NET_GMACST));
+	spider_net_write_reg(card, SPIDER_NET_GMACINTEN, 0x4);
+
+	if (phy->speed == 1000)
+		spider_net_write_reg(card, SPIDER_NET_GMACMODE, 0x00000001);
+	else
+		spider_net_write_reg(card, SPIDER_NET_GMACMODE, 0);
+
+	card->aneg_count = 0;
+
+	pr_debug("Found %s with %i Mbps, %s-duplex %sautoneg.\n",
+		phy->def->name, phy->speed, phy->duplex==1 ? "Full" : "Half",
+		phy->autoneg==1 ? "" : "no ");
+
+	return;
+}
+
+/**
+ * spider_net_setup_phy - setup PHY
+ * @card: card structure
+ *
+ * returns 0 on success, <0 on failure
+ *
+ * spider_net_setup_phy is used as part of spider_net_probe.
+ **/
+static int
+spider_net_setup_phy(struct spider_net_card *card)
+{
+	struct mii_phy *phy = &card->phy;
+
+	spider_net_write_reg(card, SPIDER_NET_GDTDMASEL,
+			     SPIDER_NET_DMASEL_VALUE);
+	spider_net_write_reg(card, SPIDER_NET_GPCCTRL,
+			     SPIDER_NET_PHY_CTRL_VALUE);
+
+	phy->dev = card->netdev;
+	phy->mdio_read = spider_net_read_phy;
+	phy->mdio_write = spider_net_write_phy;
+
+	for (phy->mii_id = 1; phy->mii_id <= 31; phy->mii_id++) {
+		unsigned short id;
+		id = spider_net_read_phy(card->netdev, phy->mii_id, MII_BMSR);
+		if (id != 0x0000 && id != 0xffff) {
+			if (!mii_phy_probe(phy, phy->mii_id)) {
+				pr_info("Found %s.\n", phy->def->name);
+				break;
+			}
+		}
+	}
+
+	return 0;
 }
 
 /**
@@ -1896,18 +2182,15 @@ spider_net_stop(struct net_device *netdev)
 {
 	struct spider_net_card *card = netdev_priv(netdev);
 
-	netif_poll_disable(netdev);
+	napi_disable(&card->napi);
 	netif_carrier_off(netdev);
 	netif_stop_queue(netdev);
 	del_timer_sync(&card->tx_timer);
+	del_timer_sync(&card->aneg_timer);
 
-	/* disable/mask all interrupts */
-	spider_net_write_reg(card, SPIDER_NET_GHIINT0MSK, 0);
-	spider_net_write_reg(card, SPIDER_NET_GHIINT1MSK, 0);
-	spider_net_write_reg(card, SPIDER_NET_GHIINT2MSK, 0);
+	spider_net_disable_interrupts(card);
 
-	/* free_irq(netdev->irq, netdev);*/
-	free_irq(to_pci_dev(netdev->dev.parent)->irq, netdev);
+	free_irq(netdev->irq, netdev);
 
 	spider_net_write_reg(card, SPIDER_NET_GDTDMACCNTR,
 			     SPIDER_NET_DMA_TX_FEND_VALUE);
@@ -1917,8 +2200,6 @@ spider_net_stop(struct net_device *netdev)
 
 	/* release chains */
 	spider_net_release_tx_chain(card, 1);
-	spider_net_free_rx_chain_contents(card);
-
 	spider_net_free_rx_chain_contents(card);
 
 	spider_net_free_chain(card, &card->tx_chain);
@@ -1951,8 +2232,6 @@ spider_net_tx_timeout_task(struct work_struct *work)
 	spider_net_init_card(card);
 
 	if (spider_net_setup_phy(card))
-		goto out;
-	if (spider_net_init_firmware(card))
 		goto out;
 
 	spider_net_open(netdev);
@@ -1995,7 +2274,6 @@ spider_net_setup_netdev_ops(struct net_device *netdev)
 	netdev->open = &spider_net_open;
 	netdev->stop = &spider_net_stop;
 	netdev->hard_start_xmit = &spider_net_xmit;
-	netdev->get_stats = &spider_net_get_stats;
 	netdev->set_multicast_list = &spider_net_set_multi;
 	netdev->set_mac_address = &spider_net_set_mac;
 	netdev->change_mtu = &spider_net_change_mtu;
@@ -2003,13 +2281,7 @@ spider_net_setup_netdev_ops(struct net_device *netdev)
 	/* tx watchdog */
 	netdev->tx_timeout = &spider_net_tx_timeout;
 	netdev->watchdog_timeo = SPIDER_NET_WATCHDOG_TIMEOUT;
-	/* NAPI */
-	netdev->poll = &spider_net_poll;
-	netdev->weight = SPIDER_NET_NAPI_WEIGHT;
 	/* HW VLAN */
-	netdev->vlan_rx_register = &spider_net_vlan_rx_reg;
-	netdev->vlan_rx_add_vid = &spider_net_vlan_rx_add;
-	netdev->vlan_rx_kill_vid = &spider_net_vlan_rx_kill;
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	/* poll controller */
 	netdev->poll_controller = &spider_net_poll_controller;
@@ -2035,7 +2307,6 @@ spider_net_setup_netdev(struct spider_net_card *card)
 	struct sockaddr addr;
 	const u8 *mac;
 
-	SET_MODULE_OWNER(netdev);
 	SET_NETDEV_DEV(netdev, &card->pdev->dev);
 
 	pci_set_drvdata(card->pdev, netdev);
@@ -2046,37 +2317,45 @@ spider_net_setup_netdev(struct spider_net_card *card)
 	card->tx_timer.data = (unsigned long) card;
 	netdev->irq = card->pdev->irq;
 
+	card->aneg_count = 0;
+	init_timer(&card->aneg_timer);
+	card->aneg_timer.function = spider_net_link_phy;
+	card->aneg_timer.data = (unsigned long) card;
+
 	card->options.rx_csum = SPIDER_NET_RX_CSUM_DEFAULT;
 
-	card->tx_chain.num_desc = tx_descriptors;
-	card->rx_chain.num_desc = rx_descriptors;
+	netif_napi_add(netdev, &card->napi,
+		       spider_net_poll, SPIDER_NET_NAPI_WEIGHT);
 
 	spider_net_setup_netdev_ops(netdev);
 
-	netdev->features = NETIF_F_HW_CSUM | NETIF_F_LLTX;
+	netdev->features = NETIF_F_IP_CSUM | NETIF_F_LLTX;
 	/* some time: NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX |
 	 *		NETIF_F_HW_VLAN_FILTER */
 
 	netdev->irq = card->pdev->irq;
+	card->num_rx_ints = 0;
+	card->ignore_rx_ramfull = 0;
 
 	dn = pci_device_to_OF_node(card->pdev);
 	if (!dn)
 		return -EIO;
 
-	mac = get_property(dn, "local-mac-address", NULL);
+	mac = of_get_property(dn, "local-mac-address", NULL);
 	if (!mac)
 		return -EIO;
 	memcpy(addr.sa_data, mac, ETH_ALEN);
 
 	result = spider_net_set_mac(netdev, &addr);
 	if ((result) && (netif_msg_probe(card)))
-		pr_err("Failed to set MAC address: %i\n", result);
+		dev_err(&card->netdev->dev,
+		        "Failed to set MAC address: %i\n", result);
 
 	result = register_netdev(netdev);
 	if (result) {
 		if (netif_msg_probe(card))
-			pr_err("Couldn't register net_device: %i\n",
-				  result);
+			dev_err(&card->netdev->dev,
+			        "Couldn't register net_device: %i\n", result);
 		return result;
 	}
 
@@ -2098,8 +2377,11 @@ spider_net_alloc_card(void)
 {
 	struct net_device *netdev;
 	struct spider_net_card *card;
+	size_t alloc_size;
 
-	netdev = alloc_etherdev(sizeof(struct spider_net_card));
+	alloc_size = sizeof(struct spider_net_card) +
+	   (tx_descriptors + rx_descriptors) * sizeof(struct spider_net_descr);
+	netdev = alloc_etherdev(alloc_size);
 	if (!netdev)
 		return NULL;
 
@@ -2109,6 +2391,11 @@ spider_net_alloc_card(void)
 	INIT_WORK(&card->tx_timeout_task, spider_net_tx_timeout_task);
 	init_waitqueue_head(&card->waitq);
 	atomic_set(&card->tx_timeout_task_counter, 0);
+
+	card->rx_chain.num_desc = rx_descriptors;
+	card->rx_chain.ring = card->darray;
+	card->tx_chain.num_desc = tx_descriptors;
+	card->tx_chain.ring = card->darray + rx_descriptors;
 
 	return card;
 }
@@ -2146,17 +2433,19 @@ spider_net_setup_pci_dev(struct pci_dev *pdev)
 	unsigned long mmio_start, mmio_len;
 
 	if (pci_enable_device(pdev)) {
-		pr_err("Couldn't enable PCI device\n");
+		dev_err(&pdev->dev, "Couldn't enable PCI device\n");
 		return NULL;
 	}
 
 	if (!(pci_resource_flags(pdev, 0) & IORESOURCE_MEM)) {
-		pr_err("Couldn't find proper PCI device base address.\n");
+		dev_err(&pdev->dev,
+		        "Couldn't find proper PCI device base address.\n");
 		goto out_disable_dev;
 	}
 
 	if (pci_request_regions(pdev, spider_net_driver_name)) {
-		pr_err("Couldn't obtain PCI resources, aborting.\n");
+		dev_err(&pdev->dev,
+		        "Couldn't obtain PCI resources, aborting.\n");
 		goto out_disable_dev;
 	}
 
@@ -2164,8 +2453,8 @@ spider_net_setup_pci_dev(struct pci_dev *pdev)
 
 	card = spider_net_alloc_card();
 	if (!card) {
-		pr_err("Couldn't allocate net_device structure, "
-			  "aborting.\n");
+		dev_err(&pdev->dev,
+		        "Couldn't allocate net_device structure, aborting.\n");
 		goto out_release_regions;
 	}
 	card->pdev = pdev;
@@ -2179,7 +2468,8 @@ spider_net_setup_pci_dev(struct pci_dev *pdev)
 	card->regs = ioremap(mmio_start, mmio_len);
 
 	if (!card->regs) {
-		pr_err("Couldn't obtain PCI resources, aborting.\n");
+		dev_err(&pdev->dev,
+		        "Couldn't obtain PCI resources, aborting.\n");
 		goto out_release_regions;
 	}
 
@@ -2217,10 +2507,6 @@ spider_net_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	spider_net_init_card(card);
 
 	err = spider_net_setup_phy(card);
-	if (err)
-		goto out_undo_pci;
-
-	err = spider_net_init_firmware(card);
 	if (err)
 		goto out_undo_pci;
 

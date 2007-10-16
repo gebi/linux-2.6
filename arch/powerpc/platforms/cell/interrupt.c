@@ -41,9 +41,9 @@
 #include <asm/prom.h>
 #include <asm/ptrace.h>
 #include <asm/machdep.h>
+#include <asm/cell-regs.h>
 
 #include "interrupt.h"
-#include "cbe_regs.h"
 
 struct iic {
 	struct cbe_iic_thread_regs __iomem *regs;
@@ -227,7 +227,7 @@ void iic_request_IPIs(void)
 
 static int iic_host_match(struct irq_host *h, struct device_node *node)
 {
-	return device_is_compatible(node,
+	return of_device_is_compatible(node,
 				    "IBM,CBEA-Internal-Interrupt-Controller");
 }
 
@@ -256,12 +256,12 @@ static int iic_host_xlate(struct irq_host *h, struct device_node *ct,
 	unsigned int node, ext, unit, class;
 	const u32 *val;
 
-	if (!device_is_compatible(ct,
+	if (!of_device_is_compatible(ct,
 				     "IBM,CBEA-Internal-Interrupt-Controller"))
 		return -ENODEV;
 	if (intsize != 1)
 		return -ENODEV;
-	val = get_property(ct, "#interrupt-cells", NULL);
+	val = of_get_property(ct, "#interrupt-cells", NULL);
 	if (val == NULL || *val != 1)
 		return -ENODEV;
 
@@ -324,10 +324,10 @@ static int __init setup_iic(void)
 
 	for (dn = NULL;
 	     (dn = of_find_node_by_name(dn,"interrupt-controller")) != NULL;) {
-		if (!device_is_compatible(dn,
+		if (!of_device_is_compatible(dn,
 				     "IBM,CBEA-Internal-Interrupt-Controller"))
 			continue;
-		np = get_property(dn, "ibm,interrupt-server-ranges", NULL);
+		np = of_get_property(dn, "ibm,interrupt-server-ranges", NULL);
 		if (np == NULL) {
 			printk(KERN_WARNING "IIC: CPU association not found\n");
 			of_node_put(dn);
@@ -381,7 +381,7 @@ static int __init setup_iic(void)
 void __init iic_init_IRQ(void)
 {
 	/* Setup an irq host data structure */
-	iic_host = irq_alloc_host(IRQ_HOST_MAP_LINEAR, IIC_SOURCE_COUNT,
+	iic_host = irq_alloc_host(NULL, IRQ_HOST_MAP_LINEAR, IIC_SOURCE_COUNT,
 				  &iic_host_ops, IIC_IRQ_INVALID);
 	BUG_ON(iic_host == NULL);
 	irq_set_default_host(iic_host);

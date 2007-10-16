@@ -58,6 +58,7 @@ struct fib6_node
 	__u16			fn_bit;		/* bit key */
 	__u16			fn_flags;
 	__u32			fn_sernum;
+	struct rt6_info		*rr_ptr;
 };
 
 #ifndef CONFIG_IPV6_SUBTREES
@@ -104,6 +105,10 @@ struct rt6_info
 	struct rt6key			rt6i_src;
 
 	u8				rt6i_protocol;
+
+#ifdef CONFIG_XFRM
+	u32				rt6i_flow_cache_genid;
+#endif
 };
 
 static inline struct inet6_dev *ip6_dst_idev(struct dst_entry *dst)
@@ -218,8 +223,6 @@ extern void			fib6_init(void);
 
 extern void			fib6_rules_init(void);
 extern void			fib6_rules_cleanup(void);
-extern int			fib6_rules_dump(struct sk_buff *,
-						struct netlink_callback *);
 
 #endif
 #endif

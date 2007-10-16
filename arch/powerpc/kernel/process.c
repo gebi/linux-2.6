@@ -19,7 +19,6 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
-#include <linux/smp_lock.h>
 #include <linux/stddef.h>
 #include <linux/unistd.h>
 #include <linux/ptrace.h>
@@ -84,7 +83,7 @@ void flush_fp_to_thread(struct task_struct *tsk)
 			 */
 			BUG_ON(tsk != current);
 #endif
-			giveup_fpu(current);
+			giveup_fpu(tsk);
 		}
 		preempt_enable();
 	}
@@ -144,7 +143,7 @@ void flush_altivec_to_thread(struct task_struct *tsk)
 #ifdef CONFIG_SMP
 			BUG_ON(tsk != current);
 #endif
-			giveup_altivec(current);
+			giveup_altivec(tsk);
 		}
 		preempt_enable();
 	}
@@ -183,7 +182,7 @@ void flush_spe_to_thread(struct task_struct *tsk)
 #ifdef CONFIG_SMP
 			BUG_ON(tsk != current);
 #endif
-			giveup_spe(current);
+			giveup_spe(tsk);
 		}
 		preempt_enable();
 	}
@@ -220,21 +219,25 @@ void discard_lazy_cpu_state(void)
 }
 #endif /* CONFIG_SMP */
 
-#ifdef CONFIG_PPC_MERGE		/* XXX for now */
 int set_dabr(unsigned long dabr)
 {
+#ifdef CONFIG_PPC_MERGE		/* XXX for now */
 	if (ppc_md.set_dabr)
 		return ppc_md.set_dabr(dabr);
+#endif
 
+	/* XXX should we have a CPU_FTR_HAS_DABR ? */
+#if defined(CONFIG_PPC64) || defined(CONFIG_6xx)
 	mtspr(SPRN_DABR, dabr);
+#endif
 	return 0;
 }
-#endif
 
 #ifdef CONFIG_PPC64
 DEFINE_PER_CPU(struct cpu_usage, cpu_usage_array);
-static DEFINE_PER_CPU(unsigned long, current_dabr);
 #endif
+
+static DEFINE_PER_CPU(unsigned long, current_dabr);
 
 struct task_struct *__switch_to(struct task_struct *prev,
 	struct task_struct *new)
@@ -300,14 +303,10 @@ struct task_struct *__switch_to(struct task_struct *prev,
 
 #endif /* CONFIG_SMP */
 
-#ifdef CONFIG_PPC64	/* for now */
 	if (unlikely(__get_cpu_var(current_dabr) != new->thread.dabr)) {
 		set_dabr(new->thread.dabr);
 		__get_cpu_var(current_dabr) = new->thread.dabr;
 	}
-
-	flush_tlb_pending();
-#endif
 
 	new_thread = &new->thread;
 	old_thread = &current->thread;
@@ -354,6 +353,14 @@ static void show_instructions(struct pt_regs *regs)
 
 		if (!(i % 8))
 			printk("\n");
+
+#if !defined(CONFIG_BOOKE)
+		/* If executing with the IMMU off, adjust pc rather
+		 * than print XXXXXXXX.
+		 */
+		if (!(regs->msr & MSR_IR))
+			pc = (unsigned long)phys_to_virt(pc);
+#endif
 
 		/* We use __get_user here *only* to avoid an OOPS on a
 		 * bad address because the pc *should* only be a
@@ -402,11 +409,11 @@ static void printbits(unsigned long val, struct regbit *bits)
 }
 
 #ifdef CONFIG_PPC64
-#define REG		"%016lX"
+#define REG		"%016lx"
 #define REGS_PER_LINE	4
 #define LAST_VOLATILE	13
 #else
-#define REG		"%08lX"
+#define REG		"%08lx"
 #define REGS_PER_LINE	8
 #define LAST_VOLATILE	12
 #endif
@@ -421,10 +428,14 @@ void show_regs(struct pt_regs * regs)
 	       regs, regs->trap, print_tainted(), init_utsname()->release);
 	printk("MSR: "REG" ", regs->msr);
 	printbits(regs->msr, msr_bits);
-	printk("  CR: %08lX  XER: %08lX\n", regs->ccr, regs->xer);
+	printk("  CR: %08lx  XER: %08lx\n", regs->ccr, regs->xer);
 	trap = TRAP(regs);
 	if (trap == 0x300 || trap == 0x600)
+#if defined(CONFIG_4xx) || defined(CONFIG_BOOKE)
+		printk("DEAR: "REG", ESR: "REG"\n", regs->dar, regs->dsisr);
+#else
 		printk("DAR: "REG", DSISR: "REG"\n", regs->dar, regs->dsisr);
+#endif
 	printk("TASK = %p[%d] '%s' THREAD: %p",
 	       current, current->pid, current->comm, task_thread_info(current));
 
@@ -465,18 +476,21 @@ void flush_thread(void)
 #ifdef CONFIG_PPC64
 	struct thread_info *t = current_thread_info();
 
-	if (t->flags & _TIF_ABI_PENDING)
-		t->flags ^= (_TIF_ABI_PENDING | _TIF_32BIT);
+	if (test_ti_thread_flag(t, TIF_ABI_PENDING)) {
+		clear_ti_thread_flag(t, TIF_ABI_PENDING);
+		if (test_ti_thread_flag(t, TIF_32BIT))
+			clear_ti_thread_flag(t, TIF_32BIT);
+		else
+			set_ti_thread_flag(t, TIF_32BIT);
+	}
 #endif
 
 	discard_lazy_cpu_state();
 
-#ifdef CONFIG_PPC64	/* for now */
 	if (current->thread.dabr) {
 		current->thread.dabr = 0;
 		set_dabr(0);
 	}
-#endif
 }
 
 void
@@ -550,10 +564,15 @@ int copy_thread(int nr, unsigned long clone_flags, unsigned long usp,
 
 #ifdef CONFIG_PPC64
 	if (cpu_has_feature(CPU_FTR_SLB)) {
-		unsigned long sp_vsid = get_kernel_vsid(sp);
+		unsigned long sp_vsid;
 		unsigned long llp = mmu_psize_defs[mmu_linear_psize].sllp;
 
-		sp_vsid <<= SLB_VSID_SHIFT;
+		if (cpu_has_feature(CPU_FTR_1T_SEGMENT))
+			sp_vsid = get_kernel_vsid(sp, MMU_SEGSIZE_1T)
+				<< SLB_VSID_SHIFT_1T;
+		else
+			sp_vsid = get_kernel_vsid(sp, MMU_SEGSIZE_256M)
+				<< SLB_VSID_SHIFT;
 		sp_vsid |= SLB_VSID_KERNEL | llp;
 		p->thread.ksp_vsid = sp_vsid;
 	}
@@ -567,7 +586,6 @@ int copy_thread(int nr, unsigned long clone_flags, unsigned long usp,
 	kregs->nip = *((unsigned long *)ret_from_fork);
 #else
 	kregs->nip = (unsigned long)ret_from_fork;
-	p->thread.last_syscall = -1;
 #endif
 
 	return 0;
@@ -599,6 +617,13 @@ void start_thread(struct pt_regs *regs, unsigned long start, unsigned long sp)
 	regs->xer = 0;
 	regs->ccr = 0;
 	regs->gpr[1] = sp;
+
+	/*
+	 * We have just cleared all the nonvolatile GPRs, so make
+	 * FULL_REGS(regs) return true.  This is necessary to allow
+	 * ptrace to examine the thread immediately after exec.
+	 */
+	regs->trap &= ~1UL;
 
 #ifdef CONFIG_PPC32
 	regs->mq = 0;
@@ -664,9 +689,13 @@ int set_fpexc_mode(struct task_struct *tsk, unsigned int val)
 	 * mode (asyn, precise, disabled) for 'Classic' FP. */
 	if (val & PR_FP_EXC_SW_ENABLE) {
 #ifdef CONFIG_SPE
-		tsk->thread.fpexc_mode = val &
-			(PR_FP_EXC_SW_ENABLE | PR_FP_ALL_EXCEPT);
-		return 0;
+		if (cpu_has_feature(CPU_FTR_SPE)) {
+			tsk->thread.fpexc_mode = val &
+				(PR_FP_EXC_SW_ENABLE | PR_FP_ALL_EXCEPT);
+			return 0;
+		} else {
+			return -EINVAL;
+		}
 #else
 		return -EINVAL;
 #endif
@@ -692,7 +721,10 @@ int get_fpexc_mode(struct task_struct *tsk, unsigned long adr)
 
 	if (tsk->thread.fpexc_mode & PR_FP_EXC_SW_ENABLE)
 #ifdef CONFIG_SPE
-		val = tsk->thread.fpexc_mode;
+		if (cpu_has_feature(CPU_FTR_SPE))
+			val = tsk->thread.fpexc_mode;
+		else
+			return -EINVAL;
 #else
 		return -EINVAL;
 #endif
@@ -818,6 +850,35 @@ out:
 	return error;
 }
 
+#ifdef CONFIG_IRQSTACKS
+static inline int valid_irq_stack(unsigned long sp, struct task_struct *p,
+				  unsigned long nbytes)
+{
+	unsigned long stack_page;
+	unsigned long cpu = task_cpu(p);
+
+	/*
+	 * Avoid crashing if the stack has overflowed and corrupted
+	 * task_cpu(p), which is in the thread_info struct.
+	 */
+	if (cpu < NR_CPUS && cpu_possible(cpu)) {
+		stack_page = (unsigned long) hardirq_ctx[cpu];
+		if (sp >= stack_page + sizeof(struct thread_struct)
+		    && sp <= stack_page + THREAD_SIZE - nbytes)
+			return 1;
+
+		stack_page = (unsigned long) softirq_ctx[cpu];
+		if (sp >= stack_page + sizeof(struct thread_struct)
+		    && sp <= stack_page + THREAD_SIZE - nbytes)
+			return 1;
+	}
+	return 0;
+}
+
+#else
+#define valid_irq_stack(sp, p, nb)	0
+#endif /* CONFIG_IRQSTACKS */
+
 int validate_sp(unsigned long sp, struct task_struct *p,
 		       unsigned long nbytes)
 {
@@ -827,19 +888,7 @@ int validate_sp(unsigned long sp, struct task_struct *p,
 	    && sp <= stack_page + THREAD_SIZE - nbytes)
 		return 1;
 
-#ifdef CONFIG_IRQSTACKS
-	stack_page = (unsigned long) hardirq_ctx[task_cpu(p)];
-	if (sp >= stack_page + sizeof(struct thread_struct)
-	    && sp <= stack_page + THREAD_SIZE - nbytes)
-		return 1;
-
-	stack_page = (unsigned long) softirq_ctx[task_cpu(p)];
-	if (sp >= stack_page + sizeof(struct thread_struct)
-	    && sp <= stack_page + THREAD_SIZE - nbytes)
-		return 1;
-#endif
-
-	return 0;
+	return valid_irq_stack(sp, p, nbytes);
 }
 
 #ifdef CONFIG_PPC64

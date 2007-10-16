@@ -12,18 +12,13 @@
 
 static int ipip_output(struct xfrm_state *x, struct sk_buff *skb)
 {
-	struct iphdr *iph;
-
-	iph = skb->nh.iph;
-	iph->tot_len = htons(skb->len);
-	ip_send_check(iph);
-
+	skb_push(skb, -skb_network_offset(skb));
 	return 0;
 }
 
 static int ipip_xfrm_rcv(struct xfrm_state *x, struct sk_buff *skb)
 {
-	return 0;
+	return IPPROTO_IP;
 }
 
 static int ipip_init_state(struct xfrm_state *x)
@@ -110,3 +105,4 @@ static void __exit ipip_fini(void)
 module_init(ipip_init);
 module_exit(ipip_fini);
 MODULE_LICENSE("GPL");
+MODULE_ALIAS_XFRM_TYPE(AF_INET, XFRM_PROTO_IPIP);

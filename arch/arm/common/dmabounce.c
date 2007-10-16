@@ -6,7 +6,7 @@
  *  copy data to/from buffers located outside the DMA region. This
  *  only works for systems in which DMA memory is at the bottom of
  *  RAM, the remainder of memory is at the top and the DMA memory
- *  can be marked as ZONE_DMA. Anything beyond that such as discontigous
+ *  can be marked as ZONE_DMA. Anything beyond that such as discontiguous
  *  DMA windows will require custom implementations that reserve memory
  *  areas at early bootup.
  *
@@ -263,7 +263,7 @@ map_single(struct device *dev, void *ptr, size_t size,
 		 * We don't need to sync the DMA buffer since
 		 * it was allocated via the coherent allocators.
 		 */
-		consistent_sync(ptr, size, dir);
+		dma_cache_maint(ptr, size, dir);
 	}
 
 	return dma_addr;
@@ -383,7 +383,7 @@ sync_single(struct device *dev, dma_addr_t dma_addr, size_t size,
 		 * via the coherent allocators.
 		 */
 	} else {
-		consistent_sync(dma_to_virt(dev, dma_addr), size, dir);
+		dma_cache_maint(dma_to_virt(dev, dma_addr), size, dir);
 	}
 }
 

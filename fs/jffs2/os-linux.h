@@ -1,13 +1,11 @@
 /*
  * JFFS2 -- Journalling Flash File System, Version 2.
  *
- * Copyright (C) 2002-2003 Red Hat, Inc.
+ * Copyright © 2001-2007 Red Hat, Inc.
  *
  * Created by David Woodhouse <dwmw2@infradead.org>
  *
  * For licensing information, see the file 'LICENCE' in this directory.
- *
- * $Id: os-linux.h,v 1.64 2005/09/30 13:59:13 dedekind Exp $
  *
  */
 
@@ -98,6 +96,9 @@ static inline void jffs2_init_inode_info(struct jffs2_inode_info *f)
 #define jffs2_nor_wbuf_flash(c) (0)
 #define jffs2_nor_wbuf_flash_setup(c) (0)
 #define jffs2_nor_wbuf_flash_cleanup(c) do {} while (0)
+#define jffs2_ubivol(c) (0)
+#define jffs2_ubivol_setup(c) (0)
+#define jffs2_ubivol_cleanup(c) do {} while (0)
 
 #else /* NAND and/or ECC'd NOR support present */
 
@@ -133,6 +134,9 @@ void jffs2_nand_flash_cleanup(struct jffs2_sb_info *c);
 #define jffs2_dataflash(c) (c->mtd->type == MTD_DATAFLASH)
 int jffs2_dataflash_setup(struct jffs2_sb_info *c);
 void jffs2_dataflash_cleanup(struct jffs2_sb_info *c);
+#define jffs2_ubivol(c) (c->mtd->type == MTD_UBIVOLUME)
+int jffs2_ubivol_setup(struct jffs2_sb_info *c);
+void jffs2_ubivol_cleanup(struct jffs2_sb_info *c);
 
 #define jffs2_nor_wbuf_flash(c) (c->mtd->type == MTD_NORFLASH && ! (c->mtd->flags & MTD_BIT_WRITEABLE))
 int jffs2_nor_wbuf_flash_setup(struct jffs2_sb_info *c);
@@ -169,12 +173,15 @@ int jffs2_ioctl(struct inode *, struct file *, unsigned int, unsigned long);
 extern const struct inode_operations jffs2_symlink_inode_operations;
 
 /* fs.c */
+struct posix_acl;
+
 int jffs2_setattr (struct dentry *, struct iattr *);
+int jffs2_do_setattr (struct inode *, struct iattr *);
 void jffs2_read_inode (struct inode *);
 void jffs2_clear_inode (struct inode *);
 void jffs2_dirty_inode(struct inode *inode);
 struct inode *jffs2_new_inode (struct inode *dir_i, int mode,
-			       struct jffs2_raw_inode *ri);
+			       struct jffs2_raw_inode *ri, struct posix_acl **acl);
 int jffs2_statfs (struct dentry *, struct kstatfs *);
 void jffs2_write_super (struct super_block *);
 int jffs2_remount_fs (struct super_block *, int *, char *);

@@ -37,8 +37,6 @@
  * mode 4 for a while now with no trouble.)  -Derek
  */
 
-#undef REALLY_SLOW_IO           /* most systems can safely undef this */
-
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
@@ -69,8 +67,6 @@ static RegInitializer initData[] __initdata = {
 	{0x31, 0x00}, {0x32, 0x00}, {0x33, 0x00}, {0x34, 0xff},
 	{0x35, 0x03}, {0x00, 0x00}
 };
-
-#define ALI_MAX_PIO 4
 
 /* timing parameter registers for each drive */
 static struct { u8 reg1, reg2, reg3, reg4; } regTab[4] = {
@@ -111,19 +107,16 @@ static void outReg (u8 data, u8 reg)
  * This function computes timing parameters
  * and sets controller registers accordingly.
  */
-static void ali14xx_tune_drive (ide_drive_t *drive, u8 pio)
+static void ali14xx_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
 	int driveNum;
 	int time1, time2;
 	u8 param1, param2, param3, param4;
 	unsigned long flags;
-	ide_pio_data_t d;
 	int bus_speed = system_bus_clock();
 
-	pio = ide_get_best_pio_mode(drive, pio, ALI_MAX_PIO, &d);
-
 	/* calculate timing, according to PIO mode */
-	time1 = d.cycle_time;
+	time1 = ide_pio_cycle_time(drive, pio);
 	time2 = ide_pio_timings[pio].active_time;
 	param3 = param1 = (time2 * bus_speed + 999) / 1000;
 	param4 = param2 = (time1 * bus_speed + 999) / 1000 - param1;
@@ -214,25 +207,36 @@ static int __init ali14xx_probe(void)
 	mate = &ide_hwifs[1];
 
 	hwif->chipset = ide_ali14xx;
-	hwif->tuneproc = &ali14xx_tune_drive;
+	hwif->pio_mask = ATA_PIO4;
+	hwif->set_pio_mode = &ali14xx_set_pio_mode;
 	hwif->mate = mate;
 
 	mate->chipset = ide_ali14xx;
-	mate->tuneproc = &ali14xx_tune_drive;
+	mate->pio_mask = ATA_PIO4;
+	mate->set_pio_mode = &ali14xx_set_pio_mode;
 	mate->mate = hwif;
 	mate->channel = 1;
 
 	probe_hwif_init(hwif);
 	probe_hwif_init(mate);
 
-	create_proc_ide_interfaces();
+	ide_proc_register_port(hwif);
+	ide_proc_register_port(mate);
 
 	return 0;
 }
 
+int probe_ali14xx = 0;
+
+module_param_named(probe, probe_ali14xx, bool, 0);
+MODULE_PARM_DESC(probe, "probe for ALI M14xx chipsets");
+
 /* Can be called directly from ide.c. */
 int __init ali14xx_init(void)
 {
+	if (probe_ali14xx == 0)
+		goto out;
+
 	/* auto-detect IDE controller port */
 	if (findPort()) {
 		if (ali14xx_probe())
@@ -240,6 +244,7 @@ int __init ali14xx_init(void)
 		return 0;
 	}
 	printk(KERN_ERR "ali14xx: not found.\n");
+out:
 	return -ENODEV;
 }
 

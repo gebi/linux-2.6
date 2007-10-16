@@ -119,9 +119,9 @@ void t3_set_reg_field(struct adapter *adapter, unsigned int addr, u32 mask,
  *	Reads registers that are accessed indirectly through an address/data
  *	register pair.
  */
-void t3_read_indirect(struct adapter *adap, unsigned int addr_reg,
-		      unsigned int data_reg, u32 *vals, unsigned int nregs,
-		      unsigned int start_idx)
+static void t3_read_indirect(struct adapter *adap, unsigned int addr_reg,
+			     unsigned int data_reg, u32 *vals,
+			     unsigned int nregs, unsigned int start_idx)
 {
 	while (nregs--) {
 		t3_write_reg(adap, addr_reg, start_idx);
@@ -438,23 +438,23 @@ static const struct adapter_info t3_adap_info[] = {
 	{2, 0, 0, 0,
 	 F_GPIO2_OEN | F_GPIO4_OEN |
 	 F_GPIO2_OUT_VAL | F_GPIO4_OUT_VAL, F_GPIO3 | F_GPIO5,
-	 SUPPORTED_OFFLOAD,
+	 0,
 	 &mi1_mdio_ops, "Chelsio PE9000"},
 	{2, 0, 0, 0,
 	 F_GPIO2_OEN | F_GPIO4_OEN |
 	 F_GPIO2_OUT_VAL | F_GPIO4_OUT_VAL, F_GPIO3 | F_GPIO5,
-	 SUPPORTED_OFFLOAD,
+	 0,
 	 &mi1_mdio_ops, "Chelsio T302"},
 	{1, 0, 0, 0,
 	 F_GPIO1_OEN | F_GPIO6_OEN | F_GPIO7_OEN | F_GPIO10_OEN |
 	 F_GPIO1_OUT_VAL | F_GPIO6_OUT_VAL | F_GPIO10_OUT_VAL, 0,
-	 SUPPORTED_10000baseT_Full | SUPPORTED_AUI | SUPPORTED_OFFLOAD,
+	 SUPPORTED_10000baseT_Full | SUPPORTED_AUI,
 	 &mi1_mdio_ext_ops, "Chelsio T310"},
 	{2, 0, 0, 0,
 	 F_GPIO1_OEN | F_GPIO2_OEN | F_GPIO4_OEN | F_GPIO5_OEN | F_GPIO6_OEN |
 	 F_GPIO7_OEN | F_GPIO10_OEN | F_GPIO11_OEN | F_GPIO1_OUT_VAL |
 	 F_GPIO5_OUT_VAL | F_GPIO6_OUT_VAL | F_GPIO10_OUT_VAL, 0,
-	 SUPPORTED_10000baseT_Full | SUPPORTED_AUI | SUPPORTED_OFFLOAD,
+	 SUPPORTED_10000baseT_Full | SUPPORTED_AUI,
 	 &mi1_mdio_ext_ops, "Chelsio T320"},
 };
 
@@ -505,7 +505,7 @@ struct t3_vpd {
 	u8 vpdr_len[2];
 	VPD_ENTRY(pn, 16);	/* part number */
 	VPD_ENTRY(ec, 16);	/* EC level */
-	VPD_ENTRY(sn, 16);	/* serial number */
+	VPD_ENTRY(sn, SERNUM_LEN); /* serial number */
 	VPD_ENTRY(na, 12);	/* MAC address base */
 	VPD_ENTRY(cclk, 6);	/* core clock */
 	VPD_ENTRY(mclk, 6);	/* mem clock */
@@ -648,6 +648,7 @@ static int get_vpd_params(struct adapter *adapter, struct vpd_params *p)
 	p->uclk = simple_strtoul(vpd.uclk_data, NULL, 10);
 	p->mdc = simple_strtoul(vpd.mdc_data, NULL, 10);
 	p->mem_timing = simple_strtoul(vpd.mt_data, NULL, 10);
+	memcpy(p->sn, vpd.sn_data, SERNUM_LEN);
 
 	/* Old eeproms didn't have port information */
 	if (adapter->params.rev == 0 && !vpd.port0_data[0]) {
@@ -681,7 +682,8 @@ enum {
 	SF_ERASE_SECTOR = 0xd8,	/* erase sector */
 
 	FW_FLASH_BOOT_ADDR = 0x70000,	/* start address of FW in flash */
-	FW_VERS_ADDR = 0x77ffc	/* flash address holding FW version */
+	FW_VERS_ADDR = 0x77ffc,    /* flash address holding FW version */
+	FW_MIN_SIZE = 8            /* at least version and csum */
 };
 
 /**
@@ -846,6 +848,98 @@ static int t3_write_flash(struct adapter *adapter, unsigned int addr,
 	return 0;
 }
 
+/**
+ *	t3_get_tp_version - read the tp sram version
+ *	@adapter: the adapter
+ *	@vers: where to place the version
+ *
+ *	Reads the protocol sram version from sram.
+ */
+int t3_get_tp_version(struct adapter *adapter, u32 *vers)
+{
+	int ret;
+
+	/* Get version loaded in SRAM */
+	t3_write_reg(adapter, A_TP_EMBED_OP_FIELD0, 0);
+	ret = t3_wait_op_done(adapter, A_TP_EMBED_OP_FIELD0,
+			      1, 1, 5, 1);
+	if (ret)
+		return ret;
+	
+	*vers = t3_read_reg(adapter, A_TP_EMBED_OP_FIELD1);
+
+	return 0;
+}
+
+/**
+ *	t3_check_tpsram_version - read the tp sram version
+ *	@adapter: the adapter
+ *	@must_load: set to 1 if loading a new microcode image is required
+ *
+ *	Reads the protocol sram version from flash.
+ */
+int t3_check_tpsram_version(struct adapter *adapter, int *must_load)
+{
+	int ret;
+	u32 vers;
+	unsigned int major, minor;
+
+	if (adapter->params.rev == T3_REV_A)
+		return 0;
+
+	*must_load = 1;
+
+	ret = t3_get_tp_version(adapter, &vers);
+	if (ret)
+		return ret;
+
+	major = G_TP_VERSION_MAJOR(vers);
+	minor = G_TP_VERSION_MINOR(vers);
+
+	if (major == TP_VERSION_MAJOR && minor == TP_VERSION_MINOR) 
+		return 0;
+
+	if (major != TP_VERSION_MAJOR)
+		CH_ERR(adapter, "found wrong TP version (%u.%u), "
+		       "driver needs version %d.%d\n", major, minor,
+		       TP_VERSION_MAJOR, TP_VERSION_MINOR);
+	else {
+		*must_load = 0;
+		CH_ERR(adapter, "found wrong TP version (%u.%u), "
+		       "driver compiled for version %d.%d\n", major, minor,
+		       TP_VERSION_MAJOR, TP_VERSION_MINOR);
+	}
+	return -EINVAL;
+}
+
+/**
+ *	t3_check_tpsram - check if provided protocol SRAM 
+ *			  is compatible with this driver
+ *	@adapter: the adapter
+ *	@tp_sram: the firmware image to write
+ *	@size: image size
+ *
+ *	Checks if an adapter's tp sram is compatible with the driver.
+ *	Returns 0 if the versions are compatible, a negative error otherwise.
+ */
+int t3_check_tpsram(struct adapter *adapter, u8 *tp_sram, unsigned int size)
+{
+	u32 csum;
+	unsigned int i;
+	const u32 *p = (const u32 *)tp_sram;
+
+	/* Verify checksum */
+	for (csum = 0, i = 0; i < size / sizeof(csum); i++)
+		csum += ntohl(p[i]);
+	if (csum != 0xffffffff) {
+		CH_ERR(adapter, "corrupted protocol SRAM image, checksum %u\n",
+		       csum);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 enum fw_version_type {
 	FW_VERSION_N3,
 	FW_VERSION_T3
@@ -866,16 +960,18 @@ int t3_get_fw_version(struct adapter *adapter, u32 *vers)
 /**
  *	t3_check_fw_version - check if the FW is compatible with this driver
  *	@adapter: the adapter
- *
+ *	@must_load: set to 1 if loading a new FW image is required
+
  *	Checks if an adapter's FW is compatible with the driver.  Returns 0
  *	if the versions are compatible, a negative error otherwise.
  */
-int t3_check_fw_version(struct adapter *adapter)
+int t3_check_fw_version(struct adapter *adapter, int *must_load)
 {
 	int ret;
 	u32 vers;
 	unsigned int type, major, minor;
 
+	*must_load = 1;
 	ret = t3_get_fw_version(adapter, &vers);
 	if (ret)
 		return ret;
@@ -884,11 +980,21 @@ int t3_check_fw_version(struct adapter *adapter)
 	major = G_FW_VERSION_MAJOR(vers);
 	minor = G_FW_VERSION_MINOR(vers);
 
-	if (type == FW_VERSION_T3 && major == 3 && minor == 1)
+	if (type == FW_VERSION_T3 && major == FW_VERSION_MAJOR &&
+	    minor == FW_VERSION_MINOR)
 		return 0;
 
-	CH_ERR(adapter, "found wrong FW version(%u.%u), "
-	       "driver needs version 3.1\n", major, minor);
+	if (major != FW_VERSION_MAJOR)
+		CH_ERR(adapter, "found wrong FW version(%u.%u), "
+		       "driver needs version %u.%u\n", major, minor,
+		       FW_VERSION_MAJOR, FW_VERSION_MINOR);
+	else {
+		*must_load = 0;
+		CH_WARN(adapter, "found wrong FW minor version(%u.%u), "
+		        "driver compiled for version %u.%u\n", major, minor,
+			FW_VERSION_MAJOR, FW_VERSION_MINOR);
+	}
+
 	return -EINVAL;
 }
 
@@ -918,7 +1024,7 @@ static int t3_flash_erase_sectors(struct adapter *adapter, int start, int end)
 /*
  *	t3_load_fw - download firmware
  *	@adapter: the adapter
- *	@fw_data: the firrware image to write
+ *	@fw_data: the firmware image to write
  *	@size: image size
  *
  *	Write the supplied firmware image to the card's serial flash.
@@ -933,7 +1039,7 @@ int t3_load_fw(struct adapter *adapter, const u8 *fw_data, unsigned int size)
 	const u32 *p = (const u32 *)fw_data;
 	int ret, addr, fw_sector = FW_FLASH_BOOT_ADDR >> 16;
 
-	if (size & 3)
+	if ((size & 3) || size < FW_MIN_SIZE)
 		return -EINVAL;
 	if (size > FW_VERS_ADDR + 8 - FW_FLASH_BOOT_ADDR)
 		return -EFBIG;
@@ -1252,6 +1358,10 @@ static void pcie_intr_handler(struct adapter *adapter)
 		{0}
 	};
 
+	if (t3_read_reg(adapter, A_PCIE_INT_CAUSE) & F_PEXERR)
+		CH_ALERT(adapter, "PEX error code 0x%x\n",
+			 t3_read_reg(adapter, A_PCIE_PEX_ERR));
+
 	if (t3_handle_intr_status(adapter, A_PCIE_INT_CAUSE, PCIE_INTR_MASK,
 				  pcie_intr_info, adapter->irq_stats))
 		t3_fatal_err(adapter);
@@ -1520,19 +1630,25 @@ static int mac_intr_handler(struct adapter *adap, unsigned int idx)
  */
 int t3_phy_intr_handler(struct adapter *adapter)
 {
-	static const int intr_gpio_bits[] = { 8, 0x20 };
-
+	u32 mask, gpi = adapter_info(adapter)->gpio_intr;
 	u32 i, cause = t3_read_reg(adapter, A_T3DBG_INT_CAUSE);
 
 	for_each_port(adapter, i) {
-		if (cause & intr_gpio_bits[i]) {
-			struct cphy *phy = &adap2pinfo(adapter, i)->phy;
-			int phy_cause = phy->ops->intr_handler(phy);
+		struct port_info *p = adap2pinfo(adapter, i);
+
+		mask = gpi - (gpi & (gpi - 1));
+		gpi -= mask;
+
+		if (!(p->port_type->caps & SUPPORTED_IRQ))
+			continue;
+
+		if (cause & mask) {
+			int phy_cause = p->phy.ops->intr_handler(&p->phy);
 
 			if (phy_cause & cphy_cause_link_change)
 				t3_link_changed(adapter, i);
 			if (phy_cause & cphy_cause_fifo_error)
-				phy->fifo_errors++;
+				p->phy.fifo_errors++;
 		}
 	}
 
@@ -1697,6 +1813,8 @@ void t3_intr_clear(struct adapter *adapter)
 	for (i = 0; i < ARRAY_SIZE(cause_reg_addr); ++i)
 		t3_write_reg(adapter, cause_reg_addr[i], 0xffffffff);
 
+	if (is_pcie(adapter))
+		t3_write_reg(adapter, A_PCIE_PEX_ERR, 0xffffffff);
 	t3_write_reg(adapter, A_PL_INT_CAUSE0, 0xffffffff);
 	t3_read_reg(adapter, A_PL_INT_CAUSE0);	/* flush */
 }
@@ -1752,6 +1870,8 @@ void t3_port_intr_clear(struct adapter *adapter, int idx)
 	phy->ops->intr_clear(phy);
 }
 
+#define SG_CONTEXT_CMD_ATTEMPTS 100
+
 /**
  * 	t3_sge_write_context - write an SGE context
  * 	@adapter: the adapter
@@ -1771,7 +1891,7 @@ static int t3_sge_write_context(struct adapter *adapter, unsigned int id,
 	t3_write_reg(adapter, A_SG_CONTEXT_CMD,
 		     V_CONTEXT_CMD_OPCODE(1) | type | V_CONTEXT(id));
 	return t3_wait_op_done(adapter, A_SG_CONTEXT_CMD, F_CONTEXT_CMD_BUSY,
-			       0, 5, 1);
+			       0, SG_CONTEXT_CMD_ATTEMPTS, 1);
 }
 
 /**
@@ -1928,7 +2048,8 @@ int t3_sge_init_cqcntxt(struct adapter *adapter, unsigned int id, u64 base_addr,
 	base_addr >>= 32;
 	t3_write_reg(adapter, A_SG_CONTEXT_DATA2,
 		     V_CQ_BASE_HI((u32) base_addr) | V_CQ_RSPQ(rspq) |
-		     V_CQ_GEN(1) | V_CQ_OVERFLOW_MODE(ovfl_mode));
+		     V_CQ_GEN(1) | V_CQ_OVERFLOW_MODE(ovfl_mode) |
+		     V_CQ_ERR(ovfl_mode));
 	t3_write_reg(adapter, A_SG_CONTEXT_DATA3, V_CQ_CREDITS(credits) |
 		     V_CQ_CREDIT_THRES(credit_thres));
 	return t3_sge_write_context(adapter, id, F_CQ);
@@ -1956,7 +2077,7 @@ int t3_sge_enable_ecntxt(struct adapter *adapter, unsigned int id, int enable)
 	t3_write_reg(adapter, A_SG_CONTEXT_CMD,
 		     V_CONTEXT_CMD_OPCODE(1) | F_EGRESS | V_CONTEXT(id));
 	return t3_wait_op_done(adapter, A_SG_CONTEXT_CMD, F_CONTEXT_CMD_BUSY,
-			       0, 5, 1);
+			       0, SG_CONTEXT_CMD_ATTEMPTS, 1);
 }
 
 /**
@@ -1980,7 +2101,7 @@ int t3_sge_disable_fl(struct adapter *adapter, unsigned int id)
 	t3_write_reg(adapter, A_SG_CONTEXT_CMD,
 		     V_CONTEXT_CMD_OPCODE(1) | F_FREELIST | V_CONTEXT(id));
 	return t3_wait_op_done(adapter, A_SG_CONTEXT_CMD, F_CONTEXT_CMD_BUSY,
-			       0, 5, 1);
+			       0, SG_CONTEXT_CMD_ATTEMPTS, 1);
 }
 
 /**
@@ -2004,7 +2125,7 @@ int t3_sge_disable_rspcntxt(struct adapter *adapter, unsigned int id)
 	t3_write_reg(adapter, A_SG_CONTEXT_CMD,
 		     V_CONTEXT_CMD_OPCODE(1) | F_RESPONSEQ | V_CONTEXT(id));
 	return t3_wait_op_done(adapter, A_SG_CONTEXT_CMD, F_CONTEXT_CMD_BUSY,
-			       0, 5, 1);
+			       0, SG_CONTEXT_CMD_ATTEMPTS, 1);
 }
 
 /**
@@ -2028,7 +2149,7 @@ int t3_sge_disable_cqcntxt(struct adapter *adapter, unsigned int id)
 	t3_write_reg(adapter, A_SG_CONTEXT_CMD,
 		     V_CONTEXT_CMD_OPCODE(1) | F_CQ | V_CONTEXT(id));
 	return t3_wait_op_done(adapter, A_SG_CONTEXT_CMD, F_CONTEXT_CMD_BUSY,
-			       0, 5, 1);
+			       0, SG_CONTEXT_CMD_ATTEMPTS, 1);
 }
 
 /**
@@ -2053,7 +2174,7 @@ int t3_sge_cqcntxt_op(struct adapter *adapter, unsigned int id, unsigned int op,
 	t3_write_reg(adapter, A_SG_CONTEXT_CMD, V_CONTEXT_CMD_OPCODE(op) |
 		     V_CONTEXT(id) | F_CQ);
 	if (t3_wait_op_done_val(adapter, A_SG_CONTEXT_CMD, F_CONTEXT_CMD_BUSY,
-				0, 5, 1, &val))
+				0, SG_CONTEXT_CMD_ATTEMPTS, 1, &val))
 		return -EIO;
 
 	if (op >= 2 && op < 7) {
@@ -2063,7 +2184,8 @@ int t3_sge_cqcntxt_op(struct adapter *adapter, unsigned int id, unsigned int op,
 		t3_write_reg(adapter, A_SG_CONTEXT_CMD,
 			     V_CONTEXT_CMD_OPCODE(0) | F_CQ | V_CONTEXT(id));
 		if (t3_wait_op_done(adapter, A_SG_CONTEXT_CMD,
-				    F_CONTEXT_CMD_BUSY, 0, 5, 1))
+				    F_CONTEXT_CMD_BUSY, 0,
+				    SG_CONTEXT_CMD_ATTEMPTS, 1))
 			return -EIO;
 		return G_CQ_INDEX(t3_read_reg(adapter, A_SG_CONTEXT_DATA0));
 	}
@@ -2089,7 +2211,7 @@ static int t3_sge_read_context(unsigned int type, struct adapter *adapter,
 	t3_write_reg(adapter, A_SG_CONTEXT_CMD,
 		     V_CONTEXT_CMD_OPCODE(0) | type | V_CONTEXT(id));
 	if (t3_wait_op_done(adapter, A_SG_CONTEXT_CMD, F_CONTEXT_CMD_BUSY, 0,
-			    5, 1))
+			    SG_CONTEXT_CMD_ATTEMPTS, 1))
 		return -EIO;
 	data[0] = t3_read_reg(adapter, A_SG_CONTEXT_DATA0);
 	data[1] = t3_read_reg(adapter, A_SG_CONTEXT_DATA1);
@@ -2353,7 +2475,7 @@ static void tp_config(struct adapter *adap, const struct tp_params *p)
 		     F_TCPCHECKSUMOFFLOAD | V_IPTTL(64));
 	t3_write_reg(adap, A_TP_TCP_OPTIONS, V_MTUDEFAULT(576) |
 		     F_MTUENABLE | V_WINDOWSCALEMODE(1) |
-		     V_TIMESTAMPSMODE(1) | V_SACKMODE(1) | V_SACKRX(1));
+		     V_TIMESTAMPSMODE(0) | V_SACKMODE(1) | V_SACKRX(1));
 	t3_write_reg(adap, A_TP_DACK_CONFIG, V_AUTOSTATE3(1) |
 		     V_AUTOSTATE2(1) | V_AUTOSTATE1(0) |
 		     V_BYTETHRESHOLD(16384) | V_MSSTHRESHOLD(2) |
@@ -2362,16 +2484,18 @@ static void tp_config(struct adapter *adap, const struct tp_params *p)
 			 F_IPV6ENABLE | F_NICMODE);
 	t3_write_reg(adap, A_TP_TX_RESOURCE_LIMIT, 0x18141814);
 	t3_write_reg(adap, A_TP_PARA_REG4, 0x5050105);
-	t3_set_reg_field(adap, A_TP_PARA_REG6,
-			 adap->params.rev > 0 ? F_ENABLEESND : F_T3A_ENABLEESND,
-			 0);
+	t3_set_reg_field(adap, A_TP_PARA_REG6, 0,
+			 adap->params.rev > 0 ? F_ENABLEESND :
+			 F_T3A_ENABLEESND);
 
 	t3_set_reg_field(adap, A_TP_PC_CONFIG,
-			 F_ENABLEEPCMDAFULL | F_ENABLEOCSPIFULL,
-			 F_TXDEFERENABLE | F_HEARBEATDACK | F_TXCONGESTIONMODE |
-			 F_RXCONGESTIONMODE);
+			 F_ENABLEEPCMDAFULL,
+			 F_ENABLEOCSPIFULL |F_TXDEFERENABLE | F_HEARBEATDACK |
+			 F_TXCONGESTIONMODE | F_RXCONGESTIONMODE);
 	t3_set_reg_field(adap, A_TP_PC_CONFIG2, F_CHDRAFULL, 0);
-
+	t3_write_reg(adap, A_TP_PROXY_FLOW_CNTL, 1080);
+	t3_write_reg(adap, A_TP_PROXY_FLOW_CNTL, 1000);
+	
 	if (adap->params.rev > 0) {
 		tp_wr_indirect(adap, A_TP_EGRESS_CONFIG, F_REWRITEFORCETOSIZE);
 		t3_set_reg_field(adap, A_TP_PARA_REG3, F_TXPACEAUTO,
@@ -2381,9 +2505,10 @@ static void tp_config(struct adapter *adap, const struct tp_params *p)
 	} else
 		t3_set_reg_field(adap, A_TP_PARA_REG3, 0, F_TXPACEFIXED);
 
-	t3_write_reg(adap, A_TP_TX_MOD_QUEUE_WEIGHT1, 0x12121212);
-	t3_write_reg(adap, A_TP_TX_MOD_QUEUE_WEIGHT0, 0x12121212);
-	t3_write_reg(adap, A_TP_MOD_CHANNEL_WEIGHT, 0x1212);
+	t3_write_reg(adap, A_TP_TX_MOD_QUEUE_WEIGHT1, 0);
+	t3_write_reg(adap, A_TP_TX_MOD_QUEUE_WEIGHT0, 0);
+	t3_write_reg(adap, A_TP_MOD_CHANNEL_WEIGHT, 0);
+	t3_write_reg(adap, A_TP_MOD_RATE_LIMIT, 0xf2200000);
 }
 
 /* Desired TP timer resolution in usec */
@@ -2459,6 +2584,7 @@ int t3_tp_set_coalescing_size(struct adapter *adap, unsigned int size, int psh)
 		val |= F_RXCOALESCEENABLE;
 		if (psh)
 			val |= F_RXCOALESCEPSHEN;
+		size = min(MAX_RX_COALESCING_LEN, size);
 		t3_write_reg(adap, A_TP_PARA_REG2, V_RXCOALESCESIZE(size) |
 			     V_MAXRXDATA(MAX_RX_COALESCING_LEN));
 	}
@@ -2487,11 +2613,11 @@ static void __devinit init_mtus(unsigned short mtus[])
 	 * it can accomodate max size TCP/IP headers when SACK and timestamps
 	 * are enabled and still have at least 8 bytes of payload.
 	 */
-	mtus[0] = 88;
-	mtus[1] = 256;
-	mtus[2] = 512;
-	mtus[3] = 576;
-	mtus[4] = 808;
+	mtus[1] = 88;
+	mtus[1] = 88;
+	mtus[2] = 256;
+	mtus[3] = 512;
+	mtus[4] = 576;
 	mtus[5] = 1024;
 	mtus[6] = 1280;
 	mtus[7] = 1492;
@@ -2673,6 +2799,34 @@ static void ulp_config(struct adapter *adap, const struct tp_params *p)
 	t3_write_reg(adap, A_ULPRX_TDDP_TAGMASK, 0xffffffff);
 }
 
+/**
+ *	t3_set_proto_sram - set the contents of the protocol sram
+ *	@adapter: the adapter
+ *	@data: the protocol image
+ *
+ *	Write the contents of the protocol SRAM.
+ */
+int t3_set_proto_sram(struct adapter *adap, u8 *data)
+{
+	int i;
+	u32 *buf = (u32 *)data;
+
+	for (i = 0; i < PROTO_SRAM_LINES; i++) {
+		t3_write_reg(adap, A_TP_EMBED_OP_FIELD5, cpu_to_be32(*buf++));
+		t3_write_reg(adap, A_TP_EMBED_OP_FIELD4, cpu_to_be32(*buf++));
+		t3_write_reg(adap, A_TP_EMBED_OP_FIELD3, cpu_to_be32(*buf++));
+		t3_write_reg(adap, A_TP_EMBED_OP_FIELD2, cpu_to_be32(*buf++));
+		t3_write_reg(adap, A_TP_EMBED_OP_FIELD1, cpu_to_be32(*buf++));
+		
+		t3_write_reg(adap, A_TP_EMBED_OP_FIELD0, i << 1 | 1 << 31);
+		if (t3_wait_op_done(adap, A_TP_EMBED_OP_FIELD0, 1, 1, 5, 1))
+			return -EIO;
+	}
+	t3_write_reg(adap, A_TP_EMBED_OP_FIELD0, 0);
+
+	return 0;
+}
+
 void t3_config_trace_filter(struct adapter *adapter,
 			    const struct trace_params *tp, int filter_index,
 			    int invert, int enable)
@@ -2793,7 +2947,7 @@ static void init_hw_for_avail_ports(struct adapter *adap, int nports)
 		t3_set_reg_field(adap, A_ULPTX_CONFIG, F_CFG_RR_ARB, 0);
 		t3_write_reg(adap, A_MPS_CFG, F_TPRXPORTEN | F_TPTXPORT0EN |
 			     F_PORT0ACTIVE | F_ENFORCEPKT);
-		t3_write_reg(adap, A_PM1_TX_CFG, 0xc000c000);
+		t3_write_reg(adap, A_PM1_TX_CFG, 0xffffffff);
 	} else {
 		t3_set_reg_field(adap, A_ULPRX_CTL, 0, F_ROUND_ROBIN);
 		t3_set_reg_field(adap, A_ULPTX_CONFIG, 0, F_CFG_RR_ARB);
@@ -2896,6 +3050,9 @@ static int mc7_init(struct mc7 *mc7, unsigned int mc7_clock, int mem_type)
 	unsigned int width, density, slow, attempts;
 	struct adapter *adapter = mc7->adapter;
 	const struct mc7_timing_params *p = &mc7_timings[mem_type];
+
+	if (!mc7->size)
+		return 0;
 
 	val = t3_read_reg(adapter, mc7->offset + A_MC7_CFG);
 	slow = val & F_SLOW;
@@ -3085,7 +3242,9 @@ int t3_init_hw(struct adapter *adapter, u32 fw_params)
 	else
 		t3_set_reg_field(adapter, A_PCIX_CFG, 0, F_CLIDECEN);
 
-	t3_write_reg(adapter, A_PM1_RX_CFG, 0xf000f000);
+	t3_write_reg(adapter, A_PM1_RX_CFG, 0xffffffff);
+	t3_write_reg(adapter, A_PM1_RX_MODE, 0);
+	t3_write_reg(adapter, A_PM1_TX_MODE, 0);
 	init_hw_for_avail_ports(adapter, adapter->params.nports);
 	t3_sge_init(adapter, &adapter->params.sge);
 
@@ -3097,8 +3256,10 @@ int t3_init_hw(struct adapter *adapter, u32 fw_params)
 	do {			/* wait for uP to initialize */
 		msleep(20);
 	} while (t3_read_reg(adapter, A_CIM_HOST_ACC_DATA) && --attempts);
-	if (!attempts)
+	if (!attempts) {
+		CH_ERR(adapter, "uP initialization timed out\n");
 		goto out_err;
+	}
 
 	err = 0;
 out_err:
@@ -3198,7 +3359,7 @@ static void __devinit mc7_prep(struct adapter *adapter, struct mc7 *mc7,
 	mc7->name = name;
 	mc7->offset = base_addr - MC7_PMRX_BASE_ADDR;
 	cfg = t3_read_reg(adapter, mc7->offset + A_MC7_CFG);
-	mc7->size = mc7_calc_size(cfg);
+	mc7->size = mc7->size = G_DEN(cfg) == M_DEN ? 0 : mc7_calc_size(cfg);
 	mc7->width = G_WIDTH(cfg);
 }
 
@@ -3225,6 +3386,7 @@ void early_hw_init(struct adapter *adapter, const struct adapter_info *ai)
 		     V_I2C_CLKDIV(adapter->params.vpd.cclk / 80 - 1));
 	t3_write_reg(adapter, A_T3DBG_GPIO_EN,
 		     ai->gpio_out | F_GPIO0_OEN | F_GPIO0_OUT_VAL);
+	t3_write_reg(adapter, A_MC5_DB_SERVER_INDEX, 0);
 
 	if (adapter->params.rev == 0 || !uses_xaui(adapter))
 		val |= F_ENRGMII;
@@ -3241,15 +3403,17 @@ void early_hw_init(struct adapter *adapter, const struct adapter_info *ai)
 }
 
 /*
- * Reset the adapter.  PCIe cards lose their config space during reset, PCI-X
+ * Reset the adapter. 
+ * Older PCIe cards lose their config space during reset, PCI-X
  * ones don't.
  */
-int t3_reset_adapter(struct adapter *adapter)
+static int t3_reset_adapter(struct adapter *adapter)
 {
-	int i;
+	int i, save_and_restore_pcie = 
+	    adapter->params.rev < T3_REV_B2 && is_pcie(adapter);
 	uint16_t devid = 0;
 
-	if (is_pcie(adapter))
+	if (save_and_restore_pcie)
 		pci_save_state(adapter->pdev);
 	t3_write_reg(adapter, A_PL_RST, F_CRSTWRM | F_CRSTWRMMODE);
 
@@ -3267,7 +3431,7 @@ int t3_reset_adapter(struct adapter *adapter)
 	if (devid != 0x1425)
 		return -1;
 
-	if (is_pcie(adapter))
+	if (save_and_restore_pcie)
 		pci_restore_state(adapter->pdev);
 	return 0;
 }
@@ -3321,7 +3485,13 @@ int __devinit t3_prep_adapter(struct adapter *adapter,
 		p->tx_num_pgs = pm_num_pages(p->chan_tx_size, p->tx_pg_size);
 		p->ntimer_qs = p->cm_size >= (128 << 20) ||
 		    adapter->params.rev > 0 ? 12 : 6;
+	}
 
+	adapter->params.offload = t3_mc7_size(&adapter->pmrx) &&
+				  t3_mc7_size(&adapter->pmtx) &&
+				  t3_mc7_size(&adapter->cm);
+
+	if (is_offload(adapter)) {
 		adapter->params.mc5.nservers = DEFAULT_NSERVERS;
 		adapter->params.mc5.nfilters = adapter->params.rev > 0 ?
 		    DEFAULT_NFILTERS : 0;

@@ -51,8 +51,8 @@
 #include "mv643xx_eth.h"
 
 /* Static function declarations */
-static void eth_port_uc_addr_get(struct net_device *dev,
-						unsigned char *MacAddr);
+static void eth_port_uc_addr_get(unsigned int port_num, unsigned char *p_addr);
+static void eth_port_uc_addr_set(unsigned int port_num, unsigned char *p_addr);
 static void eth_port_set_multicast_list(struct net_device *);
 static void mv643xx_eth_port_enable_tx(unsigned int port_num,
 						unsigned int queues);
@@ -63,10 +63,9 @@ static unsigned int mv643xx_eth_port_disable_rx(unsigned int port_num);
 static int mv643xx_eth_open(struct net_device *);
 static int mv643xx_eth_stop(struct net_device *);
 static int mv643xx_eth_change_mtu(struct net_device *, int);
-static struct net_device_stats *mv643xx_eth_get_stats(struct net_device *);
 static void eth_port_init_mac_tables(unsigned int eth_port_num);
 #ifdef MV643XX_NAPI
-static int mv643xx_poll(struct net_device *dev, int *budget);
+static int mv643xx_poll(struct napi_struct *napi, int budget);
 #endif
 static int ethernet_phy_get(unsigned int eth_port_num);
 static void ethernet_phy_set(unsigned int eth_port_num, int phy_addr);
@@ -147,13 +146,13 @@ static void mv643xx_eth_rx_refill_descs(struct net_device *dev)
 	int unaligned;
 
 	while (mp->rx_desc_count < mp->rx_ring_size) {
-		skb = dev_alloc_skb(ETH_RX_SKB_SIZE + ETH_DMA_ALIGN);
+		skb = dev_alloc_skb(ETH_RX_SKB_SIZE + dma_get_cache_alignment());
 		if (!skb)
 			break;
 		mp->rx_desc_count++;
-		unaligned = (u32)skb->data & (ETH_DMA_ALIGN - 1);
+		unaligned = (u32)skb->data & (dma_get_cache_alignment() - 1);
 		if (unaligned)
-			skb_reserve(skb, ETH_DMA_ALIGN - unaligned);
+			skb_reserve(skb, dma_get_cache_alignment() - unaligned);
 		pkt_info.cmd_sts = ETH_RX_ENABLE_INTERRUPT;
 		pkt_info.byte_cnt = ETH_RX_SKB_SIZE;
 		pkt_info.buf_ptr = dma_map_single(NULL, skb->data,
@@ -341,7 +340,7 @@ int mv643xx_eth_free_tx_descs(struct net_device *dev, int force)
 
 		if (cmd_sts & ETH_ERROR_SUMMARY) {
 			printk("%s: Error in TX\n", dev->name);
-			mp->stats.tx_errors++;
+			dev->stats.tx_errors++;
 		}
 
 		spin_unlock_irqrestore(&mp->lock, flags);
@@ -388,7 +387,7 @@ static void mv643xx_eth_free_all_tx_descs(struct net_device *dev)
 static int mv643xx_eth_receive_queue(struct net_device *dev, int budget)
 {
 	struct mv643xx_private *mp = netdev_priv(dev);
-	struct net_device_stats *stats = &mp->stats;
+	struct net_device_stats *stats = &dev->stats;
 	unsigned int received_packets = 0;
 	struct sk_buff *skb;
 	struct pkt_info pkt_info;
@@ -434,7 +433,6 @@ static int mv643xx_eth_receive_queue(struct net_device *dev, int budget)
 			 * received packet
 			 */
 			skb_put(skb, pkt_info.byte_cnt - 4);
-			skb->dev = dev;
 
 			if (pkt_info.cmd_sts & ETH_LAYER_4_CHECKSUM_OK) {
 				skb->ip_summed = CHECKSUM_UNNECESSARY;
@@ -535,7 +533,7 @@ static irqreturn_t mv643xx_eth_int_handler(int irq, void *dev_id)
 	}
 
 	/* PHY status changed */
-	if (eth_int_cause_ext & ETH_INT_CAUSE_PHY) {
+	if (eth_int_cause_ext & (ETH_INT_CAUSE_PHY | ETH_INT_CAUSE_STATE)) {
 		struct ethtool_cmd cmd;
 
 		if (mii_link_ok(&mp->mii)) {
@@ -563,7 +561,7 @@ static irqreturn_t mv643xx_eth_int_handler(int irq, void *dev_id)
 		/* wait for previous write to complete */
 		mv_read(MV643XX_ETH_INTERRUPT_MASK_REG(port_num));
 
-		netif_rx_schedule(dev);
+		netif_rx_schedule(dev, &mp->napi);
 	}
 #else
 	if (eth_int_cause & ETH_INT_CAUSE_RX)
@@ -787,6 +785,12 @@ static int mv643xx_eth_open(struct net_device *dev)
 	unsigned int size;
 	int err;
 
+	/* Clear any pending ethernet port interrupts */
+	mv_write(MV643XX_ETH_INTERRUPT_CAUSE_REG(port_num), 0);
+	mv_write(MV643XX_ETH_INTERRUPT_CAUSE_EXTEND_REG(port_num), 0);
+	/* wait for previous write to complete */
+	mv_read (MV643XX_ETH_INTERRUPT_CAUSE_EXTEND_REG(port_num));
+
 	err = request_irq(dev->irq, mv643xx_eth_int_handler,
 			IRQF_SHARED | IRQF_SAMPLE_RANDOM, dev->name, dev);
 	if (err) {
@@ -875,9 +879,9 @@ static int mv643xx_eth_open(struct net_device *dev)
 
 	mv643xx_eth_rx_refill_descs(dev);	/* Fill RX ring with skb's */
 
-	/* Clear any pending ethernet port interrupts */
-	mv_write(MV643XX_ETH_INTERRUPT_CAUSE_REG(port_num), 0);
-	mv_write(MV643XX_ETH_INTERRUPT_CAUSE_EXTEND_REG(port_num), 0);
+#ifdef MV643XX_NAPI
+	napi_enable(&mp->napi);
+#endif
 
 	eth_port_start(dev);
 
@@ -981,7 +985,7 @@ static int mv643xx_eth_stop(struct net_device *dev)
 	mv_read(MV643XX_ETH_INTERRUPT_MASK_REG(port_num));
 
 #ifdef MV643XX_NAPI
-	netif_poll_disable(dev);
+	napi_disable(&mp->napi);
 #endif
 	netif_carrier_off(dev);
 	netif_stop_queue(dev);
@@ -990,10 +994,6 @@ static int mv643xx_eth_stop(struct net_device *dev)
 
 	mv643xx_eth_free_tx_rings(dev);
 	mv643xx_eth_free_rx_rings(dev);
-
-#ifdef MV643XX_NAPI
-	netif_poll_enable(dev);
-#endif
 
 	free_irq(dev->irq, dev);
 
@@ -1006,11 +1006,12 @@ static int mv643xx_eth_stop(struct net_device *dev)
  *
  * This function is used in case of NAPI
  */
-static int mv643xx_poll(struct net_device *dev, int *budget)
+static int mv643xx_poll(struct napi_struct *napi, int budget)
 {
-	struct mv643xx_private *mp = netdev_priv(dev);
-	int done = 1, orig_budget, work_done;
+	struct mv643xx_private *mp = container_of(napi, struct mv643xx_private, napi);
+	struct net_device *dev = mp->dev;
 	unsigned int port_num = mp->port_num;
+	int work_done;
 
 #ifdef MV643XX_TX_FAST_REFILL
 	if (++mp->tx_clean_threshold > 5) {
@@ -1019,27 +1020,20 @@ static int mv643xx_poll(struct net_device *dev, int *budget)
 	}
 #endif
 
+	work_done = 0;
 	if ((mv_read(MV643XX_ETH_RX_CURRENT_QUEUE_DESC_PTR_0(port_num)))
-						!= (u32) mp->rx_used_desc_q) {
-		orig_budget = *budget;
-		if (orig_budget > dev->quota)
-			orig_budget = dev->quota;
-		work_done = mv643xx_eth_receive_queue(dev, orig_budget);
-		*budget -= work_done;
-		dev->quota -= work_done;
-		if (work_done >= orig_budget)
-			done = 0;
-	}
+	    != (u32) mp->rx_used_desc_q)
+		work_done = mv643xx_eth_receive_queue(dev, budget);
 
-	if (done) {
-		netif_rx_complete(dev);
+	if (work_done < budget) {
+		netif_rx_complete(dev, napi);
 		mv_write(MV643XX_ETH_INTERRUPT_CAUSE_REG(port_num), 0);
 		mv_write(MV643XX_ETH_INTERRUPT_CAUSE_EXTEND_REG(port_num), 0);
 		mv_write(MV643XX_ETH_INTERRUPT_MASK_REG(port_num),
 						ETH_INT_UNMASK_ALL);
 	}
 
-	return done ? 0 : 1;
+	return work_done;
 }
 #endif
 
@@ -1160,15 +1154,15 @@ static void eth_tx_submit_descs_for_skb(struct mv643xx_private *mp,
 
 		cmd_sts |= ETH_GEN_TCP_UDP_CHECKSUM |
 			   ETH_GEN_IP_V_4_CHECKSUM  |
-			   skb->nh.iph->ihl << ETH_TX_IHL_SHIFT;
+			   ip_hdr(skb)->ihl << ETH_TX_IHL_SHIFT;
 
-		switch (skb->nh.iph->protocol) {
+		switch (ip_hdr(skb)->protocol) {
 		case IPPROTO_UDP:
 			cmd_sts |= ETH_UDP_FRAME;
-			desc->l4i_chk = skb->h.uh->check;
+			desc->l4i_chk = udp_hdr(skb)->check;
 			break;
 		case IPPROTO_TCP:
-			desc->l4i_chk = skb->h.th->check;
+			desc->l4i_chk = tcp_hdr(skb)->check;
 			break;
 		default:
 			BUG();
@@ -1197,7 +1191,7 @@ static void eth_tx_submit_descs_for_skb(struct mv643xx_private *mp,
 static int mv643xx_eth_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct mv643xx_private *mp = netdev_priv(dev);
-	struct net_device_stats *stats = &mp->stats;
+	struct net_device_stats *stats = &dev->stats;
 	unsigned long flags;
 
 	BUG_ON(netif_queue_stopped(dev));
@@ -1221,7 +1215,7 @@ static int mv643xx_eth_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	spin_lock_irqsave(&mp->lock, flags);
 
 	eth_tx_submit_descs_for_skb(mp, skb);
-	stats->tx_bytes = skb->len;
+	stats->tx_bytes += skb->len;
 	stats->tx_packets++;
 	dev->trans_start = jiffies;
 
@@ -1231,23 +1225,6 @@ static int mv643xx_eth_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	spin_unlock_irqrestore(&mp->lock, flags);
 
 	return 0;		/* success */
-}
-
-/*
- * mv643xx_eth_get_stats
- *
- * Returns a pointer to the interface statistics.
- *
- * Input :	dev - a pointer to the required interface
- *
- * Output :	a pointer to the interface's statistics
- */
-
-static struct net_device_stats *mv643xx_eth_get_stats(struct net_device *dev)
-{
-	struct mv643xx_private *mp = netdev_priv(dev);
-
-	return &mp->stats;
 }
 
 #ifdef CONFIG_NET_POLL_CONTROLLER
@@ -1309,7 +1286,7 @@ static void mv643xx_init_ethtool_cmd(struct net_device *dev, int phy_address,
 static int mv643xx_eth_probe(struct platform_device *pdev)
 {
 	struct mv643xx_eth_platform_data *pd;
-	int port_num = pdev->id;
+	int port_num;
 	struct mv643xx_private *mp;
 	struct net_device *dev;
 	u8 *p;
@@ -1318,6 +1295,13 @@ static int mv643xx_eth_probe(struct platform_device *pdev)
 	struct ethtool_cmd cmd;
 	int duplex = DUPLEX_HALF;
 	int speed = 0;			/* default to auto-negotiation */
+	DECLARE_MAC_BUF(mac);
+
+	pd = pdev->dev.platform_data;
+	if (pd == NULL) {
+		printk(KERN_ERR "No mv643xx_eth_platform_data\n");
+		return -ENODEV;
+	}
 
 	dev = alloc_etherdev(sizeof(struct mv643xx_private));
 	if (!dev)
@@ -1326,33 +1310,29 @@ static int mv643xx_eth_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, dev);
 
 	mp = netdev_priv(dev);
+	mp->dev = dev;
+#ifdef MV643XX_NAPI
+	netif_napi_add(dev, &mp->napi, mv643xx_poll, 64);
+#endif
 
 	res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
 	BUG_ON(!res);
 	dev->irq = res->start;
 
-	mp->port_num = port_num;
-
 	dev->open = mv643xx_eth_open;
 	dev->stop = mv643xx_eth_stop;
 	dev->hard_start_xmit = mv643xx_eth_start_xmit;
-	dev->get_stats = mv643xx_eth_get_stats;
 	dev->set_mac_address = mv643xx_eth_set_mac_address;
 	dev->set_multicast_list = mv643xx_eth_set_rx_mode;
 
 	/* No need to Tx Timeout */
 	dev->tx_timeout = mv643xx_eth_tx_timeout;
-#ifdef MV643XX_NAPI
-	dev->poll = mv643xx_poll;
-	dev->weight = 64;
-#endif
 
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	dev->poll_controller = mv643xx_netpoll;
 #endif
 
 	dev->watchdog_timeo = 2 * HZ;
-	dev->tx_queue_len = mp->tx_ring_size;
 	dev->base_addr = 0;
 	dev->change_mtu = mv643xx_eth_change_mtu;
 	dev->do_ioctl = mv643xx_eth_do_ioctl;
@@ -1373,38 +1353,37 @@ static int mv643xx_eth_probe(struct platform_device *pdev)
 
 	spin_lock_init(&mp->lock);
 
+	port_num = mp->port_num = pd->port_number;
+
 	/* set default config values */
-	eth_port_uc_addr_get(dev, dev->dev_addr);
+	eth_port_uc_addr_get(port_num, dev->dev_addr);
 	mp->rx_ring_size = MV643XX_ETH_PORT_DEFAULT_RECEIVE_QUEUE_SIZE;
 	mp->tx_ring_size = MV643XX_ETH_PORT_DEFAULT_TRANSMIT_QUEUE_SIZE;
 
-	pd = pdev->dev.platform_data;
-	if (pd) {
-		if (pd->mac_addr)
-			memcpy(dev->dev_addr, pd->mac_addr, 6);
+	if (is_valid_ether_addr(pd->mac_addr))
+		memcpy(dev->dev_addr, pd->mac_addr, 6);
 
-		if (pd->phy_addr || pd->force_phy_addr)
-			ethernet_phy_set(port_num, pd->phy_addr);
+	if (pd->phy_addr || pd->force_phy_addr)
+		ethernet_phy_set(port_num, pd->phy_addr);
 
-		if (pd->rx_queue_size)
-			mp->rx_ring_size = pd->rx_queue_size;
+	if (pd->rx_queue_size)
+		mp->rx_ring_size = pd->rx_queue_size;
 
-		if (pd->tx_queue_size)
-			mp->tx_ring_size = pd->tx_queue_size;
+	if (pd->tx_queue_size)
+		mp->tx_ring_size = pd->tx_queue_size;
 
-		if (pd->tx_sram_size) {
-			mp->tx_sram_size = pd->tx_sram_size;
-			mp->tx_sram_addr = pd->tx_sram_addr;
-		}
-
-		if (pd->rx_sram_size) {
-			mp->rx_sram_size = pd->rx_sram_size;
-			mp->rx_sram_addr = pd->rx_sram_addr;
-		}
-
-		duplex = pd->duplex;
-		speed = pd->speed;
+	if (pd->tx_sram_size) {
+		mp->tx_sram_size = pd->tx_sram_size;
+		mp->tx_sram_addr = pd->tx_sram_addr;
 	}
+
+	if (pd->rx_sram_size) {
+		mp->rx_sram_size = pd->rx_sram_size;
+		mp->rx_sram_addr = pd->rx_sram_addr;
+	}
+
+	duplex = pd->duplex;
+	speed = pd->speed;
 
 	/* Hook up MII support for ethtool */
 	mp->mii.dev = dev;
@@ -1428,7 +1407,6 @@ static int mv643xx_eth_probe(struct platform_device *pdev)
 	mv643xx_eth_update_pscr(dev, &cmd);
 	mv643xx_set_settings(dev, &cmd);
 
-	SET_MODULE_OWNER(dev);
 	SET_NETDEV_DEV(dev, &pdev->dev);
 	err = register_netdev(dev);
 	if (err)
@@ -1436,8 +1414,8 @@ static int mv643xx_eth_probe(struct platform_device *pdev)
 
 	p = dev->dev_addr;
 	printk(KERN_NOTICE
-		"%s: port %d with MAC address %02x:%02x:%02x:%02x:%02x:%02x\n",
-		dev->name, port_num, p[0], p[1], p[2], p[3], p[4], p[5]);
+		"%s: port %d with MAC address %s\n",
+		dev->name, port_num, print_mac(mac, p));
 
 	if (dev->features & NETIF_F_SG)
 		printk(KERN_NOTICE "%s: Scatter Gather Enabled\n", dev->name);
@@ -1509,9 +1487,23 @@ static int mv643xx_eth_shared_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static void mv643xx_eth_shutdown(struct platform_device *pdev)
+{
+	struct net_device *dev = platform_get_drvdata(pdev);
+	struct mv643xx_private *mp = netdev_priv(dev);
+	unsigned int port_num = mp->port_num;
+
+	/* Mask all interrupts on ethernet port */
+	mv_write(MV643XX_ETH_INTERRUPT_MASK_REG(port_num), 0);
+	mv_read (MV643XX_ETH_INTERRUPT_MASK_REG(port_num));
+
+	eth_port_reset(port_num);
+}
+
 static struct platform_driver mv643xx_eth_driver = {
 	.probe = mv643xx_eth_probe,
 	.remove = mv643xx_eth_remove,
+	.shutdown = mv643xx_eth_shutdown,
 	.driver = {
 		.name = MV643XX_ETH_NAME,
 	},
@@ -1821,26 +1813,9 @@ static void eth_port_start(struct net_device *dev)
 }
 
 /*
- * eth_port_uc_addr_set - This function Set the port Unicast address.
- *
- * DESCRIPTION:
- *		This function Set the port Ethernet MAC address.
- *
- * INPUT:
- *	unsigned int	eth_port_num	Port number.
- *	char *		p_addr		Address to be set
- *
- * OUTPUT:
- *	Set MAC address low and high registers. also calls
- *	eth_port_set_filter_table_entry() to set the unicast
- *	table with the proper information.
- *
- * RETURN:
- *	N/A.
- *
+ * eth_port_uc_addr_set - Write a MAC address into the port's hw registers
  */
-static void eth_port_uc_addr_set(unsigned int eth_port_num,
-							unsigned char *p_addr)
+static void eth_port_uc_addr_set(unsigned int port_num, unsigned char *p_addr)
 {
 	unsigned int mac_h;
 	unsigned int mac_l;
@@ -1850,40 +1825,24 @@ static void eth_port_uc_addr_set(unsigned int eth_port_num,
 	mac_h = (p_addr[0] << 24) | (p_addr[1] << 16) | (p_addr[2] << 8) |
 							(p_addr[3] << 0);
 
-	mv_write(MV643XX_ETH_MAC_ADDR_LOW(eth_port_num), mac_l);
-	mv_write(MV643XX_ETH_MAC_ADDR_HIGH(eth_port_num), mac_h);
+	mv_write(MV643XX_ETH_MAC_ADDR_LOW(port_num), mac_l);
+	mv_write(MV643XX_ETH_MAC_ADDR_HIGH(port_num), mac_h);
 
-	/* Accept frames of this address */
-	table = MV643XX_ETH_DA_FILTER_UNICAST_TABLE_BASE(eth_port_num);
+	/* Accept frames with this address */
+	table = MV643XX_ETH_DA_FILTER_UNICAST_TABLE_BASE(port_num);
 	eth_port_set_filter_table_entry(table, p_addr[5] & 0x0f);
 }
 
 /*
- * eth_port_uc_addr_get - This function retrieves the port Unicast address
- * (MAC address) from the ethernet hw registers.
- *
- * DESCRIPTION:
- *		This function retrieves the port Ethernet MAC address.
- *
- * INPUT:
- *	unsigned int	eth_port_num	Port number.
- *	char		*MacAddr	pointer where the MAC address is stored
- *
- * OUTPUT:
- *	Copy the MAC address to the location pointed to by MacAddr
- *
- * RETURN:
- *	N/A.
- *
+ * eth_port_uc_addr_get - Read the MAC address from the port's hw registers
  */
-static void eth_port_uc_addr_get(struct net_device *dev, unsigned char *p_addr)
+static void eth_port_uc_addr_get(unsigned int port_num, unsigned char *p_addr)
 {
-	struct mv643xx_private *mp = netdev_priv(dev);
 	unsigned int mac_h;
 	unsigned int mac_l;
 
-	mac_h = mv_read(MV643XX_ETH_MAC_ADDR_HIGH(mp->port_num));
-	mac_l = mv_read(MV643XX_ETH_MAC_ADDR_LOW(mp->port_num));
+	mac_h = mv_read(MV643XX_ETH_MAC_ADDR_HIGH(port_num));
+	mac_l = mv_read(MV643XX_ETH_MAC_ADDR_LOW(port_num));
 
 	p_addr[0] = (mac_h >> 24) & 0xff;
 	p_addr[1] = (mac_h >> 16) & 0xff;
@@ -2703,8 +2662,7 @@ static const struct mv643xx_stats mv643xx_gstrings_stats[] = {
 	{ "late_collision", MV643XX_STAT(mib_counters.late_collision) },
 };
 
-#define MV643XX_STATS_LEN	\
-	sizeof(mv643xx_gstrings_stats) / sizeof(struct mv643xx_stats)
+#define MV643XX_STATS_LEN	ARRAY_SIZE(mv643xx_gstrings_stats)
 
 static void mv643xx_get_drvinfo(struct net_device *netdev,
 				struct ethtool_drvinfo *drvinfo)
@@ -2716,9 +2674,14 @@ static void mv643xx_get_drvinfo(struct net_device *netdev,
 	drvinfo->n_stats = MV643XX_STATS_LEN;
 }
 
-static int mv643xx_get_stats_count(struct net_device *netdev)
+static int mv643xx_get_sset_count(struct net_device *netdev, int sset)
 {
-	return MV643XX_STATS_LEN;
+	switch (sset) {
+	case ETH_SS_STATS:
+		return MV643XX_STATS_LEN;
+	default:
+		return -EOPNOTSUPP;
+	}
 }
 
 static void mv643xx_get_ethtool_stats(struct net_device *netdev,
@@ -2778,13 +2741,9 @@ static const struct ethtool_ops mv643xx_ethtool_ops = {
 	.set_settings           = mv643xx_set_settings,
 	.get_drvinfo            = mv643xx_get_drvinfo,
 	.get_link               = mv643xx_eth_get_link,
-	.get_sg			= ethtool_op_get_sg,
 	.set_sg			= ethtool_op_set_sg,
-	.get_stats_count        = mv643xx_get_stats_count,
 	.get_ethtool_stats      = mv643xx_get_ethtool_stats,
 	.get_strings            = mv643xx_get_strings,
-	.get_stats_count        = mv643xx_get_stats_count,
-	.get_ethtool_stats      = mv643xx_get_ethtool_stats,
 	.nway_reset		= mv643xx_eth_nway_restart,
 };
 

@@ -17,6 +17,7 @@
 #include <linux/bootmem.h>
 #include <linux/efi.h>
 #include <linux/mm.h>
+#include <linux/nmi.h>
 #include <linux/swap.h>
 
 #include <asm/meminit.h>
@@ -56,6 +57,8 @@ void show_mem(void)
 		present = pgdat->node_present_pages;
 		for(i = 0; i < pgdat->node_spanned_pages; i++) {
 			struct page *page;
+			if (unlikely(i % MAX_ORDER_NR_PAGES == 0))
+				touch_nmi_watchdog();
 			if (pfn_valid(pgdat->node_start_pfn + i))
 				page = pfn_to_page(pgdat->node_start_pfn + i);
 			else {
@@ -88,33 +91,13 @@ void show_mem(void)
 	printk(KERN_INFO "%d pages shared\n", total_shared);
 	printk(KERN_INFO "%d pages swap cached\n", total_cached);
 	printk(KERN_INFO "Total of %ld pages in page table cache\n",
-	       pgtable_quicklist_total_size());
+	       quicklist_total_size());
 	printk(KERN_INFO "%d free buffer pages\n", nr_free_buffer_pages());
 }
 
 
 /* physical address where the bootmem map is located */
 unsigned long bootmap_start;
-
-/**
- * find_max_pfn - adjust the maximum page number callback
- * @start: start of range
- * @end: end of range
- * @arg: address of pointer to global max_pfn variable
- *
- * Passed as a callback function to efi_memmap_walk() to determine the highest
- * available page frame number in the system.
- */
-int
-find_max_pfn (unsigned long start, unsigned long end, void *arg)
-{
-	unsigned long *max_pfnp = arg, pfn;
-
-	pfn = (PAGE_ALIGN(end - 1) - PAGE_OFFSET) >> PAGE_SHIFT;
-	if (pfn > *max_pfnp)
-		*max_pfnp = pfn;
-	return 0;
-}
 
 /**
  * find_bootmap_location - callback to find a memory area for the bootmap
@@ -177,9 +160,10 @@ find_memory (void)
 	reserve_memory();
 
 	/* first find highest page frame number */
-	max_pfn = 0;
-	efi_memmap_walk(find_max_pfn, &max_pfn);
-
+	min_low_pfn = ~0UL;
+	max_low_pfn = 0;
+	efi_memmap_walk(find_max_min_low_pfn, NULL);
+	max_pfn = max_low_pfn;
 	/* how many bytes to cover all the pages */
 	bootmap_size = bootmem_bootmap_pages(max_pfn) << PAGE_SHIFT;
 
@@ -189,7 +173,8 @@ find_memory (void)
 	if (bootmap_start == ~0UL)
 		panic("Cannot find %ld bytes for bootmap\n", bootmap_size);
 
-	bootmap_size = init_bootmem(bootmap_start >> PAGE_SHIFT, max_pfn);
+	bootmap_size = init_bootmem_node(NODE_DATA(0),
+			(bootmap_start >> PAGE_SHIFT), 0, max_pfn);
 
 	/* Free all available memory, then mark bootmem-map as being in use. */
 	efi_memmap_walk(filter_rsvd_memory, free_bootmem);
@@ -197,11 +182,6 @@ find_memory (void)
 
 	find_initrd();
 
-#ifdef CONFIG_CRASH_DUMP
-	/* If we are doing a crash dump, we still need to know the real mem
-	 * size before original memory map is reset. */
-	saved_max_pfn = max_pfn;
-#endif
 }
 
 #ifdef CONFIG_SMP

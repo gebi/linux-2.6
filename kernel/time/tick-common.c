@@ -31,7 +31,7 @@ DEFINE_PER_CPU(struct tick_device, tick_cpu_device);
  */
 ktime_t tick_next_period;
 ktime_t tick_period;
-static int tick_do_timer_cpu = -1;
+int tick_do_timer_cpu __read_mostly = -1;
 DEFINE_SPINLOCK(tick_device_lock);
 
 /*
@@ -77,6 +77,7 @@ static void tick_periodic(int cpu)
 void tick_handle_periodic(struct clock_event_device *dev)
 {
 	int cpu = smp_processor_id();
+	ktime_t next;
 
 	tick_periodic(cpu);
 
@@ -86,12 +87,12 @@ void tick_handle_periodic(struct clock_event_device *dev)
 	 * Setup the next period for devices, which do not have
 	 * periodic mode:
 	 */
+	next = ktime_add(dev->next_event, tick_period);
 	for (;;) {
-		ktime_t next = ktime_add(dev->next_event, tick_period);
-
 		if (!clockevents_program_event(dev, next, ktime_get()))
 			return;
 		tick_periodic(cpu);
+		next = ktime_add(next, tick_period);
 	}
 }
 
@@ -199,7 +200,7 @@ static int tick_check_new_device(struct clock_event_device *newdev)
 
 	cpu = smp_processor_id();
 	if (!cpu_isset(cpu, newdev->cpumask))
-		goto out;
+		goto out_bc;
 
 	td = &per_cpu(tick_cpu_device, cpu);
 	curdev = td->evtdev;
@@ -264,7 +265,7 @@ out_bc:
 	 */
 	if (tick_check_broadcast_device(newdev))
 		ret = NOTIFY_STOP;
-out:
+
 	spin_unlock_irqrestore(&tick_device_lock, flags);
 
 	return ret;
@@ -294,6 +295,40 @@ static void tick_shutdown(unsigned int *cpup)
 		clockevents_exchange_device(dev, NULL);
 		td->evtdev = NULL;
 	}
+	/* Transfer the do_timer job away from this cpu */
+	if (*cpup == tick_do_timer_cpu) {
+		int cpu = first_cpu(cpu_online_map);
+
+		tick_do_timer_cpu = (cpu != NR_CPUS) ? cpu : -1;
+	}
+	spin_unlock_irqrestore(&tick_device_lock, flags);
+}
+
+static void tick_suspend(void)
+{
+	struct tick_device *td = &__get_cpu_var(tick_cpu_device);
+	unsigned long flags;
+
+	spin_lock_irqsave(&tick_device_lock, flags);
+	clockevents_set_mode(td->evtdev, CLOCK_EVT_MODE_SHUTDOWN);
+	spin_unlock_irqrestore(&tick_device_lock, flags);
+}
+
+static void tick_resume(void)
+{
+	struct tick_device *td = &__get_cpu_var(tick_cpu_device);
+	unsigned long flags;
+	int broadcast = tick_resume_broadcast();
+
+	spin_lock_irqsave(&tick_device_lock, flags);
+	clockevents_set_mode(td->evtdev, CLOCK_EVT_MODE_RESUME);
+
+	if (!broadcast) {
+		if (td->mode == TICKDEV_MODE_PERIODIC)
+			tick_setup_periodic(td->evtdev, 0);
+		else
+			tick_resume_oneshot();
+	}
 	spin_unlock_irqrestore(&tick_device_lock, flags);
 }
 
@@ -310,6 +345,7 @@ static int tick_notify(struct notifier_block *nb, unsigned long reason,
 
 	case CLOCK_EVT_NOTIFY_BROADCAST_ON:
 	case CLOCK_EVT_NOTIFY_BROADCAST_OFF:
+	case CLOCK_EVT_NOTIFY_BROADCAST_FORCE:
 		tick_broadcast_on_off(reason, dev);
 		break;
 
@@ -322,6 +358,15 @@ static int tick_notify(struct notifier_block *nb, unsigned long reason,
 		tick_shutdown_broadcast_oneshot(dev);
 		tick_shutdown_broadcast(dev);
 		tick_shutdown(dev);
+		break;
+
+	case CLOCK_EVT_NOTIFY_SUSPEND:
+		tick_suspend();
+		tick_suspend_broadcast();
+		break;
+
+	case CLOCK_EVT_NOTIFY_RESUME:
+		tick_resume();
 		break;
 
 	default:

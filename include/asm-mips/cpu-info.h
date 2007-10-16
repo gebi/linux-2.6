@@ -14,10 +14,6 @@
 
 #include <asm/cache.h>
 
-#ifdef CONFIG_SGI_IP27
-#include <asm/sn/types.h>
-#endif
-
 /*
  * Descriptor for a cache
  */
@@ -43,20 +39,6 @@ struct cache_desc {
 struct cpuinfo_mips {
 	unsigned long		udelay_val;
 	unsigned long		asid_cache;
-#if defined(CONFIG_SGI_IP27)
-//	cpuid_t		p_cpuid;	/* PROM assigned cpuid */
-	cnodeid_t	p_nodeid;	/* my node ID in compact-id-space */
-	nasid_t		p_nasid;	/* my node ID in numa-as-id-space */
-	unsigned char	p_slice;	/* Physical position on node board */
-#endif
-#if 0
-	unsigned long		loops_per_sec;
-	unsigned long		ipi_count;
-	unsigned long		irq_attempt[NR_IRQS];
-	unsigned long		smp_local_irq_count;
-	unsigned long		prof_multiplier;
-	unsigned long		prof_counter;
-#endif
 
 	/*
 	 * Capability and feature descriptor structure for MIPS CPU
@@ -87,8 +69,12 @@ struct cpuinfo_mips {
 
 extern struct cpuinfo_mips cpu_data[];
 #define current_cpu_data cpu_data[smp_processor_id()]
+#define raw_current_cpu_data cpu_data[raw_smp_processor_id()]
 
 extern void cpu_probe(void);
 extern void cpu_report(void);
+
+extern const char *__cpu_name[];
+#define cpu_name_string()	__cpu_name[smp_processor_id()]
 
 #endif /* __ASM_CPU_INFO_H */
