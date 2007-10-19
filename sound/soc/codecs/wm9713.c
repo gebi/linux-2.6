@@ -668,7 +668,7 @@ struct pll_ {
 	unsigned int k;
 };
 
-struct pll_ pll[] = {
+static struct pll_ pll[] = {
 	{13000000, 0, 1, 0, 0, 7, 0x23f488},
 	{2048000,  1, 0, 0, 0, 12, 0x0},
 	{4096000,  1, 0, 0, 0, 6, 0x0},
