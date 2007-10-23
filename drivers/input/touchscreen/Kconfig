@@ -213,7 +213,6 @@ config TOUCHSCREEN_WM97XX_PXA
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called pxa-wm97xx
-endif
 
 config TOUCHSCREEN_TOUCHWIN
 	tristate "Touchwin serial touchscreen"
