@@ -2,7 +2,7 @@
  * wm97xx-core.c  --  Touch screen driver core for Wolfson WM9705, WM9712
  *                    and WM9713 AC97 Codecs.
  *
- * Copyright 2003, 2004, 2005, 2006 Wolfson Microelectronics PLC.
+ * Copyright 2003, 2004, 2005, 2006, 2007 Wolfson Microelectronics PLC.
  * Author: Liam Girdwood
  *         liam.girdwood@wolfsonmicro.com or linux@wolfsonmicro.com
  * Parts Copyright : Ian Molton <spyro@f2s.com>
@@ -31,44 +31,8 @@
  *       - codec GPIO
  *       - codec event notification
  * Todo
- *       - Support for async sampling control for noisy LCD's.
+ *       - Support for async sampling control for noisy LCDs.
  *
- *  Revision history
- *    7th May 2003   Initial version.
- *    6th June 2003  Added non module support and AC97 registration.
- *   18th June 2003  Added AUX adc sampling.
- *   23rd June 2003  Did some minimal reformatting, fixed a couple of
- *                   codec_mutexing bugs and noted a race to fix.
- *   24th June 2003  Added power management and fixed race condition.
- *   10th July 2003  Changed to a misc device.
- *   31st July 2003  Moved TS_EVENT and TS_CAL to wm97xx.h
- *    8th Aug  2003  Added option for read() calling wm97xx_sample_touch()
- *                   because some ac97_read/ac_97_write call schedule()
- *    7th Nov  2003  Added Input touch event interface, stanley.cai@intel.com
- *   13th Nov  2003  Removed h3600 touch interface, added interrupt based
- *                   pen down notification and implemented continous mode
- *                   on XScale arch.
- *   16th Nov  2003  Ian Molton <spyro@f2s.com>
- *                   Modified so that it suits the new 2.6 driver model.
- *   25th Jan  2004  Andrew Zabolotny <zap@homelink.ru>
- *                   Implemented IRQ-driven pen down detection, implemented
- *                   the private API meant to be exposed to platform-specific
- *                   drivers, reorganized the driver so that it supports
- *                   an arbitrary number of devices.
- *    1st Feb  2004  Moved continuous mode handling to a separate
- *                   architecture-dependent file. For now only PXA
- *                   built-in AC97 controller is supported (pxa-ac97-wm97xx.c).
- *    11th Feb 2004  Reduced CPU usage by keeping a cached copy of both
- *                   digitizer registers instead of reading them every time.
- *                   A reorganization of the whole code for better
- *                   error handling.
- *    17th Apr 2004  Added BMON support.
- *    17th Nov 2004  Added codec GPIO, codec event handling (real and virtual
- *                   GPIOs) and 2.6 power management.
- *    29th Nov 2004  Added WM9713 support.
- *     4th Jul 2005  Moved codec specific code out to seperate files.
- *     6th Sep 2006  Mike Arthur <linux@wolfsonmicro.com>
- *                   Added bus interface.
  */
 
 #include <linux/module.h>

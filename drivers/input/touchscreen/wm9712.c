@@ -13,11 +13,6 @@
  *  Free Software Foundation;  either version 2 of the  License, or (at your
  *  option) any later version.
  *
- *  Revision history
- *     4th Jul 2005  Initial version.
- *     6th Sep 2006  Mike Arthur <linux@wolfsonmicro.com>
- *                   Added pre and post sample calls.
- *
  */
 
 #include <linux/module.h>

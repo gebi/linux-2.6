@@ -21,12 +21,6 @@
  *       - codecs supported:- WM9705, WM9712, WM9713
  *       - processors supported:- Intel XScale PXA25x, PXA26x, PXA27x
  *
- *  Revision history
- *    18th Aug 2004   Initial version.
- *    26th Jul 2005   Improved continous read back and added FIFO flushing.
- *    06th Sep 2005   Mike Arthur <linux@wolfsonmicro.com>
- *                    Moved to using the wm97xx bus
- *
  */
 
 #include <linux/module.h>
