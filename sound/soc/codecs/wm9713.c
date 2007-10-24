@@ -971,7 +971,10 @@ struct snd_soc_codec_dai wm9713_dai[] = {
 		.formats = SNDRV_PCM_FMTBIT_S16_LE,},
 	.ops = {
 		.prepare = ac97_hifi_prepare,},
-	},
+	.dai_ops = {
+		.set_clkdiv = wm9713_set_dai_clkdiv,
+		.set_pll = wm9713_set_dai_pll,},
+        },
 	{
 	.name = "AC97 Aux",
 	.playback = {
@@ -982,6 +985,9 @@ struct snd_soc_codec_dai wm9713_dai[] = {
 		.formats = SNDRV_PCM_FMTBIT_S16_LE,},
 	.ops = {
 		.prepare = ac97_aux_prepare,},
+	.dai_ops = {
+		.set_clkdiv = wm9713_set_dai_clkdiv,
+		.set_pll = wm9713_set_dai_pll,},
 	},
 	{
 	.name = "WM9713 Voice",
