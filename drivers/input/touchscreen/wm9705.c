@@ -29,18 +29,6 @@
 #define DEFAULT_PRESSURE	0xb0c0
 
 /*
- * Debug
- */
-#if 0
-#define dbg(format, arg...) printk(KERN_DEBUG TS_NAME ": " format "\n" , ## arg)
-#else
-#define dbg(format, arg...)
-#endif
-#define err(format, arg...) printk(KERN_ERR TS_NAME ": " format "\n" , ## arg)
-#define info(format, arg...) printk(KERN_INFO TS_NAME ": " format "\n" , ## arg)
-#define warn(format, arg...) printk(KERN_WARNING TS_NAME ": " format "\n" , ## arg)
-
-/*
  * Module parameters
  */
 
@@ -163,26 +151,26 @@ static void init_wm9705_phy(struct wm97xx* wm)
 	/* touchpanel pressure current*/
 	if  (pil == 2) {
 		dig2 |= WM9705_PIL;
-		dbg("setting pressure measurement current to 400uA.");
+		dev_dbg(wm->dev, "setting pressure measurement current to 400uA.");
 	} else if (pil)
-		dbg("setting pressure measurement current to 200uA.");
+		dev_dbg(wm->dev, "setting pressure measurement current to 200uA.");
 	if(!pil)
 		pressure = 0;
 
 	/* polling mode sample settling delay */
 	if (delay!=4) {
 		if (delay < 0 || delay > 15) {
-		    dbg("supplied delay out of range.");
-		    delay = 4;
+			dev_dbg(wm->dev, "supplied delay out of range.");
+			delay = 4;
 		}
 	}
 	dig1 &= 0xff0f;
 	dig1 |= WM97XX_DELAY(delay);
-	dbg("setting adc sample delay to %d u Secs.", delay_table[delay]);
+	dev_dbg(wm->dev, "setting adc sample delay to %d u Secs.", delay_table[delay]);
 
 	/* WM9705 pdd */
 	dig2 |= (pdd & 0x000f);
-	dbg("setting pdd to Vmid/%d", 1 - (pdd & 0x000f));
+	dev_dbg(wm->dev, "setting pdd to Vmid/%d", 1 - (pdd & 0x000f));
 
 	/* mask */
 	dig2 |= ((mask & 0x3) << 4);
@@ -260,7 +248,7 @@ static int wm9705_poll_sample (struct wm97xx* wm, int adcsel, int *sample)
 		if (is_pden(wm))
 			wm->pen_probably_down = 0;
 		else
-			dbg ("adc sample timeout");
+			dev_dbg(wm->dev, "adc sample timeout");
 		return RC_PENUP;
 	}
 
@@ -270,7 +258,7 @@ static int wm9705_poll_sample (struct wm97xx* wm, int adcsel, int *sample)
 
 	/* check we have correct sample */
 	if ((*sample & WM97XX_ADCSEL_MASK) != adcsel) {
-		dbg ("adc wrong sample, read %x got %x", adcsel,
+		dev_dbg(wm->dev, "adc wrong sample, read %x got %x", adcsel,
 		*sample & WM97XX_ADCSEL_MASK);
 		return RC_PENUP;
 	}

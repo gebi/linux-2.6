@@ -188,8 +188,9 @@ static int wm97xx_acc_startup(struct wm97xx* wm)
 	}
 	wm->acc_rate = cinfo[sp_idx].code;
 	wm->acc_slot = ac97_touch_slot;
-	printk(KERN_INFO "pxa2xx accelerated touchscreen driver, %d samples (sec)\n",
-		cinfo[sp_idx].speed);
+	dev_info(wm->dev,
+		 "pxa2xx accelerated touchscreen driver, %d samples/sec\n",
+		 cinfo[sp_idx].speed);
 
 	/* codec specific irq config */
 	if (pen_int) {

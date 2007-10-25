@@ -29,18 +29,6 @@
 #define DEFAULT_PRESSURE	0xb0c0
 
 /*
- * Debug
- */
-#if 0
-#define dbg(format, arg...) printk(KERN_DEBUG TS_NAME ": " format "\n" , ## arg)
-#else
-#define dbg(format, arg...)
-#endif
-#define err(format, arg...) printk(KERN_ERR TS_NAME ": " format "\n" , ## arg)
-#define info(format, arg...) printk(KERN_INFO TS_NAME ": " format "\n" , ## arg)
-#define warn(format, arg...) printk(KERN_WARNING TS_NAME ": " format "\n" , ## arg)
-
-/*
  * Module parameters
  */
 
@@ -170,24 +158,27 @@ static void init_wm9713_phy(struct wm97xx* wm)
 	if (rpu) {
 		dig3 &= 0xffc0;
 		dig3 |= WM9712_RPU(rpu);
-		info("setting pen detect pull-up to %d Ohms",64000 / rpu);
+		dev_info(wm->dev, "setting pen detect pull-up to %d Ohms\n",
+			 64000 / rpu);
 	}
 
 	/* touchpanel pressure */
 	if (pil == 2) {
 		dig3 |= WM9712_PIL;
-		info("setting pressure measurement current to 400uA.");
+		dev_info(wm->dev, 
+			 "setting pressure measurement current to 400uA.");
 	} else if (pil)
-		info ("setting pressure measurement current to 200uA.");
+		dev_info(wm->dev, 
+			 "setting pressure measurement current to 200uA.");
 	if(!pil)
 		pressure = 0;
 
 	/* sample settling delay */
 	if (delay < 0 || delay > 15) {
-		info ("supplied delay out of range.");
+		dev_info(wm->dev, "supplied delay out of range.");
 		delay = 4;
-		info("setting adc sample delay to %d u Secs.",
-			delay_table[delay]);
+		dev_info(wm->dev, "setting adc sample delay to %d u Secs.",
+			 delay_table[delay]);
 	}
 	dig2 &= 0xff0f;
 	dig2 |= WM97XX_DELAY(delay);
@@ -289,7 +280,7 @@ static int wm9713_poll_sample (struct wm97xx* wm, int adcsel, int *sample)
 		if (is_pden(wm))
 			wm->pen_probably_down = 0;
 		else
-			dbg ("adc sample timeout");
+			dev_dbg(wm->dev, "adc sample timeout");
 		return RC_PENUP;
 	}
 
@@ -299,8 +290,8 @@ static int wm9713_poll_sample (struct wm97xx* wm, int adcsel, int *sample)
 
 	/* check we have correct sample */
 	if ((*sample & WM97XX_ADCSRC_MASK) != ffs(adcsel >> 1) << 12) {
-		dbg ("adc wrong sample, read %x got %x", adcsel,
-		     *sample & WM97XX_ADCSRC_MASK);
+		dev_dbg(wm->dev, "adc wrong sample, read %x got %x", adcsel,
+			*sample & WM97XX_ADCSRC_MASK);
 		return RC_PENUP;
 	}
 
@@ -351,7 +342,7 @@ static int wm9713_poll_coord (struct wm97xx* wm, struct wm97xx_data *data)
 		if (is_pden(wm))
 			wm->pen_probably_down = 0;
 		else
-			dbg ("adc sample timeout");
+			dev_dbg(wm->dev, "adc sample timeout");
 		return RC_PENUP;
 	}
 
@@ -451,7 +442,7 @@ static int wm9713_acc_enable (struct wm97xx* wm, int enable)
 
 struct wm97xx_codec_drv wm97xx_codec = {
 	.id = 	WM9713_ID2,
-    .name = "wm9713",
+	.name = "wm9713",
 	.poll_sample = wm9713_poll_sample,
 	.poll_touch = wm9713_poll_touch,
 	.acc_enable = wm9713_acc_enable,

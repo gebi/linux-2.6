@@ -86,18 +86,6 @@ module_param_array(abs_p, int, NULL, 0);
 MODULE_PARM_DESC(abs_p, "Touchscreen absolute Pressure min, max, fuzz");
 
 /*
- * Debug
- */
-#if 1
-#define dbg(format, arg...) printk(KERN_DEBUG TS_NAME ": " format "\n" , ## arg)
-#else
-#define dbg(format, arg...)
-#endif
-#define err(format, arg...) printk(KERN_ERR TS_NAME ": " format "\n" , ## arg)
-#define info(format, arg...) printk(KERN_INFO TS_NAME ": " format "\n" , ## arg)
-#define warn(format, arg...) printk(KERN_WARNING TS_NAME ": " format "\n" , ## arg)
-
-/*
  * wm97xx IO access, all IO locking done by AC97 layer
  */
 int wm97xx_reg_read(struct wm97xx *wm, u16 reg)
@@ -346,13 +334,13 @@ static int wm97xx_init_pen_irq(struct wm97xx *wm)
 	INIT_WORK(&wm->pen_event_work, wm97xx_pen_irq_worker);
 	if ((wm->pen_irq_workq =
 		create_singlethread_workqueue("kwm97pen")) == NULL) {
-		err("could not create pen irq work queue");
+		dev_err(wm->dev, "could not create pen irq work queue");
 		wm->pen_irq = 0;
 		return -EINVAL;
 	}
 
 	if (request_irq (wm->pen_irq, wm97xx_pen_interrupt, SA_SHIRQ, "wm97xx-pen", wm)) {
-		err("could not register codec pen down interrupt, will poll for pen down");
+		dev_err(wm->dev, "could not register codec pen down interrupt, will poll for pen down");
 		destroy_workqueue(wm->pen_irq_workq);
 		wm->pen_irq = 0;
 		return -EINVAL;
@@ -391,7 +379,7 @@ static int wm97xx_read_samples(struct wm97xx *wm, struct ts_state *state)
 	if (rc & RC_PENUP) {
 		if (wm->pen_is_down) {
 			wm->pen_is_down = 0;
-			dbg("pen up");
+			dev_dbg(wm->dev, "pen up\n");
 			input_report_abs(wm->input_dev, ABS_PRESSURE, 0);
 			input_sync(wm->input_dev);
 		} else if (!(rc & RC_AGAIN)) {
@@ -408,7 +396,8 @@ static int wm97xx_read_samples(struct wm97xx *wm, struct ts_state *state)
 		}
 
 	} else if (rc & RC_VALID) {
-		dbg("pen down: x=%x:%d, y=%x:%d, pressure=%x:%d\n",
+		dev_dbg(wm->dev, 
+			"pen down: x=%x:%d, y=%x:%d, pressure=%x:%d\n",
 			data.x >> 12, data.x & 0xfff, data.y >> 12,
 			data.y & 0xfff, data.p >> 12, data.p & 0xfff);
 		input_report_abs(wm->input_dev, ABS_X, data.x & 0xfff);
@@ -418,7 +407,7 @@ static int wm97xx_read_samples(struct wm97xx *wm, struct ts_state *state)
 		wm->pen_is_down = 1;
 		state->sleep_time = state->min_sleep_time;
 	} else if (rc & RC_PENDOWN) {
-		dbg("pen down");
+		dev_dbg(wm->dev, "pen down");
 		wm->pen_is_down = 1;
 		state->sleep_time = state->min_sleep_time;
 	}
@@ -622,14 +611,14 @@ static int wm97xx_probe(struct device *dev)
 
 	/* check that we have a supported codec */
 	if ((id = wm97xx_reg_read(wm, AC97_VENDOR_ID1)) != WM97XX_ID1) {
-		err("could not find a wm97xx, found a %x instead\n", id);
+		dev_err(dev, "Device with vendor %x is not a wm97xx\n", id);
 		kfree(wm);
 		return -ENODEV;
 	}
 
 	wm->id = wm97xx_reg_read(wm, AC97_VENDOR_ID2);
 	if (wm->id != wm97xx_codec.id) {
-		err("could not find a the selected codec, please build for wm97%2x", wm->id & 0xff);
+		dev_err(dev, "Could not find a the selected codec, please build for wm97%2x\n", wm->id & 0xff);
 		kfree(wm);
 		return -ENODEV;
 	}
@@ -640,7 +629,7 @@ static int wm97xx_probe(struct device *dev)
 	}
 
 	/* set up touch configuration */
-	info("detected a wm97%2x codec", wm->id & 0xff);
+	dev_info(dev, "Detected a wm97%2x codec\n", wm->id & 0xff);
 	wm->input_dev->name = "wm97xx touchscreen";
 	wm->input_dev->open = wm97xx_ts_input_open;
 	wm->input_dev->close = wm97xx_ts_input_close;
@@ -803,7 +792,6 @@ static int __init wm97xx_init(void)
 {
 	int ret;
 
-	info("version %s liam.girdwood@wolfsonmicro.com", WM_CORE_VERSION);
 	if ((ret = bus_register(&wm97xx_bus_type)) < 0)
 		return ret;
 	return driver_register(&wm97xx_driver);
