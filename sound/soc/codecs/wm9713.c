@@ -658,30 +658,81 @@ static int ac97_write(struct snd_soc_codec *codec, unsigned int reg,
 	return 0;
 }
 
-struct pll_ {
-	unsigned int in_hz;
-	unsigned int lf:1; /* allows low frequency use */
-	unsigned int sdm:1; /* allows fraction n div */
-	unsigned int divsel:1; /* enables input clock div */
-	unsigned int divctl:1; /* input clock divider */
-	unsigned int n:4;
-	unsigned int k;
+/* PLL divisors */
+struct _pll_div {
+	u32 divsel:1;
+	u32 divctl:1;
+	u32 lf:1;
+	u32 n:4;
+	u32 k:24;
 };
 
-static struct pll_ pll[] = {
-	{13000000, 0, 1, 0, 0, 7, 0x23f488},
-	{2048000,  1, 0, 0, 0, 12, 0x0},
-	{4096000,  1, 0, 0, 0, 6, 0x0},
-	{12288000, 0, 0, 0, 0, 8, 0x0},
-	/* liam - add more entries */
-};
+/* The size in bits of the PLL divide multiplied by 10
+ * to allow rounding later */
+#define FIXED_PLL_SIZE ((1 << 22) * 10)
+
+static void pll_factors(struct _pll_div *pll_div, unsigned int source)
+{
+	u64 Kpart;
+	unsigned int K, Ndiv, Nmod, target;
+
+	/* The the PLL output is always 98.304MHz. */
+	target = 98304000;
+
+	/* If the input frequency is over 14.4MHz then scale it down. */
+	if (source > 14400000) {
+		source >>= 1;
+		pll_div->divsel = 1;
+
+		if (source > 14400000) {
+			source >>= 1;
+			pll_div->divctl = 1;
+		} else
+			pll_div->divctl = 0;
+
+	} else {
+		pll_div->divsel = 0;
+		pll_div->divctl = 0;
+	}
+
+	/* Low frequency sources require an additional divide in the
+	 * loop.
+	 */
+	if (source < 8192000) {
+		pll_div->lf = 1;
+		target >>= 2;
+	} else
+		pll_div->lf = 0;
+
+	Ndiv = target / source;
+	if ((Ndiv < 5) || (Ndiv > 12))
+		printk(KERN_WARNING
+			"WM9713 PLL N value outwith recommended range! N = %d\n", Ndiv);
+
+	pll_div->n = Ndiv;
+	Nmod = target % source;
+	Kpart = FIXED_PLL_SIZE * (long long)Nmod;
+
+	do_div(Kpart, source);
+
+	K = Kpart & 0xFFFFFFFF;
+
+	/* Check if we need to round */
+	if ((K % 10) >= 5)
+		K += 5;
+
+	/* Move down to proper range now rounding is done */
+	K /= 10;
+
+	pll_div->k = K;
+}
 
 static int wm9713_set_pll(struct snd_soc_codec *codec,
 	int pll_id, unsigned int freq_in, unsigned int freq_out)
 {
 	struct wm9713_priv *wm9713 = codec->private_data;
-	int i;
 	u16 reg, reg2;
+	struct _pll_div pll_div;
 
 	/* turn PLL off ? */
 	if (freq_in == 0 || freq_out == 0) {
@@ -694,38 +745,33 @@ static int wm9713_set_pll(struct snd_soc_codec *codec,
 		return 0;
 	}
 
-	for (i = 0; i < ARRAY_SIZE(pll); i++) {
-		if (pll[i].in_hz == freq_in)
-			goto found;
-	}
-	return -EINVAL;
+	pll_factors(&pll_div, freq_in);
 
-found:
-	if (pll[i].sdm == 0) {
-		reg = (pll[i].n << 12) | (pll[i].lf << 11) |
-			(pll[i].divsel << 9) | (pll[i].divctl << 8);
+	if (pll_div.k == 0) {
+		reg = (pll_div.n << 12) | (pll_div.lf << 11) |
+			(pll_div.divsel << 9) | (pll_div.divctl << 8);
 		ac97_write(codec, AC97_LINE1_LEVEL, reg);
 	} else {
 		/* write the fractional k to the reg 0x46 pages */
-		reg2 = (pll[i].n << 12) | (pll[i].lf << 11) | (pll[i].sdm << 10) |
-			(pll[i].divsel << 9) | (pll[i].divctl << 8);
+		reg2 = (pll_div.n << 12) | (pll_div.lf << 11) | (1 << 10) |
+			(pll_div.divsel << 9) | (pll_div.divctl << 8);
 
-		reg = reg2 | (0x5 << 4) | (pll[i].k >> 20); /* K [21:20] */
+		reg = reg2 | (0x5 << 4) | (pll_div.k >> 20); /* K [21:20] */
 		ac97_write(codec, AC97_LINE1_LEVEL, reg);
 
-		reg = reg2 | (0x4 << 4) | ((pll[i].k >> 16) & 0xf); /* K [19:16] */
+		reg = reg2 | (0x4 << 4) | ((pll_div.k >> 16) & 0xf); /* K [19:16] */
 		ac97_write(codec, AC97_LINE1_LEVEL, reg);
 
-		reg = reg2 | (0x3 << 4) | ((pll[i].k >> 12) & 0xf); /* K [15:12] */
+		reg = reg2 | (0x3 << 4) | ((pll_div.k >> 12) & 0xf); /* K [15:12] */
 		ac97_write(codec, AC97_LINE1_LEVEL, reg);
 
-		reg = reg2 | (0x2 << 4) | ((pll[i].k >> 8) & 0xf); /* K [11:8] */
+		reg = reg2 | (0x2 << 4) | ((pll_div.k >> 8) & 0xf); /* K [11:8] */
 		ac97_write(codec, AC97_LINE1_LEVEL, reg);
 
-		reg = reg2 | (0x1 << 4) | ((pll[i].k >> 4) & 0xf); /* K [7:4] */
+		reg = reg2 | (0x1 << 4) | ((pll_div.k >> 4) & 0xf); /* K [7:4] */
 		ac97_write(codec, AC97_LINE1_LEVEL, reg);
 
-		reg = reg2 | (0x0 << 4) | (pll[i].k & 0xf); /* K [3:0] */
+		reg = reg2 | (0x0 << 4) | (pll_div.k & 0xf); /* K [3:0] */
 		ac97_write(codec, AC97_LINE1_LEVEL, reg);
 	}
 
