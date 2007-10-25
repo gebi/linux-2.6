@@ -33,7 +33,7 @@
 
 #include "wm9713.h"
 
-#define WM9713_VERSION "0.13"
+#define WM9713_VERSION "0.14"
 
 struct wm9713_priv {
 	u32 pll_in; /* PLL input frequency */
