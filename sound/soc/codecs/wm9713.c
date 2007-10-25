@@ -727,6 +727,10 @@ static void pll_factors(struct _pll_div *pll_div, unsigned int source)
 	pll_div->k = K;
 }
 
+/**
+ * Please note that changing the PLL input frequency may require
+ * resynchronisation with the AC97 controller.
+ */
 static int wm9713_set_pll(struct snd_soc_codec *codec,
 	int pll_id, unsigned int freq_in, unsigned int freq_out)
 {
