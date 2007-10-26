@@ -846,6 +846,14 @@ static int wm9713_set_dai_clkdiv(struct snd_soc_codec_dai *codec_dai,
 		reg = ac97_read(codec, AC97_CENTER_LFE_MASTER) & 0xf1ff;
 		ac97_write(codec, AC97_CENTER_LFE_MASTER, reg | div);
 		break;
+	case WM9713_PCMCLK_PLL_DIV:
+		reg = ac97_read(codec, AC97_LINE1_LEVEL) & 0xff80;
+		ac97_write(codec, AC97_LINE1_LEVEL, reg | 0x60 | div);
+		break;
+	case WM9713_HIFI_PLL_DIV:
+		reg = ac97_read(codec, AC97_LINE1_LEVEL) & 0xff80;
+		ac97_write(codec, AC97_LINE1_LEVEL, reg | 0x70 | div);
+		break;
 	default:
 		return -EINVAL;
 	}
