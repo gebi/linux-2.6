@@ -618,7 +618,8 @@ static int wm97xx_probe(struct device *dev)
 
 	wm->id = wm97xx_reg_read(wm, AC97_VENDOR_ID2);
 	if (wm->id != wm97xx_codec.id) {
-		dev_err(dev, "Could not find a the selected codec, please build for wm97%2x\n", wm->id & 0xff);
+		dev_err(dev, "Detected wm97%2x but built for wm97%2x\n",
+			wm->id & 0xff, wm97xx_codec.id);
 		kfree(wm);
 		return -ENODEV;
 	}
