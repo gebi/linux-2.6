@@ -142,7 +142,7 @@ int wm97xx_read_aux_adc(struct wm97xx *wm, u16 adcsel)
 	}
 
 	/* Prepare the codec for AUX reading */
-	wm->codec->digitiser_ioctl(wm, WM97XX_AUX_PREPARE);
+	wm->codec->aux_prepare(wm);
 
 	/* Turn polling mode on to read AUX ADC */
 	wm->pen_probably_down = 1;
@@ -151,7 +151,7 @@ int wm97xx_read_aux_adc(struct wm97xx *wm, u16 adcsel)
 	if (power_adc)
 		wm97xx_reg_write(wm, AC97_EXTENDED_MID, power | 0x8000);
 
-	wm->codec->digitiser_ioctl(wm, WM97XX_DIG_RESTORE);
+	wm->codec->dig_restore(wm);
 
 	wm->pen_probably_down = 0;
 
@@ -488,9 +488,9 @@ static int wm97xx_ts_input_open(struct input_dev *idev)
 		}
 
 		/* start digitiser */
-	if (wm->mach_ops && wm->mach_ops->acc_enabled)
-		wm->codec->acc_enable(wm, 1);
-		wm->codec->digitiser_ioctl(wm, WM97XX_DIG_START);
+		if (wm->mach_ops && wm->mach_ops->acc_enabled)
+			wm->codec->acc_enable(wm, 1);
+		wm->codec->dig_enable(wm, 1);
 
 		/* init pen down/up irq handling */
 		if (wm->pen_irq) {
@@ -541,7 +541,7 @@ static void wm97xx_ts_input_close(struct input_dev *idev)
 		}
 
 		/* stop digitiser */
-		wm->codec->digitiser_ioctl(wm, WM97XX_DIG_STOP);
+		wm->codec->dig_enable(wm, 0);
 		if (wm->mach_ops && wm->mach_ops->acc_enabled)
 			wm->codec->acc_enable(wm, 0);
 	}
@@ -654,7 +654,7 @@ static int wm97xx_probe(struct device *dev)
 	}
 
 	/* set up physical characteristics */
-	wm->codec->digitiser_ioctl(wm, WM97XX_PHY_INIT);
+	wm->codec->phy_init(wm);
 
 	/* load gpio cache */
 	wm->gpio[0] = wm97xx_reg_read(wm, AC97_GPIO_CFG);

@@ -224,8 +224,11 @@ struct wm97xx_codec_drv {
 	char *name;
 	int (*poll_sample) (struct wm97xx *, int adcsel, int *sample);	/* read 1 sample */
 	int (*poll_touch) (struct wm97xx *, struct wm97xx_data *);	/* read X,Y,[P] in poll */
-	int (*digitiser_ioctl) (struct wm97xx *, int cmd);
 	int (*acc_enable) (struct wm97xx *, int enable);
+	void (*phy_init) (struct wm97xx *);
+	void (*dig_enable) (struct wm97xx *, int enable);
+	void (*dig_restore) (struct wm97xx *);
+	void (*aux_prepare) (struct wm97xx *);
 };
 
 

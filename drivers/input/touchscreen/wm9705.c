@@ -137,7 +137,7 @@ static inline void poll_delay(int d)
 /*
  * set up the physical settings of the WM9705
  */
-static void init_wm9705_phy(struct wm97xx* wm)
+static void wm9705_phy_init(struct wm97xx* wm)
 {
 	u16 dig1 = 0, dig2 = WM97XX_RPR;
 
@@ -179,32 +179,26 @@ static void init_wm9705_phy(struct wm97xx* wm)
 	wm97xx_reg_write(wm, AC97_WM97XX_DIGITISER2, dig2);
 }
 
-static int wm9705_digitiser_ioctl(struct wm97xx* wm, int cmd)
+static void wm9705_dig_enable(struct wm97xx *wm, int enable)
 {
-	switch(cmd) {
-	case WM97XX_DIG_START:
+	if (enable) {
 		wm97xx_reg_write(wm, AC97_WM97XX_DIGITISER2, wm->dig[2] | WM97XX_PRP_DET_DIG);
 		wm97xx_reg_read(wm, AC97_WM97XX_DIGITISER_RD); /* dummy read */
-		break;
-	case WM97XX_DIG_STOP:
+	} else
 		wm97xx_reg_write(wm, AC97_WM97XX_DIGITISER2, wm->dig[2] & ~WM97XX_PRP_DET_DIG);
-		break;
-	case WM97XX_AUX_PREPARE:
-		memcpy(wm->dig_save, wm->dig, sizeof(wm->dig));
-		wm97xx_reg_write(wm, AC97_WM97XX_DIGITISER1, 0);
-		wm97xx_reg_write(wm, AC97_WM97XX_DIGITISER2, WM97XX_PRP_DET_DIG);
-		break;
-	case WM97XX_DIG_RESTORE:
-		wm97xx_reg_write(wm, AC97_WM97XX_DIGITISER1, wm->dig_save[1]);
-		wm97xx_reg_write(wm, AC97_WM97XX_DIGITISER2, wm->dig_save[2]);
-		break;
-	case WM97XX_PHY_INIT:
-		init_wm9705_phy(wm);
-		break;
-	default:
-		return -EINVAL;
-	}
-	return 0;
+}
+
+static void wm9705_aux_prepare(struct wm97xx *wm)
+{
+	memcpy(wm->dig_save, wm->dig, sizeof(wm->dig));
+	wm97xx_reg_write(wm, AC97_WM97XX_DIGITISER1, 0);
+	wm97xx_reg_write(wm, AC97_WM97XX_DIGITISER2, WM97XX_PRP_DET_DIG);
+}
+
+static void wm9705_dig_restore(struct wm97xx *wm)
+{
+	wm97xx_reg_write(wm, AC97_WM97XX_DIGITISER1, wm->dig_save[1]);
+	wm97xx_reg_write(wm, AC97_WM97XX_DIGITISER2, wm->dig_save[2]);
 }
 
 static inline int is_pden (struct wm97xx* wm)
@@ -333,7 +327,10 @@ struct wm97xx_codec_drv wm97xx_codec = {
 	.poll_sample = wm9705_poll_sample,
 	.poll_touch = wm9705_poll_touch,
 	.acc_enable = wm9705_acc_enable,
-	.digitiser_ioctl = wm9705_digitiser_ioctl,
+	.phy_init = wm9705_phy_init,
+	.dig_enable = wm9705_dig_enable,
+	.dig_restore = wm9705_dig_restore,
+	.aux_prepare = wm9705_aux_prepare,
 };
 
 EXPORT_SYMBOL_GPL(wm97xx_codec);

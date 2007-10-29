@@ -146,7 +146,7 @@ static inline void poll_delay(int d)
 /*
  * set up the physical settings of the WM9713
  */
-static void init_wm9713_phy(struct wm97xx* wm)
+static void wm9713_phy_init(struct wm97xx* wm)
 {
 	u16 dig1 = 0, dig2, dig3;
 
@@ -196,42 +196,37 @@ static void init_wm9713_phy(struct wm97xx* wm)
 	wm97xx_reg_write(wm, AC97_GPIO_STICKY, 0x0);
 }
 
-static int wm9713_digitiser_ioctl(struct wm97xx* wm, int cmd)
+static void wm9713_dig_enable(struct wm97xx *wm, int enable)
 {
-	u16 val = 0;
+	u16 val;
 
-	switch(cmd){
-	case WM97XX_DIG_START:
+	if (enable) {
 		val = wm97xx_reg_read(wm, AC97_EXTENDED_MID);
 		wm97xx_reg_write(wm, AC97_EXTENDED_MID, val & 0x7fff);
 		wm97xx_reg_write(wm, AC97_WM9713_DIG3, wm->dig[2] |
-					WM97XX_PRP_DET_DIG);
+				 WM97XX_PRP_DET_DIG);
 		wm97xx_reg_read(wm, AC97_WM97XX_DIGITISER_RD); /* dummy read */
-		break;
-	case WM97XX_DIG_STOP:
+	} else {
 		wm97xx_reg_write(wm, AC97_WM9713_DIG3, wm->dig[2] &
 					~WM97XX_PRP_DET_DIG);
 		val = wm97xx_reg_read(wm, AC97_EXTENDED_MID);
 		wm97xx_reg_write(wm, AC97_EXTENDED_MID, val | 0x8000);
-		break;
-	case WM97XX_AUX_PREPARE:
-		memcpy(wm->dig_save, wm->dig, sizeof(wm->dig));
-		wm97xx_reg_write(wm, AC97_WM9713_DIG1, 0);
-		wm97xx_reg_write(wm, AC97_WM9713_DIG2, 0);
-		wm97xx_reg_write(wm, AC97_WM9713_DIG3, WM97XX_PRP_DET_DIG);
-		break;
-	case WM97XX_DIG_RESTORE:
-		wm97xx_reg_write(wm, AC97_WM9713_DIG1, wm->dig_save[0]);
-		wm97xx_reg_write(wm, AC97_WM9713_DIG2, wm->dig_save[1]);
-		wm97xx_reg_write(wm, AC97_WM9713_DIG3, wm->dig_save[2]);
-		break;
-	case WM97XX_PHY_INIT:
-		init_wm9713_phy(wm);
-		break;
-	default:
-		return -EINVAL;
 	}
-	return 0;
+}
+
+static void wm9713_dig_restore(struct wm97xx *wm)
+{
+	wm97xx_reg_write(wm, AC97_WM9713_DIG1, wm->dig_save[0]);
+	wm97xx_reg_write(wm, AC97_WM9713_DIG2, wm->dig_save[1]);
+	wm97xx_reg_write(wm, AC97_WM9713_DIG3, wm->dig_save[2]);
+}
+
+static void wm9713_aux_prepare(struct wm97xx *wm)
+{
+	memcpy(wm->dig_save, wm->dig, sizeof(wm->dig));
+	wm97xx_reg_write(wm, AC97_WM9713_DIG1, 0);
+	wm97xx_reg_write(wm, AC97_WM9713_DIG2, 0);
+	wm97xx_reg_write(wm, AC97_WM9713_DIG3, WM97XX_PRP_DET_DIG);
 }
 
 static inline int is_pden (struct wm97xx* wm)
@@ -446,7 +441,10 @@ struct wm97xx_codec_drv wm97xx_codec = {
 	.poll_sample = wm9713_poll_sample,
 	.poll_touch = wm9713_poll_touch,
 	.acc_enable = wm9713_acc_enable,
-	.digitiser_ioctl = wm9713_digitiser_ioctl,
+	.phy_init = wm9713_phy_init,
+	.dig_enable = wm9713_dig_enable,
+	.dig_restore = wm9713_dig_restore,
+	.aux_prepare = wm9713_aux_prepare,
 };
 
 EXPORT_SYMBOL_GPL(wm97xx_codec);
