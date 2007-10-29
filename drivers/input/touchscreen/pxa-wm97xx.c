@@ -31,7 +31,7 @@
 #include <linux/delay.h>
 #include <linux/irq.h>
 #include <linux/wm97xx.h>
-#include <asm/io.h>
+#include <linux/io.h>
 #include <asm/arch/pxa-regs.h>
 
 #define VERSION		"0.13"
@@ -61,8 +61,8 @@ static const struct continuous cinfo[] = {
 };
 
 /* continuous speed index */
-static int sp_idx = 0;
-static u16 last = 0, tries = 0;
+static int sp_idx;
+static u16 last, tries;
 
 /*
  * Pen sampling frequency (Hz) in continuous mode.
@@ -77,7 +77,7 @@ MODULE_PARM_DESC(cont_rate, "Sampling rate in continuous mode (Hz)");
  * This driver can either poll or use an interrupt to indicate a pen down
  * event. If the irq request fails then it will fall back to polling mode.
  */
-static int pen_int = 0;
+static int pen_int;
 module_param(pen_int, int, 0);
 MODULE_PARM_DESC(pen_int, "Pen down detection (1 = interrupt, 0 = polling)");
 
@@ -86,7 +86,7 @@ MODULE_PARM_DESC(pen_int, "Pen down detection (1 = interrupt, 0 = polling)");
  *
  * Set to 1 to read back pen down pressure
  */
-static int pressure = 0;
+static int pressure;
 module_param(pressure, int, 0);
 MODULE_PARM_DESC(pressure, "Pressure readback (1 = pressure, 0 = no pressure)");
 
@@ -102,7 +102,7 @@ MODULE_PARM_DESC(ac97_touch_slot, "Touch screen data slot AC97 number");
 
 /* flush AC97 slot 5 FIFO on pxa machines */
 #ifdef CONFIG_PXA27x
-static void wm97xx_acc_pen_up(struct wm97xx* wm)
+static void wm97xx_acc_pen_up(struct wm97xx *wm)
 {
 	set_current_state(TASK_INTERRUPTIBLE);
 	schedule_timeout(1);
@@ -111,7 +111,7 @@ static void wm97xx_acc_pen_up(struct wm97xx* wm)
 		MODR;
 }
 #else
-static void wm97xx_acc_pen_up(struct wm97xx* wm)
+static void wm97xx_acc_pen_up(struct wm97xx *wm)
 {
 	int count = 16;
 	set_current_state(TASK_INTERRUPTIBLE);
@@ -124,7 +124,7 @@ static void wm97xx_acc_pen_up(struct wm97xx* wm)
 }
 #endif
 
-static int wm97xx_acc_pen_down(struct wm97xx* wm)
+static int wm97xx_acc_pen_down(struct wm97xx *wm)
 {
 	u16 x, y, p = 0x100 | WM97XX_ADCSEL_PRES;
 	int reads = 0;
@@ -133,7 +133,7 @@ static int wm97xx_acc_pen_down(struct wm97xx* wm)
 	set_current_state(TASK_INTERRUPTIBLE);
 	schedule_timeout(1);
 
-	if (tries > 5){
+	if (tries > 5) {
 		tries = 0;
 		return RC_PENUP;
 	}
@@ -146,8 +146,8 @@ static int wm97xx_acc_pen_down(struct wm97xx* wm)
 	last = x;
 	do {
 		if (reads)
-			x= MODR;
-		y= MODR;
+			x = MODR;
+		y = MODR;
 		if (pressure)
 			p = MODR;
 
@@ -159,18 +159,17 @@ static int wm97xx_acc_pen_down(struct wm97xx* wm)
 
 		/* coordinate is good */
 		tries = 0;
-		//printk("x %x y %x p %x\n", x,y,p);
-		input_report_abs (wm->input_dev, ABS_X, x & 0xfff);
-		input_report_abs (wm->input_dev, ABS_Y, y & 0xfff);
-		input_report_abs (wm->input_dev, ABS_PRESSURE, p & 0xfff);
-		input_sync (wm->input_dev);
+		input_report_abs(wm->input_dev, ABS_X, x & 0xfff);
+		input_report_abs(wm->input_dev, ABS_Y, y & 0xfff);
+		input_report_abs(wm->input_dev, ABS_PRESSURE, p & 0xfff);
+		input_sync(wm->input_dev);
 		reads++;
 	} while (reads < cinfo[sp_idx].reads);
 up:
 	return RC_PENDOWN | RC_AGAIN;
 }
 
-static int wm97xx_acc_startup(struct wm97xx* wm)
+static int wm97xx_acc_startup(struct wm97xx *wm)
 {
 	int idx = 0;
 
@@ -195,43 +194,48 @@ static int wm97xx_acc_startup(struct wm97xx* wm)
 	/* codec specific irq config */
 	if (pen_int) {
 		switch (wm->id) {
-			case WM9705_ID2:
-				wm->pen_irq = IRQ_GPIO(4);
-				set_irq_type(IRQ_GPIO(4), IRQT_BOTHEDGE);
-				break;
-			case WM9712_ID2:
-			case WM9713_ID2:
-				/* enable pen down interrupt */
-				/* use PEN_DOWN GPIO 13 to assert IRQ on GPIO line 2 */
-				wm->pen_irq = MAINSTONE_AC97_IRQ;
-				wm97xx_config_gpio(wm, WM97XX_GPIO_13, WM97XX_GPIO_IN,
-					WM97XX_GPIO_POL_HIGH, WM97XX_GPIO_STICKY, WM97XX_GPIO_WAKE);
-				wm97xx_config_gpio(wm, WM97XX_GPIO_2, WM97XX_GPIO_OUT,
-					WM97XX_GPIO_POL_HIGH, WM97XX_GPIO_NOTSTICKY, WM97XX_GPIO_NOWAKE);
-				break;
-			default:
-				printk(KERN_WARNING "pen down irq not supported on this device\n");
-				pen_int = 0;
-				break;
+		case WM9705_ID2:
+			wm->pen_irq = IRQ_GPIO(4);
+			set_irq_type(IRQ_GPIO(4), IRQT_BOTHEDGE);
+			break;
+		case WM9712_ID2:
+		case WM9713_ID2:
+			/* enable pen down interrupt */
+			/* use PEN_DOWN GPIO 13 to assert IRQ on GPIO line 2 */
+			wm->pen_irq = MAINSTONE_AC97_IRQ;
+			wm97xx_config_gpio(wm, WM97XX_GPIO_13, WM97XX_GPIO_IN,
+					   WM97XX_GPIO_POL_HIGH,
+					   WM97XX_GPIO_STICKY,
+					   WM97XX_GPIO_WAKE);
+			wm97xx_config_gpio(wm, WM97XX_GPIO_2, WM97XX_GPIO_OUT,
+					   WM97XX_GPIO_POL_HIGH,
+					   WM97XX_GPIO_NOTSTICKY,
+					   WM97XX_GPIO_NOWAKE);
+			break;
+		default:
+			dev_err(wm->dev,
+				"pen down irq not supported on this device\n");
+			pen_int = 0;
+			break;
 		}
 	}
 
 	return 0;
 }
 
-static void wm97xx_acc_shutdown(struct wm97xx* wm)
+static void wm97xx_acc_shutdown(struct wm97xx *wm)
 {
 	/* codec specific deconfig */
 	if (pen_int) {
 		switch (wm->id & 0xffff) {
-			case WM9705_ID2:
-				wm->pen_irq = 0;
-				break;
-			case WM9712_ID2:
-			case WM9713_ID2:
-				/* disable interrupt */
-				wm->pen_irq = 0;
-				break;
+		case WM9705_ID2:
+			wm->pen_irq = 0;
+			break;
+		case WM9712_ID2:
+		case WM9713_ID2:
+			/* disable interrupt */
+			wm->pen_irq = 0;
+			break;
 		}
 	}
 }
@@ -253,7 +257,7 @@ static int pxa_wm97xx_probe(struct device *dev)
 static int pxa_wm97xx_remove(struct device *dev)
 {
 	struct wm97xx *wm = dev->driver_data;
-	wm97xx_unregister_mach_ops (wm);
+	wm97xx_unregister_mach_ops(wm);
 	return 0;
 }
 
