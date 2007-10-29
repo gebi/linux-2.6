@@ -339,7 +339,7 @@ static int wm97xx_init_pen_irq(struct wm97xx *wm)
 		return -EINVAL;
 	}
 
-	if (request_irq (wm->pen_irq, wm97xx_pen_interrupt, SA_SHIRQ, "wm97xx-pen", wm)) {
+	if (request_irq (wm->pen_irq, wm97xx_pen_interrupt, IRQF_SHARED, "wm97xx-pen", wm)) {
 		dev_err(wm->dev, "could not register codec pen down interrupt, will poll for pen down");
 		destroy_workqueue(wm->pen_irq_workq);
 		wm->pen_irq = 0;
