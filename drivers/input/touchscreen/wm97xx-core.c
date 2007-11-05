@@ -49,7 +49,6 @@
 #include <linux/workqueue.h>
 #include <linux/device.h>
 #include <linux/wm97xx.h>
-#include <linux/freezer.h>
 #include <linux/uaccess.h>
 #include <linux/io.h>
 
@@ -277,7 +276,6 @@ static void wm97xx_pen_irq_worker(struct work_struct *work)
 			wm->pen_is_down = 1;
 		else
 			wm->pen_is_down = 0;
-		wake_up_interruptible(&wm->pen_irq_wait);
 	} else {
 		u16 status, pol;
 		mutex_lock(&wm->codec_mutex);
@@ -301,8 +299,9 @@ static void wm97xx_pen_irq_worker(struct work_struct *work)
 			wm97xx_reg_write(wm, AC97_GPIO_STATUS, status &
 						~WM97XX_GPIO_13);
 		mutex_unlock(&wm->codec_mutex);
-		wake_up_interruptible(&wm->pen_irq_wait);
 	}
+
+	queue_delayed_work(wm->ts_workq, &wm->ts_reader, 0);
 
 	if (!wm->pen_is_down && wm->mach_ops && wm->mach_ops->acc_enabled)
 		wm->mach_ops->acc_pen_up(wm);
@@ -320,7 +319,7 @@ static irqreturn_t wm97xx_pen_interrupt(int irq, void *dev_id)
 {
 	struct wm97xx *wm = (struct wm97xx *) dev_id;
 	disable_irq(wm->pen_irq);
-	queue_work(wm->pen_irq_workq, &wm->pen_event_work);
+	queue_work(wm->ts_workq, &wm->pen_event_work);
 	return IRQ_HANDLED;
 }
 
@@ -332,18 +331,11 @@ static int wm97xx_init_pen_irq(struct wm97xx *wm)
 	u16 reg;
 
 	INIT_WORK(&wm->pen_event_work, wm97xx_pen_irq_worker);
-	if ((wm->pen_irq_workq =
-		create_singlethread_workqueue("kwm97pen")) == NULL) {
-		dev_err(wm->dev, "could not create pen irq work queue");
-		wm->pen_irq = 0;
-		return -EINVAL;
-	}
 
 	if (request_irq (wm->pen_irq, wm97xx_pen_interrupt, IRQF_SHARED,
 			 "wm97xx-pen", wm)) {
 		dev_err(wm->dev,
 			"Failed to register pen down interrupt, polling");
-		destroy_workqueue(wm->pen_irq_workq);
 		wm->pen_irq = 0;
 		return -EINVAL;
 	}
@@ -359,14 +351,7 @@ static int wm97xx_init_pen_irq(struct wm97xx *wm)
 	return 0;
 }
 
-/* Private struct for communication between struct wm97xx_tshread
- * and wm97xx_read_samples */
-struct ts_state {
-	int sleep_time;
-	int min_sleep_time;
-};
-
-static int wm97xx_read_samples(struct wm97xx *wm, struct ts_state *state)
+static int wm97xx_read_samples(struct wm97xx *wm)
 {
 	struct wm97xx_data data;
 	int rc;
@@ -395,8 +380,8 @@ static int wm97xx_read_samples(struct wm97xx *wm, struct ts_state *state)
 			* pen is up and quicky restore it to ~one task
 			* switch when pen is down again.
 			*/
-			if (state->sleep_time < HZ / 10)
-				state->sleep_time++;
+			if (wm->ts_reader_interval < HZ / 10)
+				wm->ts_reader_interval++;
 		}
 
 	} else if (rc & RC_VALID) {
@@ -409,11 +394,11 @@ static int wm97xx_read_samples(struct wm97xx *wm, struct ts_state *state)
 		input_report_abs(wm->input_dev, ABS_PRESSURE, data.p & 0xfff);
 		input_sync(wm->input_dev);
 		wm->pen_is_down = 1;
-		state->sleep_time = state->min_sleep_time;
+		wm->ts_reader_interval = wm->ts_reader_min_interval;
 	} else if (rc & RC_PENDOWN) {
 		dev_dbg(wm->dev, "pen down");
 		wm->pen_is_down = 1;
-		state->sleep_time = state->min_sleep_time;
+		wm->ts_reader_interval = wm->ts_reader_min_interval;
 	}
 
 	mutex_unlock(&wm->codec_mutex);
@@ -421,46 +406,22 @@ static int wm97xx_read_samples(struct wm97xx *wm, struct ts_state *state)
 }
 
 /*
-* The touchscreen sample reader thread.
+* The touchscreen sample reader.
 */
-static int wm97xx_ts_read(void *data)
+static void wm97xx_ts_reader(struct work_struct *work)
 {
 	int rc;
-	struct ts_state state;
-	struct wm97xx *wm = (struct wm97xx *) data;
+	struct wm97xx *wm = container_of(work, struct wm97xx, ts_reader.work);
 
-	/* set up thread context */
-	wm->ts_task = current;
-	daemonize("kwm97xxts");
+	BUG_ON(!wm->codec);
 
-	if (wm->codec == NULL) {
-		wm->ts_task = NULL;
-		printk(KERN_ERR "codec is NULL, bailing\n");
-	}
+	do {
+		rc = wm97xx_read_samples(wm);
+	} while (rc & RC_AGAIN);
 
-	complete(&wm->ts_init);
-	wm->pen_is_down = 0;
-	state.min_sleep_time = HZ >= 100 ? HZ / 100 : 1;
-	if (state.min_sleep_time < 1)
-		state.min_sleep_time = 1;
-	state.sleep_time = state.min_sleep_time;
-
-	/* touch reader loop */
-	while (wm->ts_task) {
-		do {
-			try_to_freeze();
-			rc = wm97xx_read_samples(wm, &state);
-		} while (rc & RC_AGAIN);
-		if (!wm->pen_is_down && wm->pen_irq) {
-			/* Nice, we don't have to poll for pen down event */
-			wait_event_interruptible(wm->pen_irq_wait,
-						 wm->pen_is_down);
-		} else {
-			set_task_state(current, TASK_INTERRUPTIBLE);
-			schedule_timeout(state.sleep_time);
-		}
-	}
-	complete_and_exit(&wm->ts_exit, 0);
+	if (wm->pen_is_down || !wm->pen_irq)
+		queue_delayed_work(wm->ts_workq, &wm->ts_reader,
+				   wm->ts_reader_interval);
 }
 
 /**
@@ -472,24 +433,17 @@ static int wm97xx_ts_read(void *data)
  */
 static int wm97xx_ts_input_open(struct input_dev *idev)
 {
-	int ret = 0;
 	struct wm97xx *wm = (struct wm97xx *) idev->private;
 
 	mutex_lock(&wm->ts_mutex);
 	/* first time opened ? */
 	if (wm->ts_use_count++ == 0) {
-		/* start touchscreen thread */
-		init_completion(&wm->ts_init);
-		init_completion(&wm->ts_exit);
-		ret = kernel_thread(wm97xx_ts_read, wm, CLONE_KERNEL);
-
-		if (ret >= 0) {
-			wait_for_completion(&wm->ts_init);
-			if (wm->ts_task == NULL)
-				ret = -EINVAL;
-		} else {
+		wm->ts_workq = create_singlethread_workqueue("kwm97xx");
+		if (wm->ts_workq == NULL) {
+			dev_err(wm->dev,
+				"Failed to create workqueue\n");
 			mutex_unlock(&wm->ts_mutex);
-			return ret;
+			return -EINVAL;
 		}
 
 		/* start digitiser */
@@ -497,18 +451,24 @@ static int wm97xx_ts_input_open(struct input_dev *idev)
 			wm->codec->acc_enable(wm, 1);
 		wm->codec->dig_enable(wm, 1);
 
-		/* init pen down/up irq handling */
+		INIT_DELAYED_WORK(&wm->ts_reader, wm97xx_ts_reader);
+
+		wm->ts_reader_min_interval = HZ >= 100 ? HZ / 100 : 1;
+		if (wm->ts_reader_min_interval < 1)
+			wm->ts_reader_min_interval = 1;
+		wm->ts_reader_interval = wm->ts_reader_min_interval;
+
+		wm->pen_is_down = 0;
 		if (wm->pen_irq) {
 			wm97xx_init_pen_irq(wm);
-
-			if (wm->pen_irq == 0) {
-				/* we failed to get an irq for pen
-				 * down events, so we resort to
-				 * polling. Kickstart the reader */
-				wm->pen_is_down = 1;
-				wake_up_interruptible(&wm->pen_irq_wait);
-			}
 		}
+
+		/* If we either don't have an interrupt for pen down
+		 * events or failed to acquire it then we need to poll.
+		 */
+		if (wm->pen_irq == 0)
+			queue_delayed_work(wm->ts_workq, &wm->ts_reader,
+					   wm->ts_reader_interval);
 	}
 
 	mutex_unlock(&wm->ts_mutex);
@@ -529,22 +489,17 @@ static void wm97xx_ts_input_close(struct input_dev *idev)
 
 	mutex_lock(&wm->ts_mutex);
 	if (--wm->ts_use_count == 0) {
-		/* destroy workqueues and free irqs */
 		if (wm->pen_irq) {
 			free_irq(wm->pen_irq, wm);
-			destroy_workqueue(wm->pen_irq_workq);
 		}
 
-		/* kill thread */
-		if (wm->ts_task) {
-			wm->ts_task = NULL;
-			wm->pen_is_down = 1;
-			mutex_unlock(&wm->ts_mutex);
-			wake_up_interruptible(&wm->pen_irq_wait);
-			wait_for_completion(&wm->ts_exit);
-			wm->pen_is_down = 0;
-			mutex_lock(&wm->ts_mutex);
-		}
+		wm->pen_is_down = 0;
+
+		/* ts_reader rearms itself so we need to explicitly stop it
+		 * before we destroy the workqueue.
+		 */
+		cancel_delayed_work_sync(&wm->ts_reader);
+		destroy_workqueue(wm->ts_workq);
 
 		/* stop digitiser */
 		wm->codec->dig_enable(wm, 0);
@@ -611,7 +566,6 @@ static int wm97xx_probe(struct device *dev)
 	mutex_init(&wm->codec_mutex);
 	mutex_init(&wm->ts_mutex);
 
-	init_waitqueue_head(&wm->pen_irq_wait);
 	wm->dev = dev;
 	dev->driver_data = wm;
 	wm->ac97 = to_ac97_t(dev);
@@ -724,13 +678,6 @@ static int wm97xx_remove(struct device *dev)
 {
 	struct wm97xx *wm = dev_get_drvdata(dev);
 
-	/* Stop touch reader thread */
-	if (wm->ts_task) {
-		wm->ts_task = NULL;
-		wm->pen_is_down = 1;
-		wake_up_interruptible(&wm->pen_irq_wait);
-		wait_for_completion(&wm->ts_exit);
-	}
 	device_unregister(wm->battery_dev);
 	device_unregister(wm->touch_dev);
 	input_unregister_device(wm->input_dev);

@@ -259,12 +259,11 @@ struct wm97xx {
 	struct wm97xx_mach_ops *mach_ops;
 	struct mutex codec_mutex;
 	struct mutex ts_mutex;
-	struct completion ts_init;
-	struct completion ts_exit;
-	struct task_struct *ts_task;
+	struct delayed_work ts_reader;  /* Used to poll touchscreen */
+	unsigned long ts_reader_interval; /* Current interval for timer */
+	unsigned long ts_reader_min_interval; /* Minimum interval */
 	unsigned int pen_irq;		/* Pen IRQ number in use */
-	wait_queue_head_t pen_irq_wait;	/* Pen IRQ wait queue */
-	struct workqueue_struct *pen_irq_workq;
+	struct workqueue_struct *ts_workq;
 	struct work_struct pen_event_work;
 	u16 acc_slot;			/* AC97 slot used for acc touch data */
 	u16 acc_rate;			/* acc touch data rate */
