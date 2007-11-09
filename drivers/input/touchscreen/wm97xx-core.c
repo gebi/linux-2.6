@@ -305,7 +305,7 @@ static void wm97xx_pen_irq_worker(struct work_struct *work)
 
 	if (!wm->pen_is_down && wm->mach_ops && wm->mach_ops->acc_enabled)
 		wm->mach_ops->acc_pen_up(wm);
-	enable_irq(wm->pen_irq);
+	wm->mach_ops->irq_enable(wm, 1);
 }
 
 /*
@@ -318,7 +318,7 @@ static void wm97xx_pen_irq_worker(struct work_struct *work)
 static irqreturn_t wm97xx_pen_interrupt(int irq, void *dev_id)
 {
 	struct wm97xx *wm = (struct wm97xx *) dev_id;
-	disable_irq(wm->pen_irq);
+	wm->mach_ops->irq_enable(wm, 0);
 	queue_work(wm->ts_workq, &wm->pen_event_work);
 	return IRQ_HANDLED;
 }
@@ -330,10 +330,14 @@ static int wm97xx_init_pen_irq(struct wm97xx *wm)
 {
 	u16 reg;
 
+	/* If an interrupt is supplied an IRQ enable operation must also be
+	 * provided. */
+	BUG_ON(!wm->mach_ops->irq_enable);
+
 	INIT_WORK(&wm->pen_event_work, wm97xx_pen_irq_worker);
 
-	if (request_irq (wm->pen_irq, wm97xx_pen_interrupt, IRQF_SHARED,
-			 "wm97xx-pen", wm)) {
+	if (request_irq(wm->pen_irq, wm97xx_pen_interrupt, IRQF_SHARED,
+			"wm97xx-pen", wm)) {
 		dev_err(wm->dev,
 			"Failed to register pen down interrupt, polling");
 		wm->pen_irq = 0;
@@ -459,9 +463,10 @@ static int wm97xx_ts_input_open(struct input_dev *idev)
 		wm->ts_reader_interval = wm->ts_reader_min_interval;
 
 		wm->pen_is_down = 0;
-		if (wm->pen_irq) {
+		if (wm->pen_irq)
 			wm97xx_init_pen_irq(wm);
-		}
+		else
+			dev_err(wm->dev, "No IRQ specified\n");
 
 		/* If we either don't have an interrupt for pen down
 		 * events or failed to acquire it then we need to poll.

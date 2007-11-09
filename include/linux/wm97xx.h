@@ -241,6 +241,9 @@ struct wm97xx_mach_ops {
 	int (*acc_pen_down) (struct wm97xx *);
 	int (*acc_startup) (struct wm97xx *);
 	void (*acc_shutdown) (struct wm97xx *);
+	
+	/* interrupt mask control - required for accelerated operation */
+	void (*irq_enable) (struct wm97xx *, int enable);
 
 	/* pre and post sample - can be used to minimise any analog noise */
 	void (*pre_sample) (int);  /* function to run before sampling */
