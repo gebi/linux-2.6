@@ -162,7 +162,7 @@ config TOUCHSCREEN_TOUCHRIGHT
 
 config TOUCHSCREEN_WM97XX
 	tristate "Support for WM97xx AC97 touchscreen controllers"
-	depends AC97_BUS
+	depends on AC97_BUS
 
 choice
 	prompt "WM97xx codec type"
