@@ -58,6 +58,8 @@ source "drivers/power/Kconfig"
 
 source "drivers/hwmon/Kconfig"
 
+source "drivers/watchdog/Kconfig"
+
 source "drivers/ssb/Kconfig"
 
 source "drivers/mfd/Kconfig"
@@ -83,6 +85,8 @@ source "drivers/edac/Kconfig"
 source "drivers/rtc/Kconfig"
 
 source "drivers/dma/Kconfig"
+
+source "drivers/dca/Kconfig"
 
 source "drivers/auxdisplay/Kconfig"
 

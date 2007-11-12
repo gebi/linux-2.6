@@ -76,9 +76,6 @@ void mce_log(struct mce *mce)
 	wmb();
 	for (;;) {
 		entry = rcu_dereference(mcelog.next);
-		/* The rmb forces the compiler to reload next in each
-		    iteration */
-		rmb();
 		for (;;) {
 			/* When the buffer fills up discard new entries. Assume
 			   that the earlier errors are the more interesting. */
@@ -323,7 +320,7 @@ void do_machine_check(struct pt_regs * regs, long error_code)
 #ifdef CONFIG_X86_MCE_INTEL
 /***
  * mce_log_therm_throt_event - Logs the thermal throttling event to mcelog
- * @cpu: The CPU on which the event occured.
+ * @cpu: The CPU on which the event occurred.
  * @status: Event status information
  *
  * This function should be called by the thermal interrupt after the
@@ -691,15 +688,13 @@ static int __init mcheck_disable(char *str)
 	return 1;
 }
 
-/* mce=off disables machine check. Note you can reenable it later
+/* mce=off disables machine check. Note you can re-enable it later
    using sysfs.
    mce=TOLERANCELEVEL (number, see above)
    mce=bootlog Log MCEs from before booting. Disabled by default on AMD.
    mce=nobootlog Don't log MCEs from before booting. */
 static int __init mcheck_enable(char *str)
 {
-	if (*str == '=')
-		str++;
 	if (!strcmp(str, "off"))
 		mce_dont_init = 1;
 	else if (!strcmp(str, "bootlog") || !strcmp(str,"nobootlog"))
@@ -712,7 +707,7 @@ static int __init mcheck_enable(char *str)
 }
 
 __setup("nomce", mcheck_disable);
-__setup("mce", mcheck_enable);
+__setup("mce=", mcheck_enable);
 
 /* 
  * Sysfs support
@@ -804,19 +799,33 @@ static __cpuinit int mce_create_device(unsigned int cpu)
 {
 	int err;
 	int i;
-	if (!mce_available(&cpu_data[cpu]))
+
+	if (!mce_available(&cpu_data(cpu)))
 		return -EIO;
 
+	memset(&per_cpu(device_mce, cpu).kobj, 0, sizeof(struct kobject));
 	per_cpu(device_mce,cpu).id = cpu;
 	per_cpu(device_mce,cpu).cls = &mce_sysclass;
 
 	err = sysdev_register(&per_cpu(device_mce,cpu));
+	if (err)
+		return err;
 
-	if (!err) {
-		for (i = 0; mce_attributes[i]; i++)
-			sysdev_create_file(&per_cpu(device_mce,cpu),
-				mce_attributes[i]);
+	for (i = 0; mce_attributes[i]; i++) {
+		err = sysdev_create_file(&per_cpu(device_mce,cpu),
+					 mce_attributes[i]);
+		if (err)
+			goto error;
 	}
+
+	return 0;
+error:
+	while (i--) {
+		sysdev_remove_file(&per_cpu(device_mce,cpu),
+				   mce_attributes[i]);
+	}
+	sysdev_unregister(&per_cpu(device_mce,cpu));
+
 	return err;
 }
 
@@ -828,7 +837,6 @@ static void mce_remove_device(unsigned int cpu)
 		sysdev_remove_file(&per_cpu(device_mce,cpu),
 			mce_attributes[i]);
 	sysdev_unregister(&per_cpu(device_mce,cpu));
-	memset(&per_cpu(device_mce, cpu).kobj, 0, sizeof(struct kobject));
 }
 
 /* Get notified when a cpu comes on/off. Be hotplug friendly. */
@@ -836,18 +844,21 @@ static int
 mce_cpu_callback(struct notifier_block *nfb, unsigned long action, void *hcpu)
 {
 	unsigned int cpu = (unsigned long)hcpu;
+	int err = 0;
 
 	switch (action) {
-	case CPU_ONLINE:
-	case CPU_ONLINE_FROZEN:
-		mce_create_device(cpu);
+	case CPU_UP_PREPARE:
+	case CPU_UP_PREPARE_FROZEN:
+		err = mce_create_device(cpu);
 		break;
+	case CPU_UP_CANCELED:
+	case CPU_UP_CANCELED_FROZEN:
 	case CPU_DEAD:
 	case CPU_DEAD_FROZEN:
 		mce_remove_device(cpu);
 		break;
 	}
-	return NOTIFY_OK;
+	return err ? NOTIFY_BAD : NOTIFY_OK;
 }
 
 static struct notifier_block mce_cpu_notifier = {
@@ -862,9 +873,13 @@ static __init int mce_init_device(void)
 	if (!mce_available(&boot_cpu_data))
 		return -EIO;
 	err = sysdev_class_register(&mce_sysclass);
+	if (err)
+		return err;
 
 	for_each_online_cpu(i) {
-		mce_create_device(i);
+		err = mce_create_device(i);
+		if (err)
+			return err;
 	}
 
 	register_hotcpu_notifier(&mce_cpu_notifier);

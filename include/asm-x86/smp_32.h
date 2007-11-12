@@ -11,7 +11,7 @@
 #endif
 
 #if defined(CONFIG_X86_LOCAL_APIC) && !defined(__ASSEMBLY__)
-#include <asm/bitops.h>
+#include <linux/bitops.h>
 #include <asm/mpspec.h>
 #include <asm/apic.h>
 #ifdef CONFIG_X86_IO_APIC
@@ -30,8 +30,8 @@
 extern void smp_alloc_memory(void);
 extern int pic_mode;
 extern int smp_num_siblings;
-extern cpumask_t cpu_sibling_map[];
-extern cpumask_t cpu_core_map[];
+DECLARE_PER_CPU(cpumask_t, cpu_sibling_map);
+DECLARE_PER_CPU(cpumask_t, cpu_core_map);
 
 extern void (*mtrr_hook) (void);
 extern void zap_low_mappings (void);
@@ -39,9 +39,11 @@ extern void lock_ipi_call_lock(void);
 extern void unlock_ipi_call_lock(void);
 
 #define MAX_APICID 256
-extern u8 x86_cpu_to_apicid[];
+extern u8 __initdata x86_cpu_to_apicid_init[];
+extern void *x86_cpu_to_apicid_ptr;
+DECLARE_PER_CPU(u8, x86_cpu_to_apicid);
 
-#define cpu_physical_id(cpu)	x86_cpu_to_apicid[cpu]
+#define cpu_physical_id(cpu)	per_cpu(x86_cpu_to_apicid, cpu)
 
 extern void set_cpu_sibling_map(int cpu);
 
@@ -92,12 +94,9 @@ static inline void smp_send_reschedule(int cpu)
 {
 	smp_ops.smp_send_reschedule(cpu);
 }
-static inline int smp_call_function_mask(cpumask_t mask,
-					 void (*func) (void *info), void *info,
-					 int wait)
-{
-	return smp_ops.smp_call_function_mask(mask, func, info, wait);
-}
+extern int smp_call_function_mask(cpumask_t mask,
+				  void (*func) (void *info), void *info,
+				  int wait);
 
 void native_smp_prepare_boot_cpu(void);
 void native_smp_prepare_cpus(unsigned int max_cpus);

@@ -5,6 +5,10 @@
  * Copyright 1992, Linus Torvalds.
  */
 
+#ifndef _LINUX_BITOPS_H
+#error only <linux/bitops.h> can be included directly
+#endif
+
 #include <asm/alternative.h>
 
 #if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 1)
@@ -260,7 +264,7 @@ extern long find_first_bit(const unsigned long * addr, unsigned long size);
 extern long find_next_bit(const unsigned long * addr, long size, long offset);
 
 /* return index of first bet set in val or max when no bit is set */
-static inline unsigned long __scanbit(unsigned long val, unsigned long max)
+static inline long __scanbit(unsigned long val, unsigned long max)
 {
 	asm("bsfq %1,%0 ; cmovz %2,%0" : "=&r" (val) : "r" (val), "r" (max));
 	return val;
@@ -408,6 +412,7 @@ static __inline__ int fls(int x)
 #define ARCH_HAS_FAST_MULTIPLIER 1
 
 #include <asm-generic/bitops/hweight.h>
+#include <asm-generic/bitops/lock.h>
 
 #endif /* __KERNEL__ */
 

@@ -11,7 +11,7 @@
 #include <asm/iommu.h>
 #include <asm/calgary.h>
 
-int iommu_merge __read_mostly = 0;
+int iommu_merge __read_mostly = 1;
 EXPORT_SYMBOL(iommu_merge);
 
 dma_addr_t bad_dma_address __read_mostly;
@@ -51,11 +51,9 @@ dma_alloc_pages(struct device *dev, gfp_t gfp, unsigned order)
 {
 	struct page *page;
 	int node;
-#ifdef CONFIG_PCI
-	if (dev->bus == &pci_bus_type)
-		node = pcibus_to_node(to_pci_dev(dev)->bus);
-	else
-#endif
+
+	node = dev_to_node(dev);
+	if (node == -1)
 		node = numa_node_id();
 
 	if (node < first_node(node_online_map))

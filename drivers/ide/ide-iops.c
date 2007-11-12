@@ -693,35 +693,16 @@ static u8 ide_auto_reduce_xfer (ide_drive_t *drive)
 }
 #endif /* CONFIG_BLK_DEV_IDEDMA */
 
-/*
- * Update the 
- */
-int ide_driveid_update (ide_drive_t *drive)
+int ide_driveid_update(ide_drive_t *drive)
 {
-	ide_hwif_t *hwif	= HWIF(drive);
+	ide_hwif_t *hwif = drive->hwif;
 	struct hd_driveid *id;
-#if 0
-	id = kmalloc(SECTOR_WORDS*4, GFP_ATOMIC);
-	if (!id)
-		return 0;
+	unsigned long timeout, flags;
 
-	taskfile_lib_get_identify(drive, (char *)&id);
-
-	ide_fix_driveid(id);
-	if (id) {
-		drive->id->dma_ultra = id->dma_ultra;
-		drive->id->dma_mword = id->dma_mword;
-		drive->id->dma_1word = id->dma_1word;
-		/* anything more ? */
-		kfree(id);
-	}
-	return 1;
-#else
 	/*
 	 * Re-read drive->id for possible DMA mode
 	 * change (copied from ide-probe.c)
 	 */
-	unsigned long timeout, flags;
 
 	SELECT_MASK(drive, 1);
 	if (IDE_CONTROL_REG)
@@ -763,7 +744,6 @@ int ide_driveid_update (ide_drive_t *drive)
 	}
 
 	return 1;
-#endif
 }
 
 int ide_config_drive_speed(ide_drive_t *drive, u8 speed)
@@ -776,7 +756,7 @@ int ide_config_drive_speed(ide_drive_t *drive, u8 speed)
 //		msleep(50);
 
 #ifdef CONFIG_BLK_DEV_IDEDMA
-	if (hwif->ide_dma_check)	 /* check if host supports DMA */
+	if (hwif->ide_dma_on)	/* check if host supports DMA */
 		hwif->dma_host_off(drive);
 #endif
 
@@ -830,7 +810,7 @@ int ide_config_drive_speed(ide_drive_t *drive, u8 speed)
 #ifdef CONFIG_BLK_DEV_IDEDMA
 	if (speed >= XFER_SW_DMA_0)
 		hwif->dma_host_on(drive);
-	else if (hwif->ide_dma_check)	/* check if host supports DMA */
+	else if (hwif->ide_dma_on)	/* check if host supports DMA */
 		hwif->dma_off_quietly(drive);
 #endif
 

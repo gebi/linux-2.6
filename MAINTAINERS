@@ -1769,7 +1769,7 @@ S:	Maintained
 
 HP100:	Driver for HP 10/100 Mbit/s Voice Grade Network Adapter Series
 P:	Jaroslav Kysela
-M:	perex@suse.cz
+M:	perex@perex.cz
 S:	Maintained
 
 HPET:	High Precision Event Timers driver (hpet.c)
@@ -1877,10 +1877,8 @@ T:	quilt kernel.org/pub/linux/kernel/people/bart/pata-2.6/
 S:	Maintained
 
 IDE/ATAPI CDROM DRIVER
-P:	Alan Cox
-M:	alan@lxorguk.ukuu.org.uk
 L:	linux-ide@vger.kernel.org
-S:	Maintained
+S:	Unmaintained
 
 IDE/ATAPI FLOPPY DRIVERS
 P:	Paul Bristow
@@ -1963,11 +1961,6 @@ INTEL 810/815 FRAMEBUFFER DRIVER
 P:	Antonino Daplas
 M:	adaplas@gmail.com
 L:	linux-fbdev-devel@lists.sourceforge.net (subscribers-only)
-S:	Maintained
-
-INTEL APIC/IOAPIC, LOWLEVEL X86 SMP SUPPORT
-P:	Ingo Molnar
-M:	mingo@redhat.com
 S:	Maintained
 
 INTEL I8XX RANDOM NUMBER GENERATOR SUPPORT
@@ -2132,14 +2125,12 @@ S:	Maintained
 
 ISAPNP
 P:	Jaroslav Kysela
-M:	perex@suse.cz
+M:	perex@perex.cz
 S:	Maintained
 
 ISDN SUBSYSTEM
 P:	Karsten Keil
 M:	kkeil@suse.de
-P:	Kai Germaschewski
-M:	kai.germaschewski@gmx.de
 L:	isdn4linux@listserv.isdn4linux.de
 W:	http://www.isdn4linux.de
 T:	git kernel.org:/pub/scm/linux/kernel/kkeil/isdn-2.6.git
@@ -2182,7 +2173,7 @@ S:	Maintained
 KCONFIG
 P:	Roman Zippel
 M:	zippel@linux-m68k.org
-L:	kbuild-devel@lists.sourceforge.net
+L:	linux-kbuild@vger.kernel.org
 S:	Maintained
 
 KDUMP
@@ -2208,11 +2199,10 @@ L:	autofs@linux.kernel.org
 S:	Maintained
 
 KERNEL BUILD (kbuild: Makefile, scripts/Makefile.*)
-P:	Kai Germaschewski
-M:	kai@germaschewski.name
 P:	Sam Ravnborg
 M:	sam@ravnborg.org
 T:	git kernel.org:/pub/scm/linux/kernel/git/sam/kbuild.git
+L:	linux-kbuild@vger.kernel.org
 S:	Maintained
 
 KERNEL JANITORS
@@ -2240,7 +2230,7 @@ S:	Supported
 KEXEC
 P:	Eric Biederman
 M:	ebiederm@xmission.com
-W:	http://www.xmission.com/~ebiederm/files/kexec/
+W:	http://ftp.kernel.org/pub/linux/kernel/people/horms/kexec-tools/
 L:	linux-kernel@vger.kernel.org
 L:	kexec@lists.infradead.org
 S:	Maintained
@@ -2492,7 +2482,7 @@ S: 	Supported
 
 MAN-PAGES: MANUAL PAGES FOR LINUX -- Sections 2, 3, 4, 5, and 7
 P:	Michael Kerrisk
-M:	mtk-manpages@gmx.net
+M:	mtk.manpages@gmail.com
 W:	ftp://ftp.kernel.org/pub/linux/docs/manpages
 S:	Maintained
 
@@ -2945,13 +2935,6 @@ M:	linas@austin.ibm.com
 L:	linux-kernel@vger.kernel.org
 L:	linux-pci@atrey.karlin.mff.cuni.cz
 S:	Supported
-
-PCI SOUND DRIVERS (ES1370, ES1371 and SONICVIBES)
-P:	Thomas Sailer
-M:	sailer@ife.ee.ethz.ch
-L:	linux-sound@vger.kernel.org
-W:	http://www.ife.ee.ethz.ch/~sailer/linux/pciaudio.html
-S:	Maintained
 
 PCI SUBSYSTEM
 P:	Greg Kroah-Hartman
@@ -3523,7 +3506,7 @@ S:	Maintained
 
 SOUND
 P:	Jaroslav Kysela
-M:	perex@suse.cz
+M:	perex@perex.cz
 L:	alsa-devel@alsa-project.org (subscribers-only)
 S:	Maintained
 
@@ -3713,7 +3696,7 @@ S:      Maintained
 
 TI OMAP MMC INTERFACE DRIVER
 P:	Carlos Aguiar, Anderson Briglia and Syed Khasim
-M:	linux-omap-open-source@linux.omap.com 
+M:	linux-omap-open-source@linux.omap.com (subscribers only)
 W:	http://linux.omap.com
 W:	http://www.muru.com/linux/omap/
 S:	Maintained
@@ -4281,9 +4264,15 @@ M:	jacmet@sunsite.dk
 L:	linux-serial@vger.kernel.org
 S:	Maintained
 
-X86 3-LEVEL PAGING (PAE) SUPPORT
+X86 ARCHITECTURE (32-BIT AND 64-BIT)
+P:	Thomas Gleixner
+M:	tglx@linutronix.de
 P:	Ingo Molnar
 M:	mingo@redhat.com
+P:	H. Peter Anvin
+M:	hpa@zytor.com
+L:	linux-kernel@vger.kernel.org
+T:	git://git.kernel.org/pub/scm/linux/kernel/git/x86/linux-2.6-x86.git
 S:	Maintained
 
 YAM DRIVER FOR AX.25

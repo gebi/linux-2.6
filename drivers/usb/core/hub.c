@@ -1407,7 +1407,11 @@ fail:
 
 
 /**
- * Similar to usb_disconnect()
+ * usb_deauthorize_device - deauthorize a device (usbcore-internal)
+ * @usb_dev: USB device
+ *
+ * Move the USB device to a very basic state where interfaces are disabled
+ * and the device is in fact unconfigured and unusable.
  *
  * We share a lock (that we have) with device_del(), so we need to
  * defer its call.
@@ -2866,10 +2870,9 @@ static int hub_thread(void *__unused)
 	set_freezable();
 	do {
 		hub_events();
-		wait_event_interruptible(khubd_wait,
+		wait_event_freezable(khubd_wait,
 				!list_empty(&hub_event_list) ||
 				kthread_should_stop());
-		try_to_freeze();
 	} while (!kthread_should_stop() || !list_empty(&hub_event_list));
 
 	pr_debug("%s: khubd exiting\n", usbcore_name);

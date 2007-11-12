@@ -108,7 +108,6 @@
 #include <linux/dvb/dmx.h>
 #include <linux/dvb/frontend.h>
 #include <linux/dvb/video.h>
-#include <linux/lp.h>
 
 #ifdef CONFIG_SPARC
 #include <asm/fbio.h>
@@ -3002,7 +3001,7 @@ static int __init init_sys32_ioctl(void)
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(ioctl_start); i++) {
-		if (ioctl_start[i].next != 0) {
+		if (ioctl_start[i].next) {
 			printk("ioctl translation %d bad\n",i);
 			return -1;
 		}

@@ -280,7 +280,7 @@ int ide_build_dmatable (ide_drive_t *drive, struct request *rq)
 			}
 		}
 
-		sg++;
+		sg = sg_next(sg);
 		i--;
 	}
 
@@ -338,35 +338,32 @@ static int config_drive_for_dma (ide_drive_t *drive)
 	ide_hwif_t *hwif = drive->hwif;
 	struct hd_driveid *id = drive->id;
 
-	/* consult the list of known "bad" drives */
-	if (__ide_dma_bad_drive(drive))
-		return -1;
-
-	if (drive->media != ide_disk && hwif->atapi_dma == 0)
-		return -1;
-
-	if ((id->capability & 1) && drive->autodma) {
-		/*
-		 * Enable DMA on any drive that has
-		 * UltraDMA (mode 0/1/2/3/4/5/6) enabled
-		 */
-		if ((id->field_valid & 4) && ((id->dma_ultra >> 8) & 0x7f))
-			return 0;
-		/*
-		 * Enable DMA on any drive that has mode2 DMA
-		 * (multi or single) enabled
-		 */
-		if (id->field_valid & 2)	/* regular DMA */
-			if ((id->dma_mword & 0x404) == 0x404 ||
-			    (id->dma_1word & 0x404) == 0x404)
-				return 0;
-
-		/* Consult the list of known "good" drives */
-		if (ide_dma_good_drive(drive))
-			return 0;
+	if (drive->media != ide_disk) {
+		if (hwif->host_flags & IDE_HFLAG_NO_ATAPI_DMA)
+			return -1;
 	}
 
-	return -1;
+	/*
+	 * Enable DMA on any drive that has
+	 * UltraDMA (mode 0/1/2/3/4/5/6) enabled
+	 */
+	if ((id->field_valid & 4) && ((id->dma_ultra >> 8) & 0x7f))
+		return 1;
+
+	/*
+	 * Enable DMA on any drive that has mode2 DMA
+	 * (multi or single) enabled
+	 */
+	if (id->field_valid & 2)	/* regular DMA */
+		if ((id->dma_mword & 0x404) == 0x404 ||
+		    (id->dma_1word & 0x404) == 0x404)
+			return 1;
+
+	/* Consult the list of known "good" drives */
+	if (ide_dma_good_drive(drive))
+		return 1;
+
+	return 0;
 }
 
 /**
@@ -627,6 +624,8 @@ static int __ide_dma_test_irq(ide_drive_t *drive)
 			drive->name, __FUNCTION__);
 	return 0;
 }
+#else
+static inline int config_drive_for_dma(ide_drive_t *drive) { return 0; }
 #endif /* CONFIG_BLK_DEV_IDEDMA_PCI */
 
 int __ide_dma_bad_drive (ide_drive_t *drive)
@@ -729,8 +728,10 @@ u8 ide_find_dma_mode(ide_drive_t *drive, u8 req_mode)
 	int x, i;
 	u8 mode = 0;
 
-	if (drive->media != ide_disk && hwif->atapi_dma == 0)
-		return 0;
+	if (drive->media != ide_disk) {
+		if (hwif->host_flags & IDE_HFLAG_NO_ATAPI_DMA)
+			return 0;
+	}
 
 	for (i = 0; i < ARRAY_SIZE(xfer_mode_bases); i++) {
 		if (req_mode < xfer_mode_bases[i])
@@ -758,16 +759,19 @@ u8 ide_find_dma_mode(ide_drive_t *drive, u8 req_mode)
 
 EXPORT_SYMBOL_GPL(ide_find_dma_mode);
 
-int ide_tune_dma(ide_drive_t *drive)
+static int ide_tune_dma(ide_drive_t *drive)
 {
 	u8 speed;
 
-	if ((drive->id->capability & 1) == 0 || drive->autodma == 0)
+	if (noautodma || drive->nodma || (drive->id->capability & 1) == 0)
 		return 0;
 
 	/* consult the list of known "bad" drives */
 	if (__ide_dma_bad_drive(drive))
 		return 0;
+
+	if (drive->hwif->host_flags & IDE_HFLAG_TRUST_BIOS_FOR_DMA)
+		return config_drive_for_dma(drive);
 
 	speed = ide_max_dma_mode(drive);
 
@@ -783,7 +787,22 @@ int ide_tune_dma(ide_drive_t *drive)
 	return 1;
 }
 
-EXPORT_SYMBOL_GPL(ide_tune_dma);
+static int ide_dma_check(ide_drive_t *drive)
+{
+	ide_hwif_t *hwif = drive->hwif;
+	int vdma = (hwif->host_flags & IDE_HFLAG_VDMA)? 1 : 0;
+
+	if (!vdma && ide_tune_dma(drive))
+		return 0;
+
+	/* TODO: always do PIO fallback */
+	if (hwif->host_flags & IDE_HFLAG_TRUST_BIOS_FOR_DMA)
+		return -1;
+
+	ide_set_max_pio(drive);
+
+	return vdma ? 0 : -1;
+}
 
 void ide_dma_verbose(ide_drive_t *drive)
 {
@@ -842,7 +861,7 @@ int ide_set_dma(ide_drive_t *drive)
 	ide_hwif_t *hwif = drive->hwif;
 	int rc;
 
-	rc = hwif->ide_dma_check(drive);
+	rc = ide_dma_check(drive);
 
 	switch(rc) {
 	case -1: /* DMA needs to be disabled */
@@ -882,10 +901,7 @@ void ide_dma_timeout (ide_drive_t *drive)
 
 EXPORT_SYMBOL(ide_dma_timeout);
 
-/*
- * Needed for allowing full modular support of ide-driver
- */
-static int ide_release_dma_engine(ide_hwif_t *hwif)
+static void ide_release_dma_engine(ide_hwif_t *hwif)
 {
 	if (hwif->dmatable_cpu) {
 		pci_free_consistent(hwif->pci_dev,
@@ -894,7 +910,6 @@ static int ide_release_dma_engine(ide_hwif_t *hwif)
 				    hwif->dmatable_dma);
 		hwif->dmatable_cpu = NULL;
 	}
-	return 1;
 }
 
 static int ide_release_iomio_dma(ide_hwif_t *hwif)
@@ -937,12 +952,6 @@ static int ide_mapped_mmio_dma(ide_hwif_t *hwif, unsigned long base, unsigned in
 {
 	printk(KERN_INFO "    %s: MMIO-DMA ", hwif->name);
 
- 	hwif->dma_base = base;
-
-	if(hwif->mate)
-		hwif->dma_master = (hwif->channel) ? hwif->mate->dma_base : base;
-	else
-		hwif->dma_master = base;
 	return 0;
 }
 
@@ -955,8 +964,6 @@ static int ide_iomio_dma(ide_hwif_t *hwif, unsigned long base, unsigned int port
 		printk(" -- Error, ports in use.\n");
 		return 1;
 	}
-
-	hwif->dma_base = base;
 
 	if (hwif->cds->extra) {
 		hwif->extra_base = base + (hwif->channel ? 8 : 16);
@@ -972,10 +979,6 @@ static int ide_iomio_dma(ide_hwif_t *hwif, unsigned long base, unsigned int port
 		}
 	}
 
-	if(hwif->mate)
-		hwif->dma_master = (hwif->channel) ? hwif->mate->dma_base:base;
-	else
-		hwif->dma_master = base;
 	return 0;
 }
 
@@ -987,18 +990,22 @@ static int ide_dma_iobase(ide_hwif_t *hwif, unsigned long base, unsigned int por
 	return ide_iomio_dma(hwif, base, ports);
 }
 
-/*
- * This can be called for a dynamically installed interface. Don't __init it
- */
-void ide_setup_dma (ide_hwif_t *hwif, unsigned long dma_base, unsigned int num_ports)
+void ide_setup_dma(ide_hwif_t *hwif, unsigned long base, unsigned num_ports)
 {
-	if (ide_dma_iobase(hwif, dma_base, num_ports))
+	if (ide_dma_iobase(hwif, base, num_ports))
 		return;
 
 	if (ide_allocate_dma_engine(hwif)) {
 		ide_release_dma(hwif);
 		return;
 	}
+
+	hwif->dma_base = base;
+
+	if (hwif->mate)
+		hwif->dma_master = hwif->channel ? hwif->mate->dma_base : base;
+	else
+		hwif->dma_master = base;
 
 	if (!(hwif->dma_command))
 		hwif->dma_command	= hwif->dma_base;
@@ -1019,8 +1026,6 @@ void ide_setup_dma (ide_hwif_t *hwif, unsigned long dma_base, unsigned int num_p
 		hwif->ide_dma_on = &__ide_dma_on;
 	if (!hwif->dma_host_on)
 		hwif->dma_host_on = &ide_dma_host_on;
-	if (!hwif->ide_dma_check)
-		hwif->ide_dma_check = &config_drive_for_dma;
 	if (!hwif->dma_setup)
 		hwif->dma_setup = &ide_dma_setup;
 	if (!hwif->dma_exec_cmd)

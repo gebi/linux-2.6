@@ -378,7 +378,7 @@ static struct irq_cpu_info {
 
 #define IRQ_ALLOWED(cpu, allowed_mask)	cpu_isset(cpu, allowed_mask)
 
-#define CPU_TO_PACKAGEINDEX(i) (first_cpu(cpu_sibling_map[i]))
+#define CPU_TO_PACKAGEINDEX(i) (first_cpu(per_cpu(cpu_sibling_map, i)))
 
 static cpumask_t balance_irq_affinity[NR_IRQS] = {
 	[0 ... NR_IRQS-1] = CPU_MASK_ALL
@@ -584,7 +584,7 @@ tryanotherirq:
 
 	imbalance = move_this_load;
 	
-	/* For physical_balance case, we accumlated both load
+	/* For physical_balance case, we accumulated both load
 	 * values in the one of the siblings cpu_irq[],
 	 * to use the same code for physical and logical processors
 	 * as much as possible. 
@@ -598,7 +598,7 @@ tryanotherirq:
 	 * (A+B)/2 vs B
 	 */
 	load = CPU_IRQ(min_loaded) >> 1;
-	for_each_cpu_mask(j, cpu_sibling_map[min_loaded]) {
+	for_each_cpu_mask(j, per_cpu(cpu_sibling_map, min_loaded)) {
 		if (load > CPU_IRQ(j)) {
 			/* This won't change cpu_sibling_map[min_loaded] */
 			load = CPU_IRQ(j);
@@ -1198,7 +1198,7 @@ static u8 irq_vector[NR_IRQ_VECTORS] __read_mostly = { FIRST_DEVICE_VECTOR , 0 }
 static int __assign_irq_vector(int irq)
 {
 	static int current_vector = FIRST_DEVICE_VECTOR, current_offset = 0;
-	int vector, offset, i;
+	int vector, offset;
 
 	BUG_ON((unsigned)irq >= NR_IRQ_VECTORS);
 
@@ -1215,11 +1215,8 @@ next:
 	}
 	if (vector == current_vector)
 		return -ENOSPC;
-	if (vector == SYSCALL_VECTOR)
+	if (test_and_set_bit(vector, used_vectors))
 		goto next;
-	for (i = 0; i < NR_IRQ_VECTORS; i++)
-		if (irq_vector[i] == vector)
-			goto next;
 
 	current_vector = vector;
 	current_offset = offset;
@@ -1294,6 +1291,11 @@ static void __init setup_IO_APIC_irqs(void)
 				apic_printk(APIC_VERBOSE, ", %d-%d",
 					mp_ioapics[apic].mpc_apicid, pin);
 			continue;
+		}
+
+		if (!first_notcon) {
+			apic_printk(APIC_VERBOSE, " not connected.\n");
+			first_notcon = 1;
 		}
 
 		entry.trigger = irq_trigger(idx);
@@ -2290,6 +2292,12 @@ static inline void __init check_timer(void)
 
 void __init setup_IO_APIC(void)
 {
+	int i;
+
+	/* Reserve all the system vectors. */
+	for (i = FIRST_SYSTEM_VECTOR; i < NR_VECTORS; i++)
+		set_bit(i, used_vectors);
+
 	enable_IO_APIC();
 
 	if (acpi_ioapic)
@@ -2467,7 +2475,7 @@ void destroy_irq(unsigned int irq)
 }
 
 /*
- * MSI mesage composition
+ * MSI message composition
  */
 #ifdef CONFIG_PCI_MSI
 static int msi_compose_msg(struct pci_dev *pdev, unsigned int irq, struct msi_msg *msg)

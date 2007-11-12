@@ -94,7 +94,6 @@
 #define TOSHIBA_RBTX4927_SETUP_EFWFU       ( 1 <<  3 )
 #define TOSHIBA_RBTX4927_SETUP_SETUP       ( 1 <<  4 )
 #define TOSHIBA_RBTX4927_SETUP_TIME_INIT   ( 1 <<  5 )
-#define TOSHIBA_RBTX4927_SETUP_TIMER_SETUP ( 1 <<  6 )
 #define TOSHIBA_RBTX4927_SETUP_PCIBIOS     ( 1 <<  7 )
 #define TOSHIBA_RBTX4927_SETUP_PCI1        ( 1 <<  8 )
 #define TOSHIBA_RBTX4927_SETUP_PCI2        ( 1 <<  9 )
@@ -108,7 +107,6 @@ static const u32 toshiba_rbtx4927_setup_debug_flag =
     (TOSHIBA_RBTX4927_SETUP_NONE | TOSHIBA_RBTX4927_SETUP_INFO |
      TOSHIBA_RBTX4927_SETUP_WARN | TOSHIBA_RBTX4927_SETUP_EROR |
      TOSHIBA_RBTX4927_SETUP_EFWFU | TOSHIBA_RBTX4927_SETUP_SETUP |
-     TOSHIBA_RBTX4927_SETUP_TIME_INIT | TOSHIBA_RBTX4927_SETUP_TIMER_SETUP
      | TOSHIBA_RBTX4927_SETUP_PCIBIOS | TOSHIBA_RBTX4927_SETUP_PCI1 |
      TOSHIBA_RBTX4927_SETUP_PCI2 | TOSHIBA_RBTX4927_SETUP_PCI66);
 #endif
@@ -947,14 +945,6 @@ toshiba_rbtx4927_time_init(void)
 
 }
 
-void __init toshiba_rbtx4927_timer_setup(struct irqaction *irq)
-{
-	TOSHIBA_RBTX4927_SETUP_DPRINTK(TOSHIBA_RBTX4927_SETUP_TIMER_SETUP,
-				       "-\n");
-	TOSHIBA_RBTX4927_SETUP_DPRINTK(TOSHIBA_RBTX4927_SETUP_TIMER_SETUP,
-				       "+\n");
-}
-
 static int __init toshiba_rbtx4927_rtc_init(void)
 {
 	static struct resource __initdata res = {
@@ -963,7 +953,7 @@ static int __init toshiba_rbtx4927_rtc_init(void)
 		.flags	= IORESOURCE_MEM,
 	};
 	struct platform_device *dev =
-		platform_device_register_simple("ds1742", -1, &res, 1);
+		platform_device_register_simple("rtc-ds1742", -1, &res, 1);
 	return IS_ERR(dev) ? PTR_ERR(dev) : 0;
 }
 device_initcall(toshiba_rbtx4927_rtc_init);
