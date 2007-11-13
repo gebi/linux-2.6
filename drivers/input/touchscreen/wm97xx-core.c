@@ -494,9 +494,8 @@ static void wm97xx_ts_input_close(struct input_dev *idev)
 
 	mutex_lock(&wm->ts_mutex);
 	if (--wm->ts_use_count == 0) {
-		if (wm->pen_irq) {
+		if (wm->pen_irq)
 			free_irq(wm->pen_irq, wm);
-		}
 
 		wm->pen_is_down = 0;
 

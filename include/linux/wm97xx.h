@@ -48,11 +48,11 @@
 #define WM97XX_DELAY(i)		((i << 4) & 0x00f0)	/* sample delay times */
 #define WM97XX_DELAY_MASK	0x00f0
 #define WM97XX_SLEN		0x0008	/* slot read back enable */
-#define WM97XX_SLT(i)		((i - 5) & 0x7)	/* touchpanel slot selection (5-11) */
+#define WM97XX_SLT(i)		((i - 5) & 0x7)	/* panel slot (5-11) */
 #define WM97XX_SLT_MASK		0x0007
-#define WM97XX_PRP_DETW		0x4000	/* pen detect on, digitiser off, wake up */
-#define WM97XX_PRP_DET		0x8000	/* pen detect on, digitiser off, no wake up */
-#define WM97XX_PRP_DET_DIG	0xc000	/* pen detect on, digitiser on */
+#define WM97XX_PRP_DETW		0x4000	/* detect on, digitise off, wake */
+#define WM97XX_PRP_DET		0x8000	/* detect on, digitise off, no wake */
+#define WM97XX_PRP_DET_DIG	0xc000	/* setect on, digitise on */
 #define WM97XX_RPR		0x2000	/* wake up on pen down */
 #define WM97XX_PEN_DOWN		0x8000	/* pen is down */
 #define WM97XX_ADCSRC_MASK	0x7000	/* ADC source mask */
@@ -222,8 +222,13 @@ extern struct wm97xx_codec_drv wm97xx_codec;
 struct wm97xx_codec_drv {
 	u16 id;
 	char *name;
-	int (*poll_sample) (struct wm97xx *, int adcsel, int *sample);	/* read 1 sample */
-	int (*poll_touch) (struct wm97xx *, struct wm97xx_data *);	/* read X,Y,[P] in poll */
+
+	/* read 1 sample */
+	int (*poll_sample) (struct wm97xx *, int adcsel, int *sample);
+
+	/* read X,Y,[P] in poll */
+	int (*poll_touch) (struct wm97xx *, struct wm97xx_data *);
+
 	int (*acc_enable) (struct wm97xx *, int enable);
 	void (*phy_init) (struct wm97xx *);
 	void (*dig_enable) (struct wm97xx *, int enable);
@@ -241,7 +246,7 @@ struct wm97xx_mach_ops {
 	int (*acc_pen_down) (struct wm97xx *);
 	int (*acc_startup) (struct wm97xx *);
 	void (*acc_shutdown) (struct wm97xx *);
-	
+
 	/* interrupt mask control - required for accelerated operation */
 	void (*irq_enable) (struct wm97xx *, int enable);
 
@@ -254,7 +259,7 @@ struct wm97xx {
 	u16 dig[3], id, gpio[6], misc;	/* Cached codec registers */
 	u16 dig_save[3];		/* saved during aux reading */
 	struct wm97xx_codec_drv *codec;	/* attached codec driver*/
-	struct input_dev* input_dev;	/* touchscreen input device */
+	struct input_dev *input_dev;	/* touchscreen input device */
 	struct snd_ac97 *ac97;		/* ALSA codec access */
 	struct device *dev;		/* ALSA device */
 	struct device *battery_dev;
