@@ -166,43 +166,42 @@ struct wm97xx_data {
 /*
  * Codec GPIO status
  */
-typedef enum {
+enum wm97xx_gpio_status {
     WM97XX_GPIO_HIGH,
     WM97XX_GPIO_LOW
-} wm97xx_gpio_status_t;
+};
 
 /*
  * Codec GPIO direction
  */
-typedef enum {
+enum wm97xx_gpio_dir {
     WM97XX_GPIO_IN,
     WM97XX_GPIO_OUT
-} wm97xx_gpio_dir_t;
+};
 
 /*
  * Codec GPIO polarity
  */
-typedef enum {
+enum wm97xx_gpio_pol {
     WM97XX_GPIO_POL_HIGH,
     WM97XX_GPIO_POL_LOW
-} wm97xx_gpio_pol_t;
+};
 
 /*
  * Codec GPIO sticky
  */
-typedef enum {
+enum wm97xx_gpio_sticky {
     WM97XX_GPIO_STICKY,
     WM97XX_GPIO_NOTSTICKY
-} wm97xx_gpio_sticky_t;
+};
 
 /*
  * Codec GPIO wake
  */
-typedef enum {
+enum wm97xx_gpio_wake {
     WM97XX_GPIO_WAKE,
     WM97XX_GPIO_NOWAKE
-} wm97xx_gpio_wake_t;
-
+};
 
 /*
  * Digitiser ioctl commands
@@ -285,14 +284,14 @@ struct wm97xx {
  * Codec GPIO access (not supported on WM9705)
  * This can be used to set/get codec GPIO and Virtual GPIO status.
  */
-wm97xx_gpio_status_t wm97xx_get_gpio(struct wm97xx *wm, u32 gpio);
+enum wm97xx_gpio_status wm97xx_get_gpio(struct wm97xx *wm, u32 gpio);
 void wm97xx_set_gpio(struct wm97xx *wm, u32 gpio,
-			  wm97xx_gpio_status_t status);
+			  enum wm97xx_gpio_status status);
 void wm97xx_config_gpio(struct wm97xx *wm, u32 gpio,
-				     wm97xx_gpio_dir_t dir,
-				     wm97xx_gpio_pol_t pol,
-				     wm97xx_gpio_sticky_t sticky,
-				     wm97xx_gpio_wake_t wake);
+				     enum wm97xx_gpio_dir dir,
+				     enum wm97xx_gpio_pol pol,
+				     enum wm97xx_gpio_sticky sticky,
+				     enum wm97xx_gpio_wake wake);
 
 /* codec AC97 IO access */
 int wm97xx_reg_read(struct wm97xx *wm, u16 reg);

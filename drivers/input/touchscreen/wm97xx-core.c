@@ -167,10 +167,10 @@ EXPORT_SYMBOL_GPL(wm97xx_read_aux_adc);
  *	Get the status of a codec GPIO pin
  */
 
-wm97xx_gpio_status_t wm97xx_get_gpio(struct wm97xx *wm, u32 gpio)
+enum wm97xx_gpio_status wm97xx_get_gpio(struct wm97xx *wm, u32 gpio)
 {
 	u16 status;
-	wm97xx_gpio_status_t ret;
+	enum wm97xx_gpio_status ret;
 
 	mutex_lock(&wm->codec_mutex);
 	status = wm97xx_reg_read(wm, AC97_GPIO_STATUS);
@@ -195,7 +195,7 @@ EXPORT_SYMBOL_GPL(wm97xx_get_gpio);
  */
 
 void wm97xx_set_gpio(struct wm97xx *wm, u32 gpio,
-				wm97xx_gpio_status_t status)
+				enum wm97xx_gpio_status status)
 {
 	u16 reg;
 
@@ -219,9 +219,9 @@ EXPORT_SYMBOL_GPL(wm97xx_set_gpio);
  * Codec GPIO pin configuration, this set's pin direction, polarity,
  * stickyness and wake up.
  */
-void wm97xx_config_gpio(struct wm97xx *wm, u32 gpio, wm97xx_gpio_dir_t dir,
-		   wm97xx_gpio_pol_t pol, wm97xx_gpio_sticky_t sticky,
-		   wm97xx_gpio_wake_t wake)
+void wm97xx_config_gpio(struct wm97xx *wm, u32 gpio, enum wm97xx_gpio_dir dir,
+		   enum wm97xx_gpio_pol pol, enum wm97xx_gpio_sticky sticky,
+		   enum wm97xx_gpio_wake wake)
 {
 	u16 reg;
 
