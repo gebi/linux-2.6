@@ -172,7 +172,8 @@ config TOUCHSCREEN_WM9705
 	bool "WM9705 Touchscreen interface support"
 	depends on TOUCHSCREEN_WM97XX
 	help
-	  Say Y here if you have the wm9705 touchscreen.
+	  Say Y here if you have a Wolfson Microelectronics WM9705 touchscreen
+	  connected to your system.
 
 	  If unsure, say N.
 
@@ -183,7 +184,8 @@ config TOUCHSCREEN_WM9712
 	bool "WM9712 Touchscreen interface support"
 	depends on TOUCHSCREEN_WM97XX
 	help
-	  Say Y here if you have the wm9712 touchscreen.
+	  Say Y here if you have a Wolfson Microelectronics WM9712 touchscreen
+	  connected to your system.
 
 	  If unsure, say N.
 
@@ -194,7 +196,8 @@ config TOUCHSCREEN_WM9713
 	bool "WM9713 Touchscreen interface support"
 	depends on TOUCHSCREEN_WM97XX
 	help
-	  Say Y here if you have the wm9713 touchscreen.
+	  Say Y here if you have a Wolfson Microelectronics WM9713 touchscree.
+	  connected to your system.
 
 	  If unsure, say N.
 
@@ -207,7 +210,8 @@ config TOUCHSCREEN_WM97XX_PXA
 	tristate "WM97xx PXA accelerated touch"
 	depends on TOUCHSCREEN_WM97XX && ARCH_PXA
 	help
-	  Say Y here for continuous mode touch on the PXA
+	  Say Y here for support for streaming mode with WM97xx touchscreens
+	  on systems with PXA2xx series processors.
 
 	  If unsure, say N
 
