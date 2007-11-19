@@ -584,7 +584,7 @@ static int wm97xx_probe(struct device *dev)
 
 	wm->id = wm97xx_reg_read(wm, AC97_VENDOR_ID2);
 
-	info("detected a wm97%02x codec", wm->id & 0xff);
+	dev_info(wm->dev, "detected a wm97%02x codec", wm->id & 0xff);
 
 	switch (wm->id & 0xff) {
 #ifdef CONFIG_TOUCHSCREEN_WM9705
@@ -603,8 +603,8 @@ static int wm97xx_probe(struct device *dev)
 		break;
 #endif
 	default:
-		err("Specific support for wm97%02x not compiled in.",
-		    wm->id & 0xff);
+		dev_err(wm->dev, "Support for wm97%02x not compiled in.\n",
+			wm->id & 0xff);
 		kfree(wm);
 		return -ENODEV;
 	}
