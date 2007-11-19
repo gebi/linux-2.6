@@ -126,6 +126,7 @@ obj-$(CONFIG_FB_BF54X_LQ043)	  += bf54x-lq043fb.o
 
 # the test framebuffer is last
 obj-$(CONFIG_FB_VIRTUAL)          += vfb.o
+obj-$(CONFIG_FB_VSFB)             += vsfb.o
 
 #video output switch sysfs driver
 obj-$(CONFIG_VIDEO_OUTPUT_CONTROL) += output.o
