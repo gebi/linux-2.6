@@ -53,7 +53,7 @@
 #include <linux/io.h>
 
 #define TS_NAME			"wm97xx"
-#define WM_CORE_VERSION		"0.64"
+#define WM_CORE_VERSION		"0.65"
 #define DEFAULT_PRESSURE	0xb0c0
 
 
@@ -577,15 +577,34 @@ static int wm97xx_probe(struct device *dev)
 	/* check that we have a supported codec */
 	id = wm97xx_reg_read(wm, AC97_VENDOR_ID1);
 	if (id != WM97XX_ID1) {
-		dev_err(dev, "Device with vendor %x is not a wm97xx\n", id);
+		dev_err(dev, "Device with vendor %04x is not a wm97xx\n", id);
 		kfree(wm);
 		return -ENODEV;
 	}
 
 	wm->id = wm97xx_reg_read(wm, AC97_VENDOR_ID2);
-	if (wm->id != wm97xx_codec.id) {
-		dev_err(dev, "Detected wm97%2x but built for wm97%2x\n",
-			wm->id & 0xff, wm97xx_codec.id);
+
+	info("detected a wm97%02x codec", wm->id & 0xff);
+
+	switch (wm->id & 0xff) {
+#ifdef CONFIG_TOUCHSCREEN_WM9705
+	case 0x05:
+		wm->codec = &wm9705_codec;
+		break;
+#endif
+#ifdef CONFIG_TOUCHSCREEN_WM9712
+	case 0x12:
+		wm->codec = &wm9712_codec;
+		break;
+#endif
+#ifdef CONFIG_TOUCHSCREEN_WM9713
+	case 0x13:
+		wm->codec = &wm9713_codec;
+		break;
+#endif
+	default:
+		err("Specific support for wm97%02x not compiled in.",
+		    wm->id & 0xff);
 		kfree(wm);
 		return -ENODEV;
 	}
@@ -597,7 +616,6 @@ static int wm97xx_probe(struct device *dev)
 	}
 
 	/* set up touch configuration */
-	dev_info(dev, "Detected a wm97%2x codec\n", wm->id & 0xff);
 	wm->input_dev->name = "wm97xx touchscreen";
 	wm->input_dev->open = wm97xx_ts_input_open;
 	wm->input_dev->close = wm97xx_ts_input_close;
@@ -615,7 +633,6 @@ static int wm97xx_probe(struct device *dev)
 	wm->input_dev->absfuzz[ABS_Y] = abs_y[2];
 	wm->input_dev->absfuzz[ABS_PRESSURE] = abs_p[2];
 	wm->input_dev->private = wm;
-	wm->codec = &wm97xx_codec;
 	ret = input_register_device(wm->input_dev);
 	if (ret < 0) {
 		kfree(wm);

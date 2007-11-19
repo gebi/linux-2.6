@@ -442,7 +442,7 @@ static int wm9712_acc_enable(struct wm97xx *wm, int enable)
 	return 0;
 }
 
-struct wm97xx_codec_drv wm97xx_codec = {
+struct wm97xx_codec_drv wm9712_codec = {
 	.id = 	WM9712_ID2,
 	.name = "wm9712",
 	.poll_sample = wm9712_poll_sample,
@@ -453,7 +453,7 @@ struct wm97xx_codec_drv wm97xx_codec = {
 	.dig_restore = wm9712_dig_restore,
 	.aux_prepare = wm9712_aux_prepare,
 };
-EXPORT_SYMBOL_GPL(wm97xx_codec);
+EXPORT_SYMBOL_GPL(wm9712_codec);
 
 /* Module information */
 MODULE_AUTHOR("Liam Girdwood <liam.girdwood@wolfsonmicro.com>");

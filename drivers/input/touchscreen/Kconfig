@@ -164,10 +164,6 @@ config TOUCHSCREEN_WM97XX
 	tristate "Support for WM97xx AC97 touchscreen controllers"
 	depends on AC97_BUS
 
-choice
-	prompt "WM97xx codec type"
-	depends on TOUCHSCREEN_WM97XX
-
 config TOUCHSCREEN_WM9705
 	bool "WM9705 Touchscreen interface support"
 	depends on TOUCHSCREEN_WM97XX
@@ -203,8 +199,6 @@ config TOUCHSCREEN_WM9713
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called wm9713.
-
-endchoice
 
 config TOUCHSCREEN_WM97XX_PXA
 	tristate "WM97xx PXA accelerated touch"

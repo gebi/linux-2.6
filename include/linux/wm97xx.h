@@ -213,7 +213,10 @@ enum wm97xx_gpio_wake {
 #define WM97XX_DIG_RESTORE	0x5
 
 struct wm97xx;
-extern struct wm97xx_codec_drv wm97xx_codec;
+
+extern struct wm97xx_codec_drv wm9705_codec;
+extern struct wm97xx_codec_drv wm9712_codec;
+extern struct wm97xx_codec_drv wm9713_codec;
 
 /*
  * Codec driver interface - allows mapping to WM9705/12/13 and newer codecs
