@@ -109,7 +109,7 @@ static int ak4535_write(struct snd_soc_codec *codec, unsigned int reg,
 	data[0] = reg & 0xff;
 	data[1] = value & 0xff;
 
-	ak4535_write_reg_cache (codec, reg, value);
+	ak4535_write_reg_cache(codec, reg, value);
 	if (codec->hw_write(codec->control_data, data, 2) == 2)
 		return 0;
 	else
@@ -119,12 +119,12 @@ static int ak4535_write(struct snd_soc_codec *codec, unsigned int reg,
 static int ak4535_sync(struct snd_soc_codec *codec)
 {
 	u16 *cache = codec->reg_cache;
-	int i, r=0;
+	int i, r = 0;
 
 	for (i = 0; i < AK4535_CACHEREGNUM; i++)
-		r |= ak4535_write (codec, i, cache[i]);
-	
-	ak4535dbg_dump (codec);
+		r |= ak4535_write(codec, i, cache[i]);
+
+	ak4535dbg_dump(codec);
 
 	return r;
 };
@@ -172,7 +172,7 @@ static int ak4535_add_controls(struct snd_soc_codec *codec)
 
 	for (i = 0; i < ARRAY_SIZE(ak4535_snd_controls); i++) {
 		err = snd_ctl_add(codec->card,
-			snd_soc_cnew(&ak4535_snd_controls[i],codec, NULL));
+			snd_soc_cnew(&ak4535_snd_controls[i], codec, NULL));
 		if (err < 0)
 			return err;
 	}
@@ -333,15 +333,13 @@ static int ak4535_add_widgets(struct snd_soc_codec *codec)
 {
 	int i;
 
-	for(i = 0; i < ARRAY_SIZE(ak4535_dapm_widgets); i++) {
+	for (i = 0; i < ARRAY_SIZE(ak4535_dapm_widgets); i++)
 		snd_soc_dapm_new_control(codec, &ak4535_dapm_widgets[i]);
-	}
 
 	/* set up audio path audio_map interconnects */
-	for(i = 0; audio_map[i][0] != NULL; i++) {
+	for(i = 0; audio_map[i][0] != NULL; i++)
 		snd_soc_dapm_connect_input(codec, audio_map[i][0],
 			audio_map[i][1], audio_map[i][2]);
-	}
 
 	snd_soc_dapm_new_widgets(codec);
 	return 0;
@@ -439,23 +437,23 @@ static int ak4535_dapm_event(struct snd_soc_codec *codec, int event)
 		/* everything off except vref/vmid, dac mute, inactive */
 		i = ak4535_read_reg_cache (codec, AK4535_PM1);
 		ak4535_write(codec, AK4535_PM1, i|0x80);
-		i = ak4535_read_reg_cache (codec, AK4535_PM2);
+		i = ak4535_read_reg_cache(codec, AK4535_PM2);
 		ak4535_write(codec, AK4535_PM2, i & (~0x80));
 		break;
 	case SNDRV_CTL_POWER_D3cold: /* Off, without power */
 		/* everything off, inactive */
-		i = ak4535_read_reg_cache (codec, AK4535_PM1);
+		i = ak4535_read_reg_cache(codec, AK4535_PM1);
 		ak4535_write(codec, AK4535_PM1, i & (~0x80));
 		break;
 	}
 	codec->dapm_state = event;
-	ak4535dbg_dump (codec);
+	ak4535dbg_dump(codec);
 	return 0;
 }
 
 #define AK4535_RATES (SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_11025 |\
-		SNDRV_PCM_RATE_16000 | SNDRV_PCM_RATE_22050 | SNDRV_PCM_RATE_44100 | \
-		SNDRV_PCM_RATE_48000)
+		SNDRV_PCM_RATE_16000 | SNDRV_PCM_RATE_22050 |\
+		SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000)
 
 struct snd_soc_codec_dai ak4535_dai = {
 	.name = "AK4535",
@@ -554,7 +552,7 @@ pcm_err:
 
 static struct snd_soc_device *ak4535_socdev;
 
-#if defined (CONFIG_I2C) || defined (CONFIG_I2C_MODULE)
+#if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
 
 #define I2C_DRIVERID_AK4535 0xfefe /* liam -  need a proper id */
 
@@ -669,7 +667,7 @@ static int ak4535_probe(struct platform_device *pdev)
 	INIT_LIST_HEAD(&codec->dapm_paths);
 
 	ak4535_socdev = socdev;
-#if defined (CONFIG_I2C) || defined (CONFIG_I2C_MODULE)
+#if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
 	if (setup->i2c_address) {
 		normal_i2c[0] = setup->i2c_address;
 		codec->hw_write = (hw_write_t)i2c_master_send;
@@ -710,7 +708,6 @@ struct snd_soc_codec_device soc_codec_dev_ak4535 = {
 	.suspend = 	ak4535_suspend,
 	.resume =	ak4535_resume,
 };
-
 EXPORT_SYMBOL_GPL(soc_codec_dev_ak4535);
 
 MODULE_DESCRIPTION("Soc AK4535 driver");
