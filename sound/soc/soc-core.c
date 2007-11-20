@@ -1360,7 +1360,7 @@ int snd_soc_info_volsw_ext(struct snd_kcontrol *kcontrol,
 	int max = kcontrol->private_value;
 
 	if (max == 1)
-		uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN
+		uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN;
 	else
 		uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
 
@@ -1388,7 +1388,7 @@ int snd_soc_info_volsw(struct snd_kcontrol *kcontrol,
 	int rshift = (kcontrol->private_value >> 12) & 0x0f;
 
 	if (max == 1)
-		uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN
+		uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN;
 	else
 		uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
 
@@ -1489,7 +1489,7 @@ int snd_soc_info_volsw_2r(struct snd_kcontrol *kcontrol,
 	int max = (kcontrol->private_value >> 12) & 0xff;
 
 	if (max == 1)
-		uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN
+		uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN;
 	else
 		uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
 
