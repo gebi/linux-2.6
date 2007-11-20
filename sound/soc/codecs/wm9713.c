@@ -232,32 +232,32 @@ static int mixer_event (struct snd_soc_dapm_widget *w,
 
 	if (event & SND_SOC_DAPM_PRE_REG)
 		return 0;
-	if (l & 0x1 || r & 0x1)
+	if ((l & 0x1) || (r & 0x1))
 		ac97_write(w->codec, AC97_PC_BEEP, beep & 0x7fff);
 	else
 		ac97_write(w->codec, AC97_PC_BEEP, beep | 0x8000);
 
-	if (l & 0x2 || r & 0x2)
+	if ((l & 0x2) || (r & 0x2))
 		ac97_write(w->codec, AC97_MASTER_TONE, tone & 0x7fff);
 	else
 		ac97_write(w->codec, AC97_MASTER_TONE, tone | 0x8000);
 
-	if (l & 0x4 || r & 0x4)
+	if ((l & 0x4) || (r & 0x4))
 		ac97_write(w->codec, AC97_PHONE, phone & 0x7fff);
 	else
 		ac97_write(w->codec, AC97_PHONE, phone | 0x8000);
 
-	if (l & 0x8 || r & 0x8)
+	if ((l & 0x8) || (r & 0x8))
 		ac97_write(w->codec, AC97_REC_SEL, rec & 0x7fff);
 	else
 		ac97_write(w->codec, AC97_REC_SEL, rec | 0x8000);
 
-	if (l & 0x10 || r & 0x10)
+	if ((l & 0x10) || (r & 0x10))
 		ac97_write(w->codec, AC97_PCM, pcm & 0x7fff);
 	else
 		ac97_write(w->codec, AC97_PCM, pcm | 0x8000);
 
-	if (l & 0x20 || r & 0x20)
+	if ((l & 0x20) || (r & 0x20))
 		ac97_write(w->codec, AC97_AUX, aux & 0x7fff);
 	else
 		ac97_write(w->codec, AC97_AUX, aux | 0x8000);
@@ -864,7 +864,7 @@ static int wm9713_set_dai_clkdiv(struct snd_soc_codec_dai *codec_dai,
 	}
 
 	return 0;
-};
+}
 
 static int wm9713_set_dai_fmt(struct snd_soc_codec_dai *codec_dai,
 		unsigned int fmt)
