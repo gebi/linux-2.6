@@ -21,6 +21,7 @@
 #include <linux/device.h>
 #include <linux/delay.h>
 #include <linux/clk.h>
+#include <linux/kernel.h>
 
 #include <sound/driver.h>
 #include <sound/core.h>
@@ -433,8 +434,6 @@ exit_err:
 /* default table of all avaialable root fs divisors */
 static unsigned int s3c2412_iis_fs[] = { 256, 512, 384, 768, 0 };
 
-#define ABS(x) (((x) < 0) ? (-(x)) : (x))
-
 int s3c2412_iis_calc_rate(struct s3c2412_rate_calc *info,
 			  unsigned int *fstab,
 			  unsigned int rate, struct clk *clk)
@@ -476,7 +475,7 @@ int s3c2412_iis_calc_rate(struct s3c2412_rate_calc *info,
 		printk(KERN_DEBUG "%dfs: div %d => result %d, deviation %d\n",
 		       fsdiv, div, actual, deviation);
 
-		deviation = ABS(deviation);
+		deviation = abs(deviation);
 
 		if (deviation < best_deviation) {
 			best_fs = fsdiv;
