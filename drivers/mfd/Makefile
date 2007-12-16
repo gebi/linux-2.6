@@ -6,6 +6,7 @@ obj-$(CONFIG_MFD_SM501)		+= sm501.o
 
 obj-$(CONFIG_MFD_CORE)		+= mfd-core.o
 
+obj-$(CONFIG_MFD_TC6387XB)	+= tc6387xb.o
 obj-$(CONFIG_MFD_TC6393XB)	+= tc6393xb.o
 
 obj-$(CONFIG_MCP)		+= mcp-core.o
