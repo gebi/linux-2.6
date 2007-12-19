@@ -29,7 +29,8 @@ obj-$(CONFIG_PCMCIA_M8XX)			+= m8xx_pcmcia.o
 obj-$(CONFIG_HD64465_PCMCIA)			+= hd64465_ss.o
 obj-$(CONFIG_PCMCIA_SA1100)			+= sa11xx_core.o sa1100_cs.o
 obj-$(CONFIG_PCMCIA_SA1111)			+= sa11xx_core.o sa1111_cs.o
-obj-$(CONFIG_PCMCIA_PXA2XX)                     += pxa2xx_core.o pxa2xx_cs.o
+obj-$(CONFIG_PCMCIA_PXA2XX)                     += pxa2xx_core.o pxa2xx-cs.o
+obj-$(CONFIG_ARCH_PXA_ESERIES)			+= pxa2xx_core.o
 obj-$(CONFIG_M32R_PCC)				+= m32r_pcc.o
 obj-$(CONFIG_M32R_CFC)				+= m32r_cfc.o
 obj-$(CONFIG_PCMCIA_AU1X00)			+= au1x00_ss.o
@@ -71,4 +72,7 @@ pxa2xx_cs-$(CONFIG_ARCH_LUBBOCK)		+= pxa2xx_lubbock.o sa1111_generic.o
 pxa2xx_cs-$(CONFIG_MACH_MAINSTONE)		+= pxa2xx_mainstone.o
 pxa2xx_cs-$(CONFIG_PXA_SHARPSL)			+= pxa2xx_sharpsl.o
 pxa2xx_cs-$(CONFIG_MACH_ARMCORE)		+= pxa2xx_cm_x270.o
+obj-m			+= pxa2xx_e740.o
+obj-m			+= pxa2xx_e750.o
+#pxa2xx_e800-$(CONFIG_MACH_E800)		+= pxa2xx_e800.o
 
