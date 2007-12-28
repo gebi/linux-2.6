@@ -152,34 +152,44 @@ int suspend_devices_and_enter(suspend_state_t state)
 
 	if (!suspend_ops)
 		return -ENOSYS;
-
+printk("Go 1\n");
 	if (suspend_ops->set_target) {
 		error = suspend_ops->set_target(state);
 		if (error)
 			return error;
 	}
+printk("Go 2\n");
 	suspend_console();
+printk("Go 3\n");
 	error = device_suspend(PMSG_SUSPEND);
+printk("Go 4\n");
 	if (error) {
 		printk(KERN_ERR "Some devices failed to suspend\n");
 		goto Resume_console;
 	}
+printk("Go 5\n");
 	if (suspend_ops->prepare) {
 		error = suspend_ops->prepare();
 		if (error)
 			goto Resume_devices;
 	}
+printk("Go 6\n");
 	error = disable_nonboot_cpus();
-	if (!error)
-		suspend_enter(state);
-
+printk("Go 7\n");
+//	if (!error)
+//		suspend_enter(state);
+printk("back1\n");
 	enable_nonboot_cpus();
+printk("back2\n");
 	if (suspend_ops->finish)
 		suspend_ops->finish();
+printk("back3\n");
  Resume_devices:
 	device_resume();
+printk("back4\n");
  Resume_console:
 	resume_console();
+printk("back5\n");
 	return error;
 }
 

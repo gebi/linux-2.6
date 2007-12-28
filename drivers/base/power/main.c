@@ -68,6 +68,11 @@ void device_pm_remove(struct device *dev)
  *
  */
 
+#undef dev_dbg
+#define dev_dbg(dev, format, arg...)            \
+        dev_printk(KERN_DEBUG , dev , format , ## arg)
+
+
 static int resume_device(struct device * dev)
 {
 	int error = 0;

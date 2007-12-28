@@ -41,7 +41,7 @@ static struct pxafb_mach_info e400_pxafb_mach_info = {
 
 static int __init e400_lcd_init( void )
 {
-	if(!machine_is_e400())
+	if(!machine_is_e400() && !machine_is_e350())
 		return -ENODEV;
 
 	set_pxa_fb_info(&e400_pxafb_mach_info);

@@ -78,8 +78,9 @@ int pxa_pm_enter(suspend_state_t state)
 #ifdef CONFIG_ARCH_LUBBOCK
 		LUB_HEXLED = 0xbadbadc5;
 #endif
-		while (1)
-			pxa_cpu_pm_fns->enter(state);
+	printk("Bad checksum!\n");
+//		while (1)
+//			pxa_cpu_pm_fns->enter(state);
 	}
 
 	pxa_cpu_pm_fns->restore(sleep_save);
