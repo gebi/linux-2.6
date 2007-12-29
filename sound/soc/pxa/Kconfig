@@ -6,10 +6,6 @@ config SND_PXA2XX_SOC
 	  the PXA2xx AC97, I2S or SSP interface. You will also need
 	  to select the audio interfaces to support below.
 
-config SND_PXA2XX_AC97
-	tristate
-	select SND_AC97_CODEC
-
 config SND_PXA2XX_SOC_AC97
 	tristate
 	select AC97_BUS
