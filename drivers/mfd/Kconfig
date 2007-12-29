@@ -9,6 +9,12 @@ config MFD_CORE
 	tristate
 	default n
 
+config MFD_T7L66XB
+	bool "Support Toshiba T7L66XB"
+	select MFD_CORE
+	help
+	  Support for Toshiba Mobile IO Controller T7L66XB
+
 config MFD_TC6387XB
 	bool "Support Toshiba TC6387XB"
 	select MFD_CORE
