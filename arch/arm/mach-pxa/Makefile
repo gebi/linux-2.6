@@ -29,6 +29,8 @@ ifeq ($(CONFIG_MACH_ZYLONITE),y)
   obj-$(CONFIG_CPU_PXA320)	+= zylonite_pxa320.o
 endif
 
+obj-$(CONFIG_ARCH_PXA_ESERIES)	+= eseries.o
+
 obj-$(CONFIG_MACH_ARMCORE)      += cm-x270.o
 
 # Support for blinky lights

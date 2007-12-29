@@ -180,6 +180,7 @@
 #define NR_IRQS			(IRQ_LOCOMO_SPI_TEND + 1)
 #elif defined(CONFIG_ARCH_LUBBOCK) || \
       defined(CONFIG_MACH_LOGICPD_PXA270) || \
+      defined(CONFIG_ARCH_PXA_ESERIES) || \
       defined(CONFIG_MACH_MAINSTONE)
 #define NR_IRQS			(IRQ_BOARD_END)
 #else
