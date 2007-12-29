@@ -130,3 +130,9 @@ config MMC_SPI
 
 	  If unsure, or if your system has no SPI master driver, say N.
 
+config MMC_TMIO
+	tristate "Toshiba Mobile IO Controller (TMIO) MMC/SD function support"
+	depends on MMC
+	help
+	  This provides support for the SD/MMC cell found in TC6393XB,
+	  T7L66XB and also ipaq ASIC3
