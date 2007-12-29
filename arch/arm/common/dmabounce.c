@@ -16,6 +16,7 @@
  *
  *  Copyright (C) 2002 Hewlett Packard Company.
  *  Copyright (C) 2004 MontaVista Software, Inc.
+ *  Copyright (C) 2007 Dmitry Baryshkov <dbaryshkov@gmail.com>
  *
  *  This program is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU General Public License
@@ -24,6 +25,7 @@
 
 #include <linux/module.h>
 #include <linux/init.h>
+#include <linux/rwsem.h>
 #include <linux/slab.h>
 #include <linux/device.h>
 #include <linux/dma-mapping.h>
@@ -80,6 +82,80 @@ struct dmabounce_device_info {
 	rwlock_t lock;
 };
 
+struct dmabounce_check_entry {
+	struct list_head	list;
+	dmabounce_check		checker;
+	void			*data;
+};
+
+static struct list_head checkers = LIST_HEAD_INIT(checkers);
+static rwlock_t checkers_lock = RW_LOCK_UNLOCKED;
+
+int
+dmabounce_register_checker(dmabounce_check function, void *data)
+{
+	unsigned long flags;
+	struct dmabounce_check_entry *entry =
+		kzalloc(sizeof(struct dmabounce_check_entry), GFP_ATOMIC);
+
+	if (!entry)
+		return ENOMEM;
+
+	INIT_LIST_HEAD(&entry->list);
+	entry->checker = function;
+	entry->data = data;
+
+	write_lock_irqsave(checkers_lock, flags);
+	list_add(&entry->list, &checkers);
+	write_unlock_irqrestore(checkers_lock, flags);
+
+	return 0;
+}
+
+void
+dmabounce_remove_checker(dmabounce_check function, void *data)
+{
+	unsigned long flags;
+	struct list_head *pos;
+
+	write_lock_irqsave(checkers_lock, flags);
+	__list_for_each(pos, &checkers) {
+		struct dmabounce_check_entry *entry = container_of(pos,
+				struct dmabounce_check_entry, list);
+		if (entry->checker == function && entry->data == data) {
+			list_del(pos);
+			write_unlock_irqrestore(checkers_lock, flags);
+			kfree(entry);
+			return;
+		}
+	}
+
+	write_unlock_irqrestore(checkers_lock, flags);
+	printk(KERN_WARNING "dmabounce checker not found: %p\n", function);
+}
+
+static int dma_needs_bounce(struct device *dev, dma_addr_t dma, size_t size)
+{
+	unsigned long flags;
+	struct list_head *pos;
+
+	read_lock_irqsave(checkers_lock, flags);
+	__list_for_each(pos, &checkers) {
+		struct dmabounce_check_entry *entry = container_of(pos,
+				struct dmabounce_check_entry, list);
+		if (entry->checker(dev, dma, size, entry->data)) {
+			read_unlock_irqrestore(checkers_lock, flags);
+			return 1;
+		}
+	}
+
+	read_unlock_irqrestore(checkers_lock, flags);
+#ifdef CONFIG_PLATFORM_DMABOUNCE
+	return platform_dma_needs_bounce(dev, dma, size);
+#else
+	return 0;
+#endif
+}
 #ifdef STATS
 static ssize_t dmabounce_show(struct device *dev, struct device_attribute *attr,
 			      char *buf)
@@ -239,7 +315,7 @@ map_single(struct device *dev, void *ptr, size_t size,
 		struct safe_buffer *buf;
 
 		buf = alloc_safe_buffer(device_info, ptr, size, dir);
-		if (buf == 0) {
+		if (buf == NULL) {
 			dev_err(dev, "%s: unable to map unsafe buffer %p!\n",
 			       __func__, ptr);
 			return 0;
@@ -643,7 +719,6 @@ dmabounce_unregister_dev(struct device *dev)
 		dev->bus_id, dev->bus->name);
 }
 
-
 EXPORT_SYMBOL(dma_map_single);
 EXPORT_SYMBOL(dma_unmap_single);
 EXPORT_SYMBOL(dma_map_sg);
@@ -653,6 +728,9 @@ EXPORT_SYMBOL(dma_sync_single_for_device);
 EXPORT_SYMBOL(dma_sync_sg);
 EXPORT_SYMBOL(dmabounce_register_dev);
 EXPORT_SYMBOL(dmabounce_unregister_dev);
+EXPORT_SYMBOL(dmabounce_register_checker);
+EXPORT_SYMBOL(dmabounce_remove_checker);
+
 
 MODULE_AUTHOR("Christopher Hoover <ch@hpl.hp.com>, Deepak Saxena <dsaxena@plexity.net>");
 MODULE_DESCRIPTION("Special dma_{map/unmap/dma_sync}_* routines for systems with limited DMA windows");

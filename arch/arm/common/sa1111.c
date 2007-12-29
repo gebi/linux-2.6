@@ -778,7 +778,7 @@ static void __sa1111_remove(struct sa1111 *sachip)
  * This should only get called for sa1111_device types due to the
  * way we configure our device dma_masks.
  */
-int dma_needs_bounce(struct device *dev, dma_addr_t addr, size_t size)
+int platform_dma_needs_bounce(struct device *dev, dma_addr_t addr, size_t size)
 {
 	/*
 	 * Section 4.6 of the "Intel StrongARM SA-1111 Development Module

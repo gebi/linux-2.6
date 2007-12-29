@@ -161,6 +161,7 @@ comment "IXP4xx Options"
 config DMABOUNCE
 	bool
 	default y
+	select PLATFORM_DMABOUNCE
 	depends on PCI
 
 config IXP4XX_INDIRECT_PCI

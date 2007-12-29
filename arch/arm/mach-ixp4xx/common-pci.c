@@ -336,7 +336,7 @@ static int ixp4xx_pci_platform_notify_remove(struct device *dev)
 	return 0;
 }
 
-int dma_needs_bounce(struct device *dev, dma_addr_t dma_addr, size_t size)
+int platform_dma_needs_bounce(struct device *dev, dma_addr_t dma_addr, size_t size)
 {
 	return (dev->bus == &pci_bus_type ) && ((dma_addr + size) >= SZ_64M);
 }

@@ -3,6 +3,8 @@
  *
  *  Copyright (C) 2000-2004 Russell King
  *
+ *  Device local coherent memory support added by Ian Molton (spyro@f2s.com)
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
@@ -20,6 +22,7 @@
 
 #include <asm/memory.h>
 #include <asm/cacheflush.h>
+#include <asm/io.h>
 #include <asm/tlbflush.h>
 #include <asm/sizes.h>
 
@@ -35,6 +38,13 @@
 #define CONSISTENT_PTE_INDEX(x) (((unsigned long)(x) - CONSISTENT_BASE) >> PGDIR_SHIFT)
 #define NUM_CONSISTENT_PTES (CONSISTENT_DMA_SIZE >> PGDIR_SHIFT)
 
+struct dma_coherent_mem {
+	void		*virt_base;
+	u32		device_base;
+	int		size;
+	int		flags;
+	unsigned long	*bitmap;
+};
 
 /*
  * These are the page tables (2MB each) covering uncached, DMA consistent allocations
@@ -153,6 +163,13 @@ __dma_alloc(struct device *dev, size_t size, dma_addr_t *handle, gfp_t gfp,
 	unsigned long order;
 	u64 mask = ISA_DMA_THRESHOLD, limit;
 
+	/* Following is a work-around (a.k.a. hack) to prevent pages
+	 * with __GFP_COMP being passed to split_page() which cannot
+	 * handle them.  The real problem is that this flag probably
+	 * should be 0 on ARM as it is not supported on this
+	 * platform--see CONFIG_HUGETLB_PAGE. */
+	gfp &= ~(__GFP_COMP);
+
 	if (!consistent_pte[0]) {
 		printk(KERN_ERR "%s: not initialised\n", __func__);
 		dump_stack();
@@ -160,6 +177,26 @@ __dma_alloc(struct device *dev, size_t size, dma_addr_t *handle, gfp_t gfp,
 	}
 
 	if (dev) {
+
+		if (dev->dma_mem) {
+			unsigned long flags;
+			int pgnum;
+			void *ret;
+
+			spin_lock_irqsave(&consistent_lock, flags);
+			pgnum = bitmap_find_free_region(dev->dma_mem->bitmap,
+						       dev->dma_mem->size,
+						       get_order(size));
+			spin_unlock_irqrestore(&consistent_lock, flags);
+
+			if (pgnum >= 0) {
+				*handle = dev->dma_mem->device_base + (pgnum << PAGE_SHIFT);
+				ret = dev->dma_mem->virt_base + (pgnum << PAGE_SHIFT);
+				memset(ret, 0, size);
+				return ret;
+			}
+		}
+
 		mask = dev->coherent_dma_mask;
 
 		/*
@@ -177,6 +214,9 @@ __dma_alloc(struct device *dev, size_t size, dma_addr_t *handle, gfp_t gfp,
 				 mask, (unsigned long long)ISA_DMA_THRESHOLD);
 			goto no_page;
 		}
+
+		if (dev->dma_mem && dev->dma_mem->flags & DMA_MEMORY_EXCLUSIVE)
+			return NULL;
 	}
 
 	/*
@@ -359,6 +399,8 @@ void dma_free_coherent(struct device *dev, size_t size, void *cpu_addr, dma_addr
 	pte_t *ptep;
 	int idx;
 	u32 off;
+	struct dma_coherent_mem *mem = dev ? dev->dma_mem : NULL;
+	unsigned long order;
 
 	WARN_ON(irqs_disabled());
 
@@ -368,6 +410,15 @@ void dma_free_coherent(struct device *dev, size_t size, void *cpu_addr, dma_addr
 	}
 
 	size = PAGE_ALIGN(size);
+	order = get_order(size);
+
+	/* What if mem is valid and the range is not? */
+	if (mem && cpu_addr >= mem->virt_base && cpu_addr < (mem->virt_base + (mem->size << PAGE_SHIFT))) {
+		int page = (cpu_addr - mem->virt_base) >> PAGE_SHIFT;
+
+		bitmap_release_region(mem->bitmap, page, order);
+		return;
+	}
 
 	spin_lock_irqsave(&consistent_lock, flags);
 	c = vm_region_find(&consistent_head, (unsigned long)cpu_addr);
@@ -436,6 +487,80 @@ void dma_free_coherent(struct device *dev, size_t size, void *cpu_addr, dma_addr
 	dump_stack();
 }
 EXPORT_SYMBOL(dma_free_coherent);
+
+int dma_declare_coherent_memory(struct device *dev, dma_addr_t bus_addr,
+				dma_addr_t device_addr, size_t size, int flags)
+{
+	void __iomem *mem_base;
+	int pages = size >> PAGE_SHIFT;
+	int bitmap_size = (pages + 31)/32;
+
+	if ((flags & (DMA_MEMORY_MAP | DMA_MEMORY_IO)) == 0)
+		goto out;
+	if (!size)
+		goto out;
+	if (dev->dma_mem)
+		goto out;
+
+	/* FIXME: this routine just ignores DMA_MEMORY_INCLUDES_CHILDREN */
+	mem_base = ioremap_nocache(bus_addr, size);
+	if (!mem_base)
+		goto out;
+
+	dev->dma_mem = kzalloc(sizeof(struct dma_coherent_mem), GFP_KERNEL);
+	if (!dev->dma_mem)
+		goto out;
+	memset(dev->dma_mem, 0, sizeof(struct dma_coherent_mem));
+	dev->dma_mem->bitmap = kzalloc(bitmap_size, GFP_KERNEL);
+	if (!dev->dma_mem->bitmap)
+		goto free1_out;
+
+	dev->dma_mem->virt_base = mem_base;
+	dev->dma_mem->device_base = device_addr;
+	dev->dma_mem->size = pages;
+	dev->dma_mem->flags = flags;
+
+	if (flags & DMA_MEMORY_MAP)
+		return DMA_MEMORY_MAP;
+
+	return DMA_MEMORY_IO;
+
+ free1_out:
+	kfree(dev->dma_mem->bitmap);
+ out:
+	return 0;
+}
+EXPORT_SYMBOL(dma_declare_coherent_memory);
+
+void dma_release_declared_memory(struct device *dev)
+{
+	struct dma_coherent_mem *mem = dev->dma_mem;
+
+	if (!mem)
+		return;
+	dev->dma_mem = NULL;
+	kfree(mem->bitmap);
+	kfree(mem);
+}
+EXPORT_SYMBOL(dma_release_declared_memory);
+
+void *dma_mark_declared_memory_occupied(struct device *dev,
+					dma_addr_t device_addr, size_t size)
+{
+	struct dma_coherent_mem *mem = dev->dma_mem;
+	int pages = (size + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	int pos, err;
+
+	if (!mem)
+		return ERR_PTR(-EINVAL);
+
+	pos = (device_addr - mem->device_base) >> PAGE_SHIFT;
+	err = bitmap_allocate_region(mem->bitmap, pos, get_order(pages));
+	if (err != 0)
+		return ERR_PTR(err);
+	return mem->virt_base + (pos << PAGE_SHIFT);
+}
+EXPORT_SYMBOL(dma_mark_declared_memory_occupied);
 
 /*
  * Initialise the consistent memory allocation.

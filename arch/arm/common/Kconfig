@@ -13,8 +13,12 @@ config ICST307
 config SA1111
 	bool
 	select DMABOUNCE
+	select PLATFORM_DMABOUNCE
 
 config DMABOUNCE
+	bool
+
+config PLATFORM_DMABOUNCE
 	bool
 
 config TIMER_ACORN

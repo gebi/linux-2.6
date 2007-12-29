@@ -7,6 +7,19 @@
 
 #include <linux/scatterlist.h>
 
+#define ARCH_HAS_DMA_DECLARE_COHERENT_MEMORY
+extern int
+dma_declare_coherent_memory(struct device *dev, dma_addr_t bus_addr,
+                            dma_addr_t device_addr, size_t size, int flags);
+
+extern void
+dma_release_declared_memory(struct device *dev);
+
+extern void *
+dma_mark_declared_memory_occupied(struct device *dev,
+                                  dma_addr_t device_addr, size_t size);
+
+
 /*
  * DMA-consistent mapping functions.  These allocate/free a region of
  * uncached, unwrite-buffered mapped memory space for use with DMA
@@ -433,23 +446,13 @@ extern int dmabounce_register_dev(struct device *, unsigned long, unsigned long)
  */
 extern void dmabounce_unregister_dev(struct device *);
 
-/**
- * dma_needs_bounce
- *
- * @dev: valid struct device pointer
- * @dma_handle: dma_handle of unbounced buffer
- * @size: size of region being mapped
- *
- * Platforms that utilize the dmabounce mechanism must implement
- * this function.
- *
- * The dmabounce routines call this function whenever a dma-mapping
- * is requested to determine whether a given buffer needs to be bounced
- * or not. The function must return 0 if the buffer is OK for
- * DMA access and 1 if the buffer needs to be bounced.
- *
- */
-extern int dma_needs_bounce(struct device*, dma_addr_t, size_t);
+typedef int (*dmabounce_check)(struct device *dev, dma_addr_t dma, size_t size, void *data);
+extern int dmabounce_register_checker(dmabounce_check, void *data);
+extern void dmabounce_remove_checker(dmabounce_check, void *data);
+#ifdef CONFIG_PLATFORM_DMABOUNCE
+extern int platform_dma_needs_bounce(struct device *dev, dma_addr_t dma, size_t size, void *data);
+#endif
+
 #endif /* CONFIG_DMABOUNCE */
 
 #endif /* __KERNEL__ */
