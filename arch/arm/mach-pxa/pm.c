@@ -21,11 +21,21 @@
 #include <asm/system.h>
 #include <asm/arch/pm.h>
 #include <asm/arch/pxa-regs.h>
+#include <asm/arch/pxa-pm_ll.h>
 #include <asm/arch/lubbock.h>
 #include <asm/mach/time.h>
 
 struct pxa_cpu_pm_fns *pxa_cpu_pm_fns;
 static unsigned long *sleep_save;
+
+static struct pxa_ll_pm_ops *ll_ops;
+
+struct pxa_ll_pm_ops *pxa_pm_set_ll_ops(struct pxa_ll_pm_ops *new_ops) {
+        struct pxa_ll_pm_ops *old_ops = ll_ops;
+        ll_ops = new_ops;
+        return old_ops;
+}
+EXPORT_SYMBOL(pxa_pm_set_ll_ops);
 
 int pxa_pm_enter(suspend_state_t state)
 {
@@ -43,6 +53,11 @@ int pxa_pm_enter(suspend_state_t state)
 	/* Clear sleep reset status */
 	RCSR = RCSR_SMR;
 
+	if(ll_ops && ll_ops->suspend) {
+                extern void pxa_cpu_resume(void);
+                ll_ops->suspend(virt_to_phys(pxa_cpu_resume));
+        }
+
 	/* before sleeping, calculate and save a checksum */
 	for (i = 0; i < pxa_cpu_pm_fns->save_size - 1; i++)
 		sleep_save_checksum += sleep_save[i];
@@ -54,6 +69,9 @@ int pxa_pm_enter(suspend_state_t state)
 	/* after sleeping, validate the checksum */
 	for (i = 0; i < pxa_cpu_pm_fns->save_size - 1; i++)
 		checksum += sleep_save[i];
+
+	if(ll_ops && ll_ops->resume)
+                ll_ops->resume();
 
 	/* if invalid, display message and wait for a hardware reset */
 	if (checksum != sleep_save_checksum) {
