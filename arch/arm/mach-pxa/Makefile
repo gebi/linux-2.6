@@ -29,7 +29,7 @@ ifeq ($(CONFIG_MACH_ZYLONITE),y)
   obj-$(CONFIG_CPU_PXA320)	+= zylonite_pxa320.o
 endif
 
-obj-$(CONFIG_ARCH_PXA_ESERIES)	+= eseries.o
+obj-$(CONFIG_ARCH_PXA_ESERIES)	+= eseries.o eseries_udc.o
 obj-$(CONFIG_MACH_E330)		+= eseries_pm.o
 obj-$(CONFIG_MACH_E350)		+= e350_pm.o
 obj-$(CONFIG_MACH_E740)		+= eseries_pm.o
