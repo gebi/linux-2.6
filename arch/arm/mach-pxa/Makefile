@@ -30,7 +30,7 @@ ifeq ($(CONFIG_MACH_ZYLONITE),y)
 endif
 
 obj-$(CONFIG_ARCH_PXA_ESERIES)	+= eseries.o eseries_udc.o
-obj-$(CONFIG_MACH_E330)		+= e330_lcd.o eseries_pm.o
+obj-$(CONFIG_MACH_E330)		+= e330_lcd.o eseries_pm.o e330_tc6387xb.o
 obj-$(CONFIG_MACH_E350)		+= e350_lcd.o e350_pm.o
 obj-$(CONFIG_MACH_E740)		+= e740_lcd.o eseries_pm.o
 obj-$(CONFIG_MACH_E750)		+= e750_lcd.o e400_pm.o e750_tc6393xb.o
