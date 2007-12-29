@@ -6,6 +6,7 @@ menu "System on Chip audio support"
 	depends on SND!=n
 
 config SND_SOC_AC97_BUS
+	select AC97_BUS
 	bool
 
 config SND_SOC
@@ -28,6 +29,9 @@ source "sound/soc/at91/Kconfig"
 source "sound/soc/pxa/Kconfig"
 source "sound/soc/s3c24xx/Kconfig"
 source "sound/soc/sh/Kconfig"
+source "sound/soc/imx/Kconfig"
+source "sound/soc/au1x/Kconfig"
+source "sound/soc/blackfin/Kconfig"
 
 # Supported codecs
 source "sound/soc/codecs/Kconfig"
