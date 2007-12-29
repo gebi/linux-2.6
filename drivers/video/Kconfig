@@ -1782,6 +1782,27 @@ config FB_W100
 
 	  If unsure, say N.
 
+config FB_TMIO
+	tristate "Toshiba Mobice IO FrameBuffer support"
+	depends on FB && MFD_CORE
+	select FB_CFB_FILLRECT
+	select FB_CFB_COPYAREA
+	select FB_CFB_IMAGEBLIT
+	---help---
+	  Frame buffer driver for the Toshiba Mobile IO integrated as found
+	  on the Sharp SL-6000 series
+
+	  This driver is also available as a module ( = code which can be
+	  inserted and removed from the running kernel whenever you want). The
+	  module will be called tmiofb. If you want to compile it as a module,
+	  say M here and read <file:Documentation/kbuild/modules.txt>.
+
+	  If unsure, say N.
+
+config FB_TMIO_ACCELL
+	bool "tmiofb acceleration"
+	depends on FB_TMIO
+
 config FB_S3C2410
 	tristate "S3C2410 LCD framebuffer support"
 	depends on FB && ARCH_S3C2410
