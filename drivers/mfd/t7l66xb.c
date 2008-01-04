@@ -147,6 +147,7 @@ static int t7l66xb_mmc_disable(struct platform_device *ohci)
 
         spin_lock_irqsave(&t7l66xb->lock, flags);
 
+return 0;
         dev_ctl.raw = readb(&scr->dev_ctl);
         dev_ctl.mmc_en = 0;
         writeb(dev_ctl.raw, &scr->dev_ctl);
@@ -277,7 +278,7 @@ static struct mfd_cell t7l66xb_cells[] = {
 		.num_resources = ARRAY_SIZE(t7l66xb_mmc_resources),
 		.resources = t7l66xb_mmc_resources,
 	},
-        {
+/*        {
                 .name = "tmio-ohci",
                 .enable = t7l66xb_ohci_enable,
                 .disable = t7l66xb_ohci_disable,
@@ -291,6 +292,7 @@ static struct mfd_cell t7l66xb_cells[] = {
                 .num_resources = ARRAY_SIZE(t7l66xb_nand_resources),
                 .resources = t7l66xb_nand_resources,
         },
+*/
 };
 
 /*--------------------------------------------------------------------------*/
@@ -470,7 +472,7 @@ static int t7l66xb_probe(struct platform_device *dev)
 	if(t7l66xb->irq)
 		t7l66xb_attach_irq(dev);
 
-	t7l66xb_cells[2].driver_data = pdata->nand_data;
+//	t7l66xb_cells[2].driver_data = pdata->nand_data;
 
 	if(!(retval = mfd_add_devices(dev, t7l66xb_cells,
 	                              ARRAY_SIZE(t7l66xb_cells),

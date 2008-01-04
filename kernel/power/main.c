@@ -201,8 +201,8 @@ printk("back5\n");
  */
 static void suspend_finish(void)
 {
-	thaw_processes();
 	pm_restore_console();
+	thaw_processes();
 	pm_notifier_call_chain(PM_POST_SUSPEND);
 }
 
