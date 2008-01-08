@@ -398,6 +398,7 @@ static int tmio_probe(struct platform_device *dev)
 	nand_chip	= &tmio->chip;
 	mtd->priv	= nand_chip;
 	mtd->name	= "tmio-nand";
+	mtd->owner	= THIS_MODULE;
 
 	tmio->ccr = ioremap(ccr->start, ccr->end - ccr->start + 1);
 	if (!tmio->ccr) {
