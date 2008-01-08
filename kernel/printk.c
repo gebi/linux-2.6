@@ -1,3 +1,4 @@
+#define JTAG
 /*
  *  linux/kernel/printk.c
  *
@@ -657,6 +658,15 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 	 * Copy the output into log_buf.  If the caller didn't provide
 	 * appropriate log level tags, we insert them here
 	 */
+#ifdef JTAG
+        for (p = printk_buf; *p; p++) {
+        asm ("1:     mrc     p14, 0, r15, c14, c0, 0\n"
+             "       bvs     1b\n"
+             "       mcr     p14, 0, %0, c8, c0, 0\n"
+             ::"r" (*p): "cc");
+        }
+#endif
+
 	for (p = printk_buf; *p; p++) {
 		if (log_level_unknown) {
                         /* log_level_unknown signals the start of a new line */

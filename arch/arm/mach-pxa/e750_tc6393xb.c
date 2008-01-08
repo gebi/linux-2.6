@@ -35,36 +35,36 @@ static struct resource e750_tc6393xb_resources[] = {
 };
 
 static int e750_tc6393xb_enable(struct platform_device *dev) {
-	pxa_gpio_mode(GPIO11_3_6MHz_MD);
+//	pxa_gpio_mode(GPIO11_3_6MHz_MD);
 
 	GPCR(45) = GPIO_bit(45); /* #SUSPEND low      */
-	GPCR(19) = GPIO_bit(19); /* #PCLR low (reset) */
+	GPCR(19) = GPIO_bit(19); /* #PCLR low */
 	mdelay(1);
-	GPSR(45) = GPIO_bit(45); /* #SUSPEND high     */
-	mdelay(10);              /* FIXME - pronbably 1000x too long */
+	GPSR(45) = GPIO_bit(45); /* #SUSPEND high  (reset)   */
+	mdelay(10);
 	GPSR(19) = GPIO_bit(19); /* #PCLR high        */
 	return 0;
 }
 
 static int e750_tc6393xb_disable(struct platform_device *dev) {
-	GPSR(45) = GPIO_bit(45); /* #SUSPEND high */
+	GPCR(45) = GPIO_bit(45); /* #SUSPEND high */
 	mdelay(10);
-	GPSR(19) = GPIO_bit(19); /* #PCLR high    */
+	GPCR(19) = GPIO_bit(19); /* #PCLR high    */
 	
-	pxa_gpio_mode(GPIO11_3_6MHz_MD|GPIO_OUT);
-	GPSR0 = GPIO_bit(GPIO11_3_6MHz);
+//	pxa_gpio_mode(GPIO11_3_6MHz_MD|GPIO_OUT);
+//	GPSR0 = GPIO_bit(GPIO11_3_6MHz);
 	return 0;
 }
 
 static int e750_tc6393xb_suspend(struct platform_device *dev) {
-        GPCR(45) = GPIO_bit(45); // #SUSPEND low
+        //GPCR(45) = GPIO_bit(45); // #SUSPEND low
         mdelay(10);
 
         return 0;
 }
 
 static int e750_tc6393xb_resume(struct platform_device *dev) {
-        GPSR(45) = GPIO_bit(45); // #SUSPEND high
+       // GPSR(45) = GPIO_bit(45); // #SUSPEND high
         mdelay(10);
         return 0;
 }

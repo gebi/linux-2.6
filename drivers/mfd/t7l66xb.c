@@ -33,6 +33,7 @@
 #include <linux/mfd/tmio.h>
 #include <linux/mfd/t7l66xb.h>
 
+#include <linux/delay.h>
 union t7l66xb_dev_ctl {
         u8             raw;
 struct {
@@ -88,6 +89,7 @@ static int t7l66xb_ohci_enable(struct platform_device *ohci)
         dev_ctl.usb_en = 1;
         writeb(dev_ctl.raw, &scr->dev_ctl);
 
+	printk("%08x --\n", readb(&scr->dev_ctl));
         spin_unlock_irqrestore(&t7l66xb->lock, flags);
 
         return 0;
@@ -114,9 +116,9 @@ static int t7l66xb_ohci_disable(struct platform_device *ohci)
 
 /*--------------------------------------------------------------------------*/
 
-static int t7l66xb_mmc_enable(struct platform_device *ohci)
+static int t7l66xb_mmc_enable(struct platform_device *mmc)
 {
-        struct platform_device          *dev    = to_platform_device(ohci->dev.parent);
+        struct platform_device          *dev    = to_platform_device(mmc->dev.parent);
         struct t7l66xb_platform_data   *pdata = dev->dev.platform_data;
         struct t7l66xb                  *t7l66xb = platform_get_drvdata(dev);
         struct t7l66xb_scr __iomem      *scr    = t7l66xb->scr;
@@ -125,20 +127,25 @@ static int t7l66xb_mmc_enable(struct platform_device *ohci)
 
         spin_lock_irqsave(&t7l66xb->lock, flags);
 
-        if(pdata->enable_clk32k)
-                pdata->enable_clk32k(dev);
         dev_ctl.raw = readb(&scr->dev_ctl);
         dev_ctl.mmc_en = 1;
         writeb(dev_ctl.raw, &scr->dev_ctl);
+	
+	printk("%02x-\n", readb(&scr->dev_ctl));
 
+msleep(10);
+        if(pdata->enable_clk32k)
+                pdata->enable_clk32k(dev);
+
+msleep(10);
         spin_unlock_irqrestore(&t7l66xb->lock, flags);
 
         return 0;
 }
 
-static int t7l66xb_mmc_disable(struct platform_device *ohci)
+static int t7l66xb_mmc_disable(struct platform_device *mmc)
 {
-        struct platform_device          *dev    = to_platform_device(ohci->dev.parent);
+        struct platform_device          *dev    = to_platform_device(mmc->dev.parent);
         struct t7l66xb_platform_data   *pdata = dev->dev.platform_data;
         struct t7l66xb                  *t7l66xb = platform_get_drvdata(dev);
         struct t7l66xb_scr __iomem      *scr    = t7l66xb->scr;
@@ -179,6 +186,9 @@ static int t7l66xb_nand_disable(struct platform_device *nand)
 
 	return 0;
 }
+
+//FIXME - we should only use the nand enable / disable if the NAND code is
+//not using auto power supply control. is this the case?
 
 static int t7l66xb_nand_enable(struct platform_device *nand)
 {
@@ -278,7 +288,7 @@ static struct mfd_cell t7l66xb_cells[] = {
 		.num_resources = ARRAY_SIZE(t7l66xb_mmc_resources),
 		.resources = t7l66xb_mmc_resources,
 	},
-/*        {
+        {
                 .name = "tmio-ohci",
                 .enable = t7l66xb_ohci_enable,
                 .disable = t7l66xb_ohci_disable,
@@ -292,7 +302,6 @@ static struct mfd_cell t7l66xb_cells[] = {
                 .num_resources = ARRAY_SIZE(t7l66xb_nand_resources),
                 .resources = t7l66xb_nand_resources,
         },
-*/
 };
 
 /*--------------------------------------------------------------------------*/
@@ -460,6 +469,9 @@ static int t7l66xb_probe(struct platform_device *dev)
                 goto err_ioremap;
         }
 
+	printk("%04x   --4c\n", ioread16(((unsigned long)t7l66xb->scr)+0x34c));
+	printk("%02x   --fc\n", ioread8(((unsigned long)t7l66xb->scr)+0x3fc));
+
         if (pdata && pdata->enable)
                 pdata->enable(dev);
 
@@ -472,7 +484,7 @@ static int t7l66xb_probe(struct platform_device *dev)
 	if(t7l66xb->irq)
 		t7l66xb_attach_irq(dev);
 
-//	t7l66xb_cells[2].driver_data = pdata->nand_data;
+	t7l66xb_cells[2].driver_data = pdata->nand_data;
 
 	if(!(retval = mfd_add_devices(dev, t7l66xb_cells,
 	                              ARRAY_SIZE(t7l66xb_cells),

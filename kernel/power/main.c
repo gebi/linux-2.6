@@ -176,8 +176,8 @@ printk("Go 5\n");
 printk("Go 6\n");
 	error = disable_nonboot_cpus();
 printk("Go 7\n");
-//	if (!error)
-//		suspend_enter(state);
+	if (!error)
+		suspend_enter(state);
 printk("back1\n");
 	enable_nonboot_cpus();
 printk("back2\n");

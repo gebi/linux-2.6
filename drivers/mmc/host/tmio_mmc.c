@@ -490,11 +490,22 @@ static int tmio_mmc_resume(struct platform_device *dev) {
 
 	/* Enable the MMC/SD Control registers */
 	writew(SDCREN, &cnf->cmd);
+	msleep(10);
 	writel(dev->resource[0].start & 0xfffe, &cnf->ctl_base);
 
+	msleep(10);
 	/* Tell the MFD core we are ready to be enabled */
 	if(cell->enable)
 		cell->enable(dev);
+
+	msleep(10);
+	printk("%08x \n", dev->resource[0].start);
+	printk("%08x \n", &cnf->cmd);
+	printk("%08x \n", &cnf->ctl_base);
+	printk("%08x \n", host->cnf);
+	printk("%08x \n", host->ctl);
+	printk("%08x \n", ioread16(&host->ctl->irq_mask[0]));
+	printk("%08x \n", ioread16(&host->ctl->irq_mask[1]));
 
 	mmc_resume_host(mmc);
 

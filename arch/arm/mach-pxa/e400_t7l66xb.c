@@ -60,25 +60,25 @@ static struct tmio_nand_data e400_tc6393xb_nand_config = {
 
 static int e400_t7l66xb_enable(struct platform_device *dev) {
 
-	GPCR(19) = GPIO_bit(19); // #SUSPEND low
-	GPCR(7) = GPIO_bit(7); // #PCLR low (reset)
+//	GPCR(45) = GPIO_bit(45); // #SUSPEND low
+//	GPCR(19) = GPIO_bit(19); // #PCLR low (reset)
 	mdelay(10);
-	GPSR(19) = GPIO_bit(19); // #SUSPEND high
+//	GPSR(45) = GPIO_bit(45); // #SUSPEND high
 	mdelay(10);
-	GPSR(7) = GPIO_bit(7); // #PCLR high
+//	GPSR(19) = GPIO_bit(19); // #PCLR high
 	mdelay(10);
 	return 0;
 }
 
 static int e400_t7l66xb_suspend(struct platform_device *dev) {
-	GPCR(19) = GPIO_bit(19); // #SUSPEND low
+//	GPCR(45) = GPIO_bit(45); // #SUSPEND low
 	mdelay(10);
 	
 	return 0;
 }
 
 static int e400_t7l66xb_resume(struct platform_device *dev) {
-	GPSR(19) = GPIO_bit(19); // #SUSPEND high
+//	GPSR(45) = GPIO_bit(45); // #SUSPEND high
 	mdelay(10);
 	return 0;
 }

@@ -33,12 +33,6 @@
  * published by the Free Software Foundation.
  */
 
-/*#include <linux/fs.h>
-#include <linux/mount.h>
-#include <linux/pagemap.h>
-#include <linux/init.h>
-#include <linux/namei.h>
-#include <linux/sched.h>*/
 #include <linux/platform_device.h>
 #include <linux/mfd-core.h>
 #include <linux/mfd/tmio.h>
@@ -82,7 +76,8 @@ struct {
 	unsigned	ckrnen:1;	/* D1 */
 	unsigned	uspw1:1;	/* D2 USB Port 1 Power Disable	*/
 	unsigned	uspw2:1;	/* D3 USB Port 2 Power Disable	*/
-	unsigned	x00:4;
+	unsigned	uspw3:1;	/* D4 USB Port 3 Power Disable	*/
+	unsigned	x00:3;
 	unsigned	pmee:1;		/* D8 */
 	unsigned	x01:6;
 	unsigned	pmes:1;		/* D15 */
@@ -91,12 +86,35 @@ struct {
 
 /*-------------------------------------------------------------------------*/
 
+#define MAX_TMIO_OHCI_PORTS	3
+
 struct tmio_hcd {
 	struct tmio_uhccr __iomem *ccr;
+	bool disabled_ports[MAX_TMIO_OHCI_PORTS];
 };
 
 #define hcd_to_tmio(hcd)	((struct tmio_hcd *)(hcd_to_ohci(hcd) + 1))
 #define ohci_to_tmio(ohci)	((struct tmio_hcd *)(ohci + 1))
+
+struct indexed_device_attribute{
+	struct device_attribute dev_attr;
+	int index;
+};
+#define to_indexed_dev_attr(_dev_attr) \
+	container_of(_dev_attr, struct indexed_device_attribute, dev_attr)
+
+#define INDEXED_ATTR(_name, _mode, _show, _store, _index)		\
+	{ .dev_attr = __ATTR(_name ## _index, _mode, _show, _store),	\
+	  .index = _index }
+
+#define INDEXED_DEVICE_ATTR(_name, _mode, _show, _store, _index)	\
+struct indexed_device_attribute dev_attr_##_name ## _index	\
+	= INDEXED_ATTR(_name, _mode, _show, _store, _index)
+
+static bool disabled_tmio_ports[MAX_TMIO_OHCI_PORTS];
+module_param_array(disabled_tmio_ports, bool, NULL, 0644);
+MODULE_PARM_DESC(disabled_tmio_ports,
+		"disable specified TC6393 usb ports (default: all enabled)");
 
 /*-------------------------------------------------------------------------*/
 
@@ -104,14 +122,23 @@ static void tmio_stop_hc(struct platform_device *dev)
 {
 	struct mfd_cell			*cell	= mfd_get_cell(dev);
 	struct usb_hcd			*hcd	= platform_get_drvdata(dev);
+	struct ohci_hcd			*ohci	= hcd_to_ohci(hcd);
 	struct tmio_hcd			*tmio	= hcd_to_tmio(hcd);
 	struct tmio_uhccr __iomem	*ccr	= tmio->ccr;
 	union tmio_uhccr_pm		pm	= {0};
 
 	pm.gcken	= 1;
 	pm.ckrnen	= 1;
-	pm.uspw1	= 1;
-	pm.uspw2	= 1;
+	switch (ohci->num_ports) {
+		default:
+			dev_err(&dev->dev, "Unsupported amount of ports: %d\n", ohci->num_ports);
+		case 3:
+			pm.uspw3 = 1;
+		case 2:
+			pm.uspw2 = 1;
+		case 1:
+			pm.uspw1 = 1;
+	}
 
 	iowrite8(0,		&ccr->intc);
 	iowrite8(0,		&ccr->ilme);
@@ -122,23 +149,40 @@ static void tmio_stop_hc(struct platform_device *dev)
 	cell->disable(dev);
 }
 
-static void tmio_start_hc(struct platform_device *dev)
+static void tmio_write_pm(struct platform_device *dev)
 {
-	struct mfd_cell			*cell	= mfd_get_cell(dev);
 	struct usb_hcd			*hcd	= platform_get_drvdata(dev);
 	struct tmio_hcd			*tmio	= hcd_to_tmio(hcd);
 	struct tmio_uhccr __iomem	*ccr	= tmio->ccr;
 	union tmio_uhccr_pm		pm	= {0};
-	unsigned long			base	= hcd->rsrc_start;
 
 	pm.pmes		= 1;
 	pm.pmee		= 1;
 	pm.ckrnen	= 1;
 	pm.gcken	= 1;
 
-	cell->enable(dev);
+	if (tmio->disabled_ports[0])
+		pm.uspw1 = 1;
+	if (tmio->disabled_ports[1])
+		pm.uspw2 = 1;
+	if (tmio->disabled_ports[2])
+		pm.uspw3 = 1;
 
 	iowrite16(pm.raw,	&ccr->pm);
+}
+
+static void tmio_start_hc(struct platform_device *dev)
+{
+	struct mfd_cell			*cell	= mfd_get_cell(dev);
+	struct usb_hcd			*hcd	= platform_get_drvdata(dev);
+	struct tmio_hcd			*tmio	= hcd_to_tmio(hcd);
+	struct tmio_uhccr __iomem	*ccr	= tmio->ccr;
+	unsigned long			base	= hcd->rsrc_start;
+
+	cell->enable(dev);
+
+	tmio_write_pm(dev);
+
 	iowrite16(base,		&ccr->basel);
 	iowrite16(base >> 16,	&ccr->baseh);
 	iowrite8(1,		&ccr->ilme);
@@ -147,6 +191,52 @@ static void tmio_start_hc(struct platform_device *dev)
 	dev_info(&dev->dev, "revision %d @ 0x%08llx, irq %d\n",
 			ioread8(&ccr->revid), hcd->rsrc_start, hcd->irq);
 }
+
+static ssize_t tmio_disabled_port_show(struct device *dev,
+		struct device_attribute *attr,
+		char *buf)
+{
+	struct usb_hcd		*hcd	= dev_get_drvdata(dev);
+	struct tmio_hcd		*tmio	= hcd_to_tmio(hcd);
+	int			index	= to_indexed_dev_attr(attr)->index;
+	return snprintf(buf, PAGE_SIZE, "%c",
+			tmio->disabled_ports[index-1]? 'Y': 'N');
+}
+
+static ssize_t tmio_disabled_port_store(struct device *dev,
+		struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	struct usb_hcd		*hcd	= dev_get_drvdata(dev);
+	struct tmio_hcd		*tmio	= hcd_to_tmio(hcd);
+	int			index	= to_indexed_dev_attr(attr)->index;
+
+	if (!count)
+		return -EINVAL;
+
+	switch (buf[0]) {
+	case 'y': case 'Y': case '1':
+		tmio->disabled_ports[index-1] = true;
+		break;
+	case 'n': case 'N': case '0':
+		tmio->disabled_ports[index-1] = false;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	tmio_write_pm(to_platform_device(dev));
+
+	return 1;
+}
+
+
+static INDEXED_DEVICE_ATTR(disabled_usb_port, S_IRUGO | S_IWUSR,
+		tmio_disabled_port_show, tmio_disabled_port_store, 1);
+static INDEXED_DEVICE_ATTR(disabled_usb_port, S_IRUGO | S_IWUSR,
+		tmio_disabled_port_show, tmio_disabled_port_store, 2);
+static INDEXED_DEVICE_ATTR(disabled_usb_port, S_IRUGO | S_IWUSR,
+		tmio_disabled_port_show, tmio_disabled_port_store, 3);
 
 static int usb_hcd_tmio_probe(const struct hc_driver *driver,
 		struct platform_device *dev)
@@ -173,6 +263,10 @@ static int usb_hcd_tmio_probe(const struct hc_driver *driver,
 	hcd->rsrc_len	= regs->end - regs->start + 1;
 
 	tmio		= hcd_to_tmio(hcd);
+
+	memcpy(tmio->disabled_ports,
+			disabled_tmio_ports,
+			sizeof(disabled_tmio_ports));
 
 	tmio->ccr = ioremap(config->start, config->end - config->start + 1);
 	if (!tmio->ccr) {
@@ -203,10 +297,34 @@ static int usb_hcd_tmio_probe(const struct hc_driver *driver,
 	ohci_hcd_init(ohci);
 
 	retval = usb_add_hcd(hcd, irq, IRQF_DISABLED);
+	if (retval)
+		goto err_add_hcd;
+
+	switch (ohci->num_ports) {
+		default:
+			dev_err(&dev->dev, "Unsupported amount of ports: %d\n",
+					ohci->num_ports);
+		case 3:
+			retval |= device_create_file(&dev->dev,
+					&dev_attr_disabled_usb_port3.dev_attr);
+		case 2:
+			retval |= device_create_file(&dev->dev,
+					&dev_attr_disabled_usb_port2.dev_attr);
+		case 1:
+			retval |= device_create_file(&dev->dev,
+					&dev_attr_disabled_usb_port1.dev_attr);
+	}
 
 	if (retval == 0)
 		return retval;
 
+	device_remove_file(&dev->dev, &dev_attr_disabled_usb_port3.dev_attr);
+	device_remove_file(&dev->dev, &dev_attr_disabled_usb_port2.dev_attr);
+	device_remove_file(&dev->dev, &dev_attr_disabled_usb_port1.dev_attr);
+
+	usb_remove_hcd(hcd);
+
+err_add_hcd:
 	tmio_stop_hc(dev);
 
 	dmabounce_unregister_dev(&dev->dev);
@@ -227,6 +345,9 @@ static void usb_hcd_tmio_remove(struct usb_hcd *hcd, struct platform_device *dev
 {
 	struct tmio_hcd		*tmio	= hcd_to_tmio(hcd);
 
+	device_remove_file(&dev->dev, &dev_attr_disabled_usb_port3.dev_attr);
+	device_remove_file(&dev->dev, &dev_attr_disabled_usb_port2.dev_attr);
+	device_remove_file(&dev->dev, &dev_attr_disabled_usb_port1.dev_attr);
 	usb_remove_hcd(hcd);
 	tmio_stop_hc(dev);
 	dmabounce_unregister_dev(&dev->dev);
@@ -312,13 +433,22 @@ static u64 dma_mask = DMA_32BIT_MASK;
 static int ohci_hcd_tmio_drv_probe(struct platform_device *dev)
 {
 	struct resource		*sram	= platform_get_resource_byname(dev, IORESOURCE_MEM, TMIO_OHCI_SRAM);
+	int retval;
 
 	dev->dev.dma_mask = &dma_mask;
 	dev->dev.coherent_dma_mask = DMA_32BIT_MASK;
 
+	/* FIXME: move dmabounce checkers to tc6393xb core? */
 	dmabounce_register_checker(tmio_dmabounce_check, sram);
 
-	return usb_hcd_tmio_probe(&ohci_tmio_hc_driver, dev);
+	retval = usb_hcd_tmio_probe(&ohci_tmio_hc_driver, dev);
+
+	if (retval == 0)
+		return retval;
+
+	dmabounce_remove_checker(tmio_dmabounce_check, sram);
+
+	return retval;
 }
 
 static int ohci_hcd_tmio_drv_remove(struct platform_device *dev)
