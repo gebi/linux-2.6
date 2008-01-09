@@ -14,6 +14,7 @@
 #include <linux/module.h>
 #include <linux/device.h>
 #include <linux/fb.h>
+#include <linux/backlight.h>
 #include <linux/err.h>
 
 #include <asm/mach-types.h>
@@ -94,6 +95,26 @@ static struct resource e740_fb_resources[] = {
 	},
 };
 
+/* ----------------------- backlight code --------------------------------*/
+
+static void e740_set_intensity(int intensity) {
+	u32 gpio;
+
+	gpio = w100fb_gpio_read(W100_GPIO_PORT_B);
+        gpio &= ~0x3f;
+        if(intensity)
+                gpio |= (((intensity-1) & 0x3) << 4) | 0xf;
+        w100fb_gpio_write(W100_GPIO_PORT_B, gpio);
+}
+
+struct generic_bl_info e740_bl_info = {
+	.name = "e740-bl",
+	.max_intensity = 4,
+	.default_intensity = 3,
+	.limit_mask = 0x7,   // FIXME no limit?
+	.set_bl_intensity = e740_set_intensity,
+};
+
 /* ----------------------- device declarations -------------------------- */
 
 
@@ -107,6 +128,15 @@ static struct platform_device e740_fb_device = {
 	.resource       = e740_fb_resources,
 };
 
+static struct platform_device e740_bl_device = {
+	.name           = "generic-bl",
+	.dev            = {
+		.parent = &e740_fb_device.dev,
+		.platform_data  = &e740_bl_info,
+	},
+	.id             = -1,
+};
+
 static int e740_lcd_init (void) {
 	int ret;
 
@@ -115,6 +145,8 @@ static int e740_lcd_init (void) {
 
 	if((ret = platform_device_register(&e740_fb_device)))
 		return ret;
+
+	platform_device_register(&e740_bl_device);
 
 	return 0;
 }

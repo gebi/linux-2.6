@@ -844,6 +844,9 @@ unsigned long w100fb_gpio_read(int port)
 {
 	unsigned long value;
 
+	if(!remapped_regs)
+		return 0;
+
 	if (port==W100_GPIO_PORT_A)
 		value = readl(remapped_regs + mmGPIO_DATA);
 	else
@@ -854,6 +857,9 @@ unsigned long w100fb_gpio_read(int port)
 
 void w100fb_gpio_write(int port, unsigned long value)
 {
+	if(!remapped_regs)
+		return;
+
 	if (port==W100_GPIO_PORT_A)
 		value = writel(value, remapped_regs + mmGPIO_DATA);
 	else
