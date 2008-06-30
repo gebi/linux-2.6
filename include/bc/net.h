@@ -50,7 +50,7 @@ UB_DECLARE_VOID_FUNC(ub_sock_uncharge(struct sock *sk))
 /* management of queue for send space */
 UB_DECLARE_FUNC(long, ub_sock_wait_for_space(struct sock *sk, long timeo, 
 			unsigned long size))
-UB_DECLARE_VOID_FUNC(ub_sock_snd_queue_add(struct sock *sk, int resource, 
+UB_DECLARE_FUNC(int, ub_sock_snd_queue_add(struct sock *sk, int resource, 
 			unsigned long size))
 UB_DECLARE_VOID_FUNC(ub_sock_sndqueuedel(struct sock *sk))
 
@@ -103,14 +103,14 @@ static inline void ub_sock_retwres_tcp(struct sock *sk, unsigned long size,
 	ub_sock_ret_wreserv(sk, UB_TCPSNDBUF, size, ressize);
 }
 
-static inline void ub_sock_sndqueueadd_other(struct sock *sk, unsigned long sz)
+static inline int ub_sock_sndqueueadd_other(struct sock *sk, unsigned long sz)
 {
-	ub_sock_snd_queue_add(sk, UB_OTHERSOCKBUF, sz);
+	return ub_sock_snd_queue_add(sk, UB_OTHERSOCKBUF, sz);
 }
 
-static inline void ub_sock_sndqueueadd_tcp(struct sock *sk, unsigned long sz)
+static inline int ub_sock_sndqueueadd_tcp(struct sock *sk, unsigned long sz)
 {
-	ub_sock_snd_queue_add(sk, UB_TCPSNDBUF, sz);
+	return ub_sock_snd_queue_add(sk, UB_TCPSNDBUF, sz);
 }
 
 static inline int ub_tcpsndbuf_charge(struct sock *sk,

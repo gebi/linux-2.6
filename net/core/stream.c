@@ -139,8 +139,8 @@ int __sk_stream_wait_memory(struct sock *sk, long *timeo_p,
 		if (amount == 0) {
 			if (sk_stream_memory_free(sk) && !vm_wait)
 				break;
-		} else
-			ub_sock_sndqueueadd_tcp(sk, amount);
+		} else if (!ub_sock_sndqueueadd_tcp(sk, amount))
+			break;
 
 		set_bit(SOCK_NOSPACE, &sk->sk_socket->flags);
 		sk->sk_write_pending++;

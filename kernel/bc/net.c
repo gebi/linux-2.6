@@ -226,7 +226,7 @@ static void ub_tcp_snd_wakeup(struct user_beancounter *ub)
 	}
 }
 
-void ub_sock_snd_queue_add(struct sock *sk, int res, unsigned long size)
+int ub_sock_snd_queue_add(struct sock *sk, int res, unsigned long size)
 {
 	unsigned long flags;
 	struct sock_beancounter *skbc;
@@ -234,7 +234,7 @@ void ub_sock_snd_queue_add(struct sock *sk, int res, unsigned long size)
 	unsigned long added_reserv;
 
 	if (!sock_has_ubc(sk))
-		return;
+		return 0;
 
 	skbc = sock_bc(sk);
 	ub = top_beancounter(skbc->ub);
@@ -253,7 +253,7 @@ void ub_sock_snd_queue_add(struct sock *sk, int res, unsigned long size)
 		spin_unlock_irqrestore(&ub->ub_lock, flags);
 		if (added_reserv)
 			charge_beancounter_notop(skbc->ub, res, added_reserv);
-		return;
+		return 0;
 	}
 
 	ub_debug(UBD_NET_SLEEP, "Adding sk to queue\n");
@@ -278,6 +278,7 @@ void ub_sock_snd_queue_add(struct sock *sk, int res, unsigned long size)
 	}
 out:
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
+	return -ENOMEM;
 }
 
 EXPORT_SYMBOL(ub_sock_snd_queue_add);
