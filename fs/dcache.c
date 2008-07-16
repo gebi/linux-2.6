@@ -1912,7 +1912,7 @@ out:
 	if (deleted && buffer &&
 			prepend(&end, &buflen, " (deleted)", 10) != 0)
 		goto Elong;
-
+out_err:
 	spin_unlock(&vfsmount_lock);
 	return buffer ? retval : NULL;
 
@@ -1931,8 +1931,10 @@ global_root:
 	 * explicitly and hide the path information for other cases.
 	 * This approach is more safe, let's take it.  2001/04/22  SAW
 	 */
-	if (!(oldmnt->mnt_sb->s_flags & MS_NOUSER))
-		return ERR_PTR(-EINVAL);
+	if (!(oldmnt->mnt_sb->s_flags & MS_NOUSER)) {
+		retval = ERR_PTR(-EINVAL);
+		goto out_err;
+	}
 
 	retval += 1;	/* hit the slash */
 	if (buffer && prepend_name(&retval, &buflen, &dentry->d_name) != 0)
@@ -1943,7 +1945,7 @@ global_root:
 
 Elong:
 	retval = ERR_PTR(-ENAMETOOLONG);
-	goto out;
+	goto out_err;
 }
 EXPORT_SYMBOL(__d_path);
 
