@@ -10,6 +10,9 @@
 
 extern void cpu_idle(void);
 
+struct pt_regs;
+typedef void (*smp_nmi_function)(struct pt_regs *regs, void *info);
+
 #ifdef CONFIG_SMP
 
 #include <linux/preempt.h>
@@ -48,6 +51,8 @@ extern int __cpu_up(unsigned int cpunum);
  * Final polishing of CPUs
  */
 extern void smp_cpus_done(unsigned int max_cpus);
+
+extern int smp_nmi_call_function(smp_nmi_function func, void *info, int wait);
 
 /*
  * Call a function on all other processors
@@ -112,6 +117,12 @@ static inline void smp_send_reschedule(int cpu) { }
 })
 #define smp_call_function_mask(mask, func, info, wait) \
 			(up_smp_call_function(func, info))
+
+static inline int smp_nmi_call_function(smp_nmi_function func,
+					 void *info, int wait)
+{
+	return 0;
+}
 
 #endif /* !SMP */
 

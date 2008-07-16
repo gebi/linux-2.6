@@ -7,6 +7,8 @@
 #include <linux/cache.h>
 #include <linux/rcupdate.h>
 
+#include <bc/dcache.h>
+
 struct nameidata;
 struct path;
 struct vfsmount;
@@ -110,6 +112,9 @@ struct dentry {
 	struct dcookie_struct *d_cookie; /* cookie, if any */
 #endif
 	int d_mounted;
+#ifdef CONFIG_BEANCOUNTERS
+	struct dentry_beancounter dentry_bc;
+#endif
 	unsigned char d_iname[DNAME_INLINE_LEN_MIN];	/* small names */
 };
 
@@ -173,9 +178,13 @@ d_iput:		no		no		no       yes
 
 #define DCACHE_REFERENCED	0x0008  /* Recently used, don't discard. */
 #define DCACHE_UNHASHED		0x0010	
+#define DCACHE_VIRTUAL		0x0100	/* ve accessible */
+
+extern void mark_tree_virtual(struct path *path);
 
 #define DCACHE_INOTIFY_PARENT_WATCHED	0x0020 /* Parent inode is watched */
 
+extern struct kmem_cache *dentry_cache;
 extern spinlock_t dcache_lock;
 extern seqlock_t rename_lock;
 
@@ -302,6 +311,7 @@ extern char *dynamic_dname(struct dentry *, char *, int, const char *, ...);
 extern char *__d_path(const struct path *path, struct path *root, char *, int);
 extern char *d_path(const struct path *, char *, int);
 extern char *dentry_path(struct dentry *, char *, int);
+extern int d_root_check(struct path *path);
 
 /* Allocation counts.. */
 
@@ -321,6 +331,12 @@ extern char *dentry_path(struct dentry *, char *, int);
 static inline struct dentry *dget(struct dentry *dentry)
 {
 	if (dentry) {
+#ifdef CONFIG_BEANCOUNTERS
+		preempt_disable();
+		if (ub_dentry_on && ub_dget_testone(dentry))
+			BUG();
+		preempt_enable_no_resched();
+#endif
 		BUG_ON(!atomic_read(&dentry->d_count));
 		atomic_inc(&dentry->d_count);
 	}
@@ -363,4 +379,5 @@ extern struct dentry *lookup_create(struct nameidata *nd, int is_dir);
 
 extern int sysctl_vfs_cache_pressure;
 
+extern int check_area_access_ve(struct path *);
 #endif	/* __LINUX_DCACHE_H */

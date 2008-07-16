@@ -474,7 +474,7 @@ static int fn_hash_insert(struct fib_table *tb, struct fib_config *cfg)
 
 			fib_release_info(fi_drop);
 			if (state & FA_S_ACCESSED)
-				rt_cache_flush(-1);
+				rt_cache_flush(cfg->fc_nlinfo.nl_net, -1);
 			rtmsg_fib(RTM_NEWROUTE, key, fa, cfg->fc_dst_len, tb->tb_id,
 				  &cfg->fc_nlinfo, NLM_F_REPLACE);
 			return 0;
@@ -534,7 +534,7 @@ static int fn_hash_insert(struct fib_table *tb, struct fib_config *cfg)
 
 	if (new_f)
 		fz->fz_nent++;
-	rt_cache_flush(-1);
+	rt_cache_flush(cfg->fc_nlinfo.nl_net, -1);
 
 	rtmsg_fib(RTM_NEWROUTE, key, new_fa, cfg->fc_dst_len, tb->tb_id,
 		  &cfg->fc_nlinfo, 0);
@@ -616,7 +616,7 @@ static int fn_hash_delete(struct fib_table *tb, struct fib_config *cfg)
 		write_unlock_bh(&fib_hash_lock);
 
 		if (fa->fa_state & FA_S_ACCESSED)
-			rt_cache_flush(-1);
+			rt_cache_flush(cfg->fc_nlinfo.nl_net, -1);
 		fn_free_alias(fa, f);
 		if (kill_fn) {
 			fn_free_node(f);
@@ -772,10 +772,10 @@ static int fn_hash_dump(struct fib_table *tb, struct sk_buff *skb, struct netlin
 void __init fib_hash_init(void)
 {
 	fn_hash_kmem = kmem_cache_create("ip_fib_hash", sizeof(struct fib_node),
-					 0, SLAB_PANIC, NULL);
+					 0, SLAB_PANIC | SLAB_UBC, NULL);
 
 	fn_alias_kmem = kmem_cache_create("ip_fib_alias", sizeof(struct fib_alias),
-					  0, SLAB_PANIC, NULL);
+					  0, SLAB_PANIC | SLAB_UBC, NULL);
 
 }
 

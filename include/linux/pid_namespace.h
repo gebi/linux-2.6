@@ -14,6 +14,14 @@ struct pidmap {
 
 #define PIDMAP_ENTRIES         ((PID_MAX_LIMIT + 8*PAGE_SIZE - 1)/PAGE_SIZE/8)
 
+/* pid namespace flags */
+
+/* if set newly created pid ns got PID_NS_HIDE_CHILD flag */
+#define PID_NS_HIDE_CHILD	0x00000001
+
+/* if set newly created processes invisible from parent ns*/
+#define PID_NS_HIDDEN		0x00000002
+
 struct pid_namespace {
 	struct kref kref;
 	struct pidmap pidmap[PIDMAP_ENTRIES];
@@ -22,6 +30,7 @@ struct pid_namespace {
 	struct kmem_cache *pid_cachep;
 	unsigned int level;
 	struct pid_namespace *parent;
+	unsigned flags;
 #ifdef CONFIG_PROC_FS
 	struct vfsmount *proc_mnt;
 #endif

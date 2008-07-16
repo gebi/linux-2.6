@@ -4,12 +4,14 @@
 #include <linux/module.h>
 #include <net/checksum.h>
 #include <linux/smp.h>
+#include <linux/syscalls.h>
 
 #include <asm/processor.h>
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
 #include <asm/desc.h>
 
+EXPORT_SYMBOL(kernel_execve);
 EXPORT_SYMBOL(kernel_thread);
 
 EXPORT_SYMBOL(__get_user_1);

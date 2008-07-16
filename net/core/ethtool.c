@@ -828,7 +828,7 @@ int dev_ethtool(struct net *net, struct ifreq *ifr)
 	case ETHTOOL_GPFLAGS:
 		break;
 	default:
-		if (!capable(CAP_NET_ADMIN))
+		if (!capable(CAP_NET_ADMIN) && !capable(CAP_VE_NET_ADMIN))
 			return -EPERM;
 	}
 

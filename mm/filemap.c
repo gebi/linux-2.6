@@ -42,6 +42,8 @@
 
 #include <asm/mman.h>
 
+#include <bc/io_acct.h>
+
 static ssize_t
 generic_file_direct_IO(int rw, struct kiocb *iocb, const struct iovec *iov,
 	loff_t offset, unsigned long nr_segs);
@@ -121,6 +123,7 @@ void __remove_from_page_cache(struct page *page)
 	mem_cgroup_uncharge_page(page);
 	radix_tree_delete(&mapping->page_tree, page->index);
 	page->mapping = NULL;
+	ub_io_release_debug(page);
 	mapping->nrpages--;
 	__dec_zone_page_state(page, NR_FILE_PAGES);
 	BUG_ON(page_mapped(page));

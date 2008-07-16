@@ -2360,9 +2360,6 @@ static int xfrm_dev_event(struct notifier_block *this, unsigned long event, void
 {
 	struct net_device *dev = ptr;
 
-	if (dev_net(dev) != &init_net)
-		return NOTIFY_DONE;
-
 	switch (event) {
 	case NETDEV_DOWN:
 		xfrm_flush_bundles();

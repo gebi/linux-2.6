@@ -125,7 +125,10 @@ extern void remove_proc_entry(const char *name, struct proc_dir_entry *parent);
 extern struct vfsmount *proc_mnt;
 struct pid_namespace;
 extern int proc_fill_super(struct super_block *);
-extern struct inode *proc_get_inode(struct super_block *, unsigned int, struct proc_dir_entry *);
+extern struct inode *proc_get_inode(struct super_block *, unsigned int,
+		struct proc_dir_entry *glob, struct proc_dir_entry *loc);
+
+extern struct file_system_type proc_fs_type;
 
 /*
  * These are generic /proc routines that use the internal
@@ -173,6 +176,8 @@ extern struct proc_dir_entry *proc_symlink(const char *,
 extern struct proc_dir_entry *proc_mkdir(const char *,struct proc_dir_entry *);
 extern struct proc_dir_entry *proc_mkdir_mode(const char *name, mode_t mode,
 			struct proc_dir_entry *parent);
+
+extern struct proc_dir_entry glob_proc_root;
 
 static inline struct proc_dir_entry *proc_create(const char *name, mode_t mode,
 	struct proc_dir_entry *parent, const struct file_operations *proc_fops)
@@ -287,6 +292,9 @@ struct proc_inode {
 	int fd;
 	union proc_op op;
 	struct proc_dir_entry *pde;
+#ifdef CONFIG_VE
+	struct proc_dir_entry *lpde;
+#endif
 	struct inode vfs_inode;
 };
 
@@ -298,6 +306,15 @@ static inline struct proc_inode *PROC_I(const struct inode *inode)
 static inline struct proc_dir_entry *PDE(const struct inode *inode)
 {
 	return PROC_I(inode)->pde;
+}
+
+static inline struct proc_dir_entry *LPDE(const struct inode *inode)
+{
+#ifdef CONFIG_VE
+	return PROC_I(inode)->lpde;
+#else
+	return NULL;
+#endif
 }
 
 static inline struct net *PDE_NET(struct proc_dir_entry *pde)

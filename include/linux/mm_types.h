@@ -94,6 +94,14 @@ struct page {
 #ifdef CONFIG_CGROUP_MEM_RES_CTLR
 	unsigned long page_cgroup;
 #endif
+#ifdef CONFIG_BEANCOUNTERS
+	/* FIXME: switch to mainline memcgroup */
+	union {
+		struct user_beancounter *page_ub;
+		struct page_beancounter *page_pb;
+		struct user_beancounter **slub_ubs;
+	} bc;
+#endif
 };
 
 /*
@@ -219,12 +227,18 @@ struct mm_struct {
 
 	unsigned long flags; /* Must use atomic bitops to access the bits */
 
+	unsigned int vps_dumpable:2;
+	unsigned int oom_killed:1;
+
 	/* coredumping support */
 	struct completion *core_startup_done, core_done;
 
 	/* aio bits */
 	rwlock_t		ioctx_list_lock;	/* aio lock */
 	struct kioctx		*ioctx_list;
+#ifdef CONFIG_BEANCOUNTERS
+	struct user_beancounter *mm_ub;
+#endif
 #ifdef CONFIG_MM_OWNER
 	/*
 	 * "owner" points to a task that is regarded as the canonical

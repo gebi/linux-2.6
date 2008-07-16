@@ -10,6 +10,7 @@
  *			Also removed cacheflush_time as it's entirely unused.
  */
 
+#ifdef __KERNEL__
 #include <asm/intrinsics.h>
 #include <asm/processor.h>
 
@@ -38,5 +39,9 @@ get_cycles (void)
 	ret = ia64_getreg(_IA64_REG_AR_ITC);
 	return ret;
 }
+
+extern unsigned int cpu_khz;
+
+#endif
 
 #endif /* _ASM_IA64_TIMEX_H */

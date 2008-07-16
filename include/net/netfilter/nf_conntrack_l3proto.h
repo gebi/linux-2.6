@@ -42,6 +42,9 @@ struct nf_conntrack_l3proto
 	int (*print_tuple)(struct seq_file *s,
 			   const struct nf_conntrack_tuple *);
 
+	/* Called when a conntrack entry is destroyed */
+	void (*destroy)(struct nf_conn *conntrack);
+
 	/*
 	 * Called before tracking. 
 	 *	*dataoff: offset of protocol header (TCP, UDP,...) in skb
@@ -67,6 +70,33 @@ struct nf_conntrack_l3proto
 	struct module *me;
 };
 
+/* virtualization of l3 protocol's sysctl tables: */
+#if defined(CONFIG_VE_IPTABLES)
+#include <linux/sched.h>
+#define ve_nf_ct3			(get_exec_env()->_nf_conntrack)
+#endif
+
+#if defined(CONFIG_VE_IPTABLES) && defined(CONFIG_SYSCTL)
+#define ve_nf_ct_l3protos		ve_nf_ct3->_nf_ct_l3protos
+#define ve_nf_conntrack_l3proto_ipv4	(ve_nf_ct3->_nf_conntrack_l3proto_ipv4)
+#define	ve_nf_conntrack_l3proto_ipv6	(ve_nf_ct3->_nf_conntrack_l3proto_ipv6)
+#define ve_nf_conntrack_max		(ve_nf_ct3->_nf_conntrack_max)
+#define ve_nf_conntrack_count		(ve_nf_ct3->_nf_conntrack_count)
+#define ve_nf_conntrack_checksum	(ve_nf_ct3->_nf_conntrack_checksum)
+#else /* !CONFIG_VE_IPTABLES || !CONFIG_SYSCTL: */
+#define ve_nf_ct_l3protos		nf_ct_l3protos
+#define ve_nf_conntrack_l3proto_ipv4	&nf_conntrack_l3proto_ipv4
+#define ve_nf_conntrack_l3proto_ipv6	&nf_conntrack_l3proto_ipv6
+#define ve_nf_conntrack_max		nf_conntrack_max
+#define ve_nf_conntrack_count		nf_conntrack_count
+#define ve_nf_conntrack_checksum	nf_conntrack_checksum
+#endif /* CONFIG_VE_IPTABLES && CONFIG_SYSCTL */
+
+extern int init_nf_ct_l3proto_ipv4(void);
+extern void fini_nf_ct_l3proto_ipv4(void);
+extern int init_nf_ct_l3proto_ipv6(void);
+extern void fini_nf_ct_l3proto_ipv6(void);
+
 extern struct nf_conntrack_l3proto *nf_ct_l3protos[AF_MAX];
 
 /* Protocol registration. */
@@ -83,7 +113,11 @@ __nf_ct_l3proto_find(u_int16_t l3proto)
 {
 	if (unlikely(l3proto >= AF_MAX))
 		return &nf_conntrack_l3proto_generic;
-	return rcu_dereference(nf_ct_l3protos[l3proto]);
+#ifdef CONFIG_VE_IPTABLES
+	if (!get_exec_env()->_nf_conntrack)
+		return &nf_conntrack_l3proto_generic;
+#endif
+	return rcu_dereference(ve_nf_ct_l3protos[l3proto]);
 }
 
 #endif /*_NF_CONNTRACK_L3PROTO_H*/

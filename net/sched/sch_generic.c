@@ -141,11 +141,13 @@ static inline int qdisc_restart(struct net_device *dev)
 	struct Qdisc *q = dev->qdisc;
 	struct sk_buff *skb;
 	int ret = NETDEV_TX_BUSY;
+	struct ve_struct *old_ve;
 
 	/* Dequeue packet */
 	if (unlikely((skb = dev_dequeue_skb(dev, q)) == NULL))
 		return 0;
 
+	old_ve = set_exec_env(skb->owner_env);
 
 	/* And release queue */
 	spin_unlock(&dev->queue_lock);
@@ -178,6 +180,8 @@ static inline int qdisc_restart(struct net_device *dev)
 		ret = dev_requeue_skb(skb, dev, q);
 		break;
 	}
+
+	(void)set_exec_env(old_ve);
 
 	return ret;
 }

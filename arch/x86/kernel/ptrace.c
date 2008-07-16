@@ -1422,8 +1422,11 @@ int do_syscall_trace(struct pt_regs *regs, int entryexit)
 		return 0;
 
 	/* Fake a debug trap */
-	if (is_singlestep)
+	if (is_singlestep) {
+		set_pn_state(current, entryexit ? PN_STOP_LEAVE : PN_STOP_ENTRY);
 		send_sigtrap(current, regs, 0);
+		clear_pn_state(current);
+	}
 
  	if (!test_thread_flag(TIF_SYSCALL_TRACE) && !is_sysemu)
 		goto out;

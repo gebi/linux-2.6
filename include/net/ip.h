@@ -157,16 +157,31 @@ struct ipv4_config
 
 extern struct ipv4_config ipv4_config;
 DECLARE_SNMP_STAT(struct ipstats_mib, ip_statistics);
-#define IP_INC_STATS(field)		SNMP_INC_STATS(ip_statistics, field)
-#define IP_INC_STATS_BH(field)		SNMP_INC_STATS_BH(ip_statistics, field)
-#define IP_INC_STATS_USER(field) 	SNMP_INC_STATS_USER(ip_statistics, field)
-#define IP_ADD_STATS_BH(field, val)	SNMP_ADD_STATS_BH(ip_statistics, field, val)
+
+#ifdef CONFIG_VE
+#define ve_ip_statistics (get_exec_env()->_ip_statistics)
+#else
+#define ve_ip_statistics ip_statistics
+#endif
+#define IP_INC_STATS(field)		SNMP_INC_STATS(ve_ip_statistics, field)
+#define IP_INC_STATS_BH(field)		SNMP_INC_STATS_BH(ve_ip_statistics, field)
+#define IP_INC_STATS_USER(field) 	SNMP_INC_STATS_USER(ve_ip_statistics, field)
+#define IP_ADD_STATS_BH(field, val)	SNMP_ADD_STATS_BH(ve_ip_statistics, field, val)
+
 DECLARE_SNMP_STAT(struct linux_mib, net_statistics);
-#define NET_INC_STATS(field)		SNMP_INC_STATS(net_statistics, field)
-#define NET_INC_STATS_BH(field)		SNMP_INC_STATS_BH(net_statistics, field)
-#define NET_INC_STATS_USER(field) 	SNMP_INC_STATS_USER(net_statistics, field)
-#define NET_ADD_STATS_BH(field, adnd)	SNMP_ADD_STATS_BH(net_statistics, field, adnd)
-#define NET_ADD_STATS_USER(field, adnd)	SNMP_ADD_STATS_USER(net_statistics, field, adnd)
+#if defined(CONFIG_VE) && defined(CONFIG_INET)
+#define ve_net_statistics (get_exec_env()->_net_statistics)
+
+extern int init_ipv4_mibs(void);
+extern void cleanup_ipv4_mibs(void);
+#else
+#define ve_net_statistics net_statistics
+#endif
+#define NET_INC_STATS(field)		SNMP_INC_STATS(ve_net_statistics, field)
+#define NET_INC_STATS_BH(field)		SNMP_INC_STATS_BH(ve_net_statistics, field)
+#define NET_INC_STATS_USER(field) 	SNMP_INC_STATS_USER(ve_net_statistics, field)
+#define NET_ADD_STATS_BH(field, adnd)	SNMP_ADD_STATS_BH(ve_net_statistics, field, adnd)
+#define NET_ADD_STATS_USER(field, adnd)	SNMP_ADD_STATS_USER(ve_net_statistics, field, adnd)
 
 extern unsigned long snmp_fold_field(void *mib[], int offt);
 extern int snmp_mib_init(void *ptr[2], size_t mibsize);

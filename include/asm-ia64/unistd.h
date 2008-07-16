@@ -302,6 +302,16 @@
 #define __NR_timerfd_create		1310
 #define __NR_timerfd_settime		1311
 #define __NR_timerfd_gettime		1312
+#define __NR_fairsched_vcpus		1499
+#define __NR_fairsched_mknod		1500
+#define __NR_fairsched_rmnod		1501
+#define __NR_fairsched_chwt		1502
+#define __NR_fairsched_mvpr		1503
+#define __NR_fairsched_rate		1504
+#define __NR_getluid			1505
+#define __NR_setluid			1506
+#define __NR_setublimit			1507
+#define __NR_ubstat			1508
 
 #ifdef __KERNEL__
 

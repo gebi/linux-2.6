@@ -22,6 +22,8 @@
 #include <linux/mutex.h>
 #include <linux/backing-dev.h>
 
+#include <linux/ve_proto.h>
+
 #ifdef CONFIG_KMOD
 #include <linux/kmod.h>
 #endif

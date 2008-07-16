@@ -234,6 +234,15 @@ extern void class_interface_unregister(struct class_interface *);
 extern struct class *class_create(struct module *owner, const char *name);
 extern void class_destroy(struct class *cls);
 
+extern struct class net_class;
+extern struct kset *class_kset;
+
+int classes_init(void);
+void classes_fini(void);
+
+int devices_init(void);
+void devices_fini(void);
+
 /*
  * The type of device, "struct device" is embedded in. A class
  * or bus can contain devices of different types

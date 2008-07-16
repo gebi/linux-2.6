@@ -42,6 +42,7 @@
 #include <linux/in.h>
 #include <linux/inet.h>
 #include <linux/netdevice.h>
+#include <linux/nsproxy.h>
 #include <linux/inetdevice.h>
 #include <linux/igmp.h>
 #include <linux/proc_fs.h>
@@ -123,9 +124,10 @@ static struct timer_list ipmr_expire_timer;
 static
 struct net_device *ipmr_new_tunnel(struct vifctl *v)
 {
+	struct net *net = get_exec_env()->ve_netns;
 	struct net_device  *dev;
 
-	dev = __dev_get_by_name(&init_net, "tunl0");
+	dev = __dev_get_by_name(net, "tunl0");
 
 	if (dev) {
 		int err;
@@ -149,7 +151,7 @@ struct net_device *ipmr_new_tunnel(struct vifctl *v)
 
 		dev = NULL;
 
-		if (err == 0 && (dev = __dev_get_by_name(&init_net, p.name)) != NULL) {
+		if (err == 0 && (dev = __dev_get_by_name(net, p.name)) != NULL) {
 			dev->flags |= IFF_MULTICAST;
 
 			in_dev = __in_dev_get_rtnl(dev);
@@ -1088,9 +1090,6 @@ static int ipmr_device_event(struct notifier_block *this, unsigned long event, v
 	struct net_device *dev = ptr;
 	struct vif_device *v;
 	int ct;
-
-	if (dev_net(dev) != &init_net)
-		return NOTIFY_DONE;
 
 	if (event != NETDEV_UNREGISTER)
 		return NOTIFY_DONE;

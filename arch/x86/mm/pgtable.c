@@ -13,9 +13,9 @@ pgtable_t pte_alloc_one(struct mm_struct *mm, unsigned long address)
 	struct page *pte;
 
 #ifdef CONFIG_HIGHPTE
-	pte = alloc_pages(GFP_KERNEL|__GFP_HIGHMEM|__GFP_REPEAT|__GFP_ZERO, 0);
+	pte = alloc_pages(GFP_KERNEL_UBC|__GFP_HIGHMEM|__GFP_REPEAT|__GFP_ZERO, 0);
 #else
-	pte = alloc_pages(GFP_KERNEL|__GFP_REPEAT|__GFP_ZERO, 0);
+	pte = alloc_pages(GFP_KERNEL_UBC|__GFP_REPEAT|__GFP_ZERO, 0);
 #endif
 	if (pte)
 		pgtable_page_ctor(pte);
@@ -210,7 +210,7 @@ static void pgd_mop_up_pmds(struct mm_struct *mm, pgd_t *pgd)
 
 pgd_t *pgd_alloc(struct mm_struct *mm)
 {
-	pgd_t *pgd = (pgd_t *)__get_free_page(GFP_KERNEL | __GFP_ZERO);
+	pgd_t *pgd = (pgd_t *)__get_free_page(GFP_KERNEL_UBC | __GFP_ZERO);
 
 	/* so that alloc_pmd can use it */
 	mm->pgd = pgd;

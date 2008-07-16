@@ -9,6 +9,7 @@
  */
 
 #include <linux/mm.h>
+#include <linux/module.h>
 #include <linux/hugetlb.h>
 #include <linux/slab.h>
 #include <linux/shm.h>
@@ -25,6 +26,8 @@
 #include <asm/pgtable.h>
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
+
+#include <bc/vmpages.h>
 
 #ifndef pgprot_modify
 static inline pgprot_t pgprot_modify(pgprot_t oldprot, pgprot_t newprot)
@@ -144,12 +147,20 @@ mprotect_fixup(struct vm_area_struct *vma, struct vm_area_struct **pprev,
 	unsigned long charged = 0;
 	pgoff_t pgoff;
 	int error;
+	unsigned long ch_size;
+	int ch_dir;
 	int dirty_accountable = 0;
 
 	if (newflags == oldflags) {
 		*pprev = vma;
 		return 0;
 	}
+
+	error = -ENOMEM;
+	ch_size = nrpages - pages_in_vma_range(vma, start, end);
+	ch_dir = ub_protected_charge(mm, ch_size, newflags, vma);
+	if (ch_dir == PRIVVM_ERROR)
+		goto fail_ch;
 
 	/*
 	 * If we make a private mapping writable we increase our commit;
@@ -163,7 +174,7 @@ mprotect_fixup(struct vm_area_struct *vma, struct vm_area_struct **pprev,
 		if (!(oldflags & (VM_ACCOUNT|VM_WRITE|VM_SHARED))) {
 			charged = nrpages;
 			if (security_vm_enough_memory(charged))
-				return -ENOMEM;
+				goto fail_sec;
 			newflags |= VM_ACCOUNT;
 		}
 	}
@@ -213,10 +224,16 @@ success:
 		change_protection(vma, start, end, vma->vm_page_prot, dirty_accountable);
 	vm_stat_account(mm, oldflags, vma->vm_file, -nrpages);
 	vm_stat_account(mm, newflags, vma->vm_file, nrpages);
+	if (ch_dir == PRIVVM_TO_SHARED)
+		__ub_unused_privvm_dec(mm, ch_size);
 	return 0;
 
 fail:
 	vm_unacct_memory(charged);
+fail_sec:
+	if (ch_dir == PRIVVM_TO_PRIVATE)
+		__ub_unused_privvm_dec(mm, ch_size);
+fail_ch:
 	return error;
 }
 
@@ -318,3 +335,4 @@ out:
 	up_write(&current->mm->mmap_sem);
 	return error;
 }
+EXPORT_SYMBOL_GPL(sys_mprotect);

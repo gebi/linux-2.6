@@ -115,6 +115,7 @@
 #ifdef CONFIG_IP_MROUTE
 #include <linux/mroute.h>
 #endif
+#include <bc/net.h>
 
 DEFINE_SNMP_STAT(struct linux_mib, net_statistics) __read_mostly;
 
@@ -330,6 +331,10 @@ lookup_protocol:
 			goto out_rcu_unlock;
 	}
 
+	err = vz_security_protocol_check(answer->protocol);
+	if (err < 0)
+		goto out_rcu_unlock;
+
 	err = -EPERM;
 	if (answer->capability > 0 && !capable(answer->capability))
 		goto out_rcu_unlock;
@@ -350,6 +355,13 @@ lookup_protocol:
 	sk = sk_alloc(net, PF_INET, GFP_KERNEL, answer_prot);
 	if (sk == NULL)
 		goto out;
+
+	err = -ENOBUFS;
+	if (ub_sock_charge(sk, PF_INET, sock->type))
+		goto out_sk_free;
+	/* if charge was successful, sock_init_data() MUST be called to
+	 * set sk->sk_type. otherwise sk will be uncharged to wrong resource
+	 */
 
 	err = 0;
 	sk->sk_no_check = answer_no_check;
@@ -408,6 +420,9 @@ out:
 out_rcu_unlock:
 	rcu_read_unlock();
 	goto out;
+out_sk_free:
+	sk_free(sk);
+	return err;
 }
 
 
@@ -422,6 +437,9 @@ int inet_release(struct socket *sock)
 
 	if (sk) {
 		long timeout;
+		struct ve_struct *saved_env;
+
+		saved_env = set_exec_env(sk->owner_env);
 
 		/* Applications forget to leave groups before exiting */
 		ip_mc_drop_socket(sk);
@@ -439,6 +457,8 @@ int inet_release(struct socket *sock)
 			timeout = sk->sk_lingertime;
 		sock->sk = NULL;
 		sk->sk_prot->close(sk, timeout);
+
+		(void)set_exec_env(saved_env);
 	}
 	return 0;
 }
@@ -1341,27 +1361,27 @@ static struct net_protocol icmp_protocol = {
 	.netns_ok =	1,
 };
 
-static int __init init_ipv4_mibs(void)
+int init_ipv4_mibs(void)
 {
-	if (snmp_mib_init((void **)net_statistics,
+	if (snmp_mib_init((void **)ve_net_statistics,
 			  sizeof(struct linux_mib)) < 0)
 		goto err_net_mib;
-	if (snmp_mib_init((void **)ip_statistics,
+	if (snmp_mib_init((void **)ve_ip_statistics,
 			  sizeof(struct ipstats_mib)) < 0)
 		goto err_ip_mib;
-	if (snmp_mib_init((void **)icmp_statistics,
+	if (snmp_mib_init((void **)ve_icmp_statistics,
 			  sizeof(struct icmp_mib)) < 0)
 		goto err_icmp_mib;
-	if (snmp_mib_init((void **)icmpmsg_statistics,
+	if (snmp_mib_init((void **)ve_icmpmsg_statistics,
 			  sizeof(struct icmpmsg_mib)) < 0)
 		goto err_icmpmsg_mib;
-	if (snmp_mib_init((void **)tcp_statistics,
+	if (snmp_mib_init((void **)ve_tcp_statistics,
 			  sizeof(struct tcp_mib)) < 0)
 		goto err_tcp_mib;
-	if (snmp_mib_init((void **)udp_statistics,
+	if (snmp_mib_init((void **)ve_udp_statistics,
 			  sizeof(struct udp_mib)) < 0)
 		goto err_udp_mib;
-	if (snmp_mib_init((void **)udplite_statistics,
+	if (snmp_mib_init((void **)ve_udplite_statistics,
 			  sizeof(struct udp_mib)) < 0)
 		goto err_udplite_mib;
 
@@ -1370,20 +1390,33 @@ static int __init init_ipv4_mibs(void)
 	return 0;
 
 err_udplite_mib:
-	snmp_mib_free((void **)udp_statistics);
+	snmp_mib_free((void **)ve_udp_statistics);
 err_udp_mib:
-	snmp_mib_free((void **)tcp_statistics);
+	snmp_mib_free((void **)ve_tcp_statistics);
 err_tcp_mib:
-	snmp_mib_free((void **)icmpmsg_statistics);
+	snmp_mib_free((void **)ve_icmpmsg_statistics);
 err_icmpmsg_mib:
-	snmp_mib_free((void **)icmp_statistics);
+	snmp_mib_free((void **)ve_icmp_statistics);
 err_icmp_mib:
-	snmp_mib_free((void **)ip_statistics);
+	snmp_mib_free((void **)ve_ip_statistics);
 err_ip_mib:
-	snmp_mib_free((void **)net_statistics);
+	snmp_mib_free((void **)ve_net_statistics);
 err_net_mib:
 	return -ENOMEM;
 }
+EXPORT_SYMBOL(init_ipv4_mibs);
+
+void cleanup_ipv4_mibs(void)
+{
+	snmp_mib_free((void **)ve_udplite_statistics);
+	snmp_mib_free((void **)ve_udp_statistics);
+	snmp_mib_free((void **)ve_tcp_statistics);
+	snmp_mib_free((void **)ve_icmpmsg_statistics);
+	snmp_mib_free((void **)ve_icmp_statistics);
+	snmp_mib_free((void **)ve_ip_statistics);
+	snmp_mib_free((void **)ve_net_statistics);
+}
+EXPORT_SYMBOL(cleanup_ipv4_mibs);
 
 static int ipv4_proc_init(void);
 

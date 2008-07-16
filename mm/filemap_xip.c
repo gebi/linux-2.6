@@ -16,6 +16,7 @@
 #include <linux/sched.h>
 #include <asm/tlbflush.h>
 #include <asm/io.h>
+#include <bc/vmpages.h>
 
 /*
  * We do use our own empty page to avoid interference with other users
@@ -190,6 +191,8 @@ __xip_unmap (struct address_space * mapping,
 			flush_cache_page(vma, address, pte_pfn(*pte));
 			pteval = ptep_clear_flush(vma, address, pte);
 			page_remove_rmap(page, vma);
+			pb_remove_ref(page, mm);
+			ub_unused_privvm_inc(mm, vma);
 			dec_mm_counter(mm, file_rss);
 			BUG_ON(pte_dirty(pteval));
 			pte_unmap_unlock(pte, ptl);

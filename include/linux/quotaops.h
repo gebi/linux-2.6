@@ -170,6 +170,19 @@ static inline int DQUOT_TRANSFER(struct inode *inode, struct iattr *iattr)
 	return 0;
 }
 
+static __inline__ int DQUOT_RENAME(struct inode *inode,
+		struct inode *old_dir, struct inode *new_dir)
+{
+	struct dquot_operations *q_op;
+
+	q_op = inode->i_sb->dq_op;
+	if (q_op && q_op->rename) {
+		if (q_op->rename(inode, old_dir, new_dir) == NO_QUOTA)
+			return 1;
+	}
+	return 0;
+}
+
 /* The following two functions cannot be called inside a transaction */
 static inline void DQUOT_SYNC(struct super_block *sb)
 {
@@ -240,6 +253,12 @@ static inline int DQUOT_ON_REMOUNT(struct super_block *sb)
 }
 
 static inline int DQUOT_TRANSFER(struct inode *inode, struct iattr *iattr)
+{
+	return 0;
+}
+
+static inline int DQUOT_RENAME(struct inode *inode, struct inode *old_dir,
+		struct inode *new_dir)
 {
 	return 0;
 }

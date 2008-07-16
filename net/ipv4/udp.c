@@ -159,7 +159,9 @@ int udp_lib_get_port(struct sock *sk, unsigned short snum,
 	struct sock *sk2;
 	int    error = 1;
 	struct net *net = sock_net(sk);
+	struct ve_struct *ve;
 
+	ve = get_exec_env();
 	write_lock_bh(&udp_hash_lock);
 
 	if (!snum) {
@@ -176,7 +178,7 @@ int udp_lib_get_port(struct sock *sk, unsigned short snum,
 		for (i = 0; i < UDP_HTABLE_SIZE; i++) {
 			int size = 0;
 
-			head = &udptable[rover & (UDP_HTABLE_SIZE - 1)];
+			head = &udptable[udp_hashfn(rover, VEID(ve))];
 			if (hlist_empty(head))
 				goto gotit;
 
@@ -213,7 +215,7 @@ int udp_lib_get_port(struct sock *sk, unsigned short snum,
 gotit:
 		snum = rover;
 	} else {
-		head = &udptable[snum & (UDP_HTABLE_SIZE - 1)];
+		head = &udptable[udp_hashfn(snum, VEID(ve))];
 
 		sk_for_each(sk2, node, head)
 			if (sk2->sk_hash == snum                             &&
@@ -229,7 +231,7 @@ gotit:
 	inet_sk(sk)->num = snum;
 	sk->sk_hash = snum;
 	if (sk_unhashed(sk)) {
-		head = &udptable[snum & (UDP_HTABLE_SIZE - 1)];
+		head = &udptable[udp_hashfn(snum, VEID(ve))];
 		sk_add_node(sk, head);
 		sock_prot_inuse_add(sock_net(sk), sk->sk_prot, 1);
 	}
@@ -264,9 +266,11 @@ static struct sock *__udp4_lib_lookup(struct net *net, __be32 saddr,
 	struct hlist_node *node;
 	unsigned short hnum = ntohs(dport);
 	int badness = -1;
+	struct ve_struct *ve;
 
+	ve = get_exec_env();
 	read_lock(&udp_hash_lock);
-	sk_for_each(sk, node, &udptable[hnum & (UDP_HTABLE_SIZE - 1)]) {
+	sk_for_each(sk, node, &udptable[udp_hashfn(hnum, VEID(ve))]) {
 		struct inet_sock *inet = inet_sk(sk);
 
 		if (net_eq(sock_net(sk), net) && sk->sk_hash == hnum &&
@@ -1070,7 +1074,8 @@ static int __udp4_lib_mcast_deliver(struct sk_buff *skb,
 	int dif;
 
 	read_lock(&udp_hash_lock);
-	sk = sk_head(&udptable[ntohs(uh->dest) & (UDP_HTABLE_SIZE - 1)]);
+	sk = sk_head(&udptable[udp_hashfn(ntohs(uh->dest),
+				VEID(skb->owner_env))]);
 	dif = skb->dev->ifindex;
 	sk = udp_v4_mcast_next(sk, uh->dest, daddr, uh->source, saddr, dif);
 	if (sk) {

@@ -334,8 +334,12 @@
 #define __NR_fallocate		314
 #define __NR_timerfd_settime	315
 #define __NR_timerfd_gettime	316
+#define __NR_getluid		510
+#define __NR_setluid		511
+#define __NR_setublimit		512
+#define __NR_ubstat		513
 
-#define NR_SYSCALLS		317
+#define NR_SYSCALLS		514
 
 #ifdef __KERNEL__
 #define __ARCH_WANT_IPC_PARSE_VERSION

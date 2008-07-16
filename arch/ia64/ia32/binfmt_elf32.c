@@ -17,6 +17,8 @@
 #include <asm/param.h>
 #include <asm/signal.h>
 
+#include <bc/vmpages.h>
+
 #include "ia32priv.h"
 #include "elfcore32.h"
 
@@ -132,6 +134,12 @@ ia64_elf32_init (struct pt_regs *regs)
 		up_write(&current->mm->mmap_sem);
 	}
 
+	if (ub_memory_charge(current->mm, PAGE_ALIGN(IA32_LDT_ENTRIES *
+					IA32_LDT_ENTRY_SIZE),
+				VM_READ|VM_WRITE|VM_MAYREAD|VM_MAYWRITE,
+				NULL, UB_SOFT))
+		goto skip;
+
 	/*
 	 * Install LDT as anonymous memory.  This gives us all-zero segment descriptors
 	 * until a task modifies them via modify_ldt().
@@ -152,7 +160,12 @@ ia64_elf32_init (struct pt_regs *regs)
 			}
 		}
 		up_write(&current->mm->mmap_sem);
-	}
+	} else
+		ub_memory_uncharge(current->mm, PAGE_ALIGN(IA32_LDT_ENTRIES *
+					IA32_LDT_ENTRY_SIZE),
+				VM_READ|VM_WRITE|VM_MAYREAD|VM_MAYWRITE, NULL);
+
+skip:
 
 	ia64_psr(regs)->ac = 0;		/* turn off alignment checking */
 	regs->loadrs = 0;

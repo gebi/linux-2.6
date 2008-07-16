@@ -556,9 +556,6 @@ nfqnl_rcv_dev_event(struct notifier_block *this,
 {
 	struct net_device *dev = ptr;
 
-	if (dev_net(dev) != &init_net)
-		return NOTIFY_DONE;
-
 	/* Drop any packets associated with the downed device */
 	if (event == NETDEV_DOWN)
 		nfqnl_dev_drop(dev->ifindex);
@@ -587,8 +584,7 @@ nfqnl_rcv_nl_event(struct notifier_block *this,
 			struct hlist_head *head = &instance_table[i];
 
 			hlist_for_each_entry_safe(inst, tmp, t2, head, hlist) {
-				if ((n->net == &init_net) &&
-				    (n->pid == inst->peer_pid))
+				if (n->pid == inst->peer_pid)
 					__instance_destroy(inst);
 			}
 		}

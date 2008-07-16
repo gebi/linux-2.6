@@ -53,6 +53,9 @@ void nf_ct_deliver_cached_events(const struct nf_conn *ct)
 {
 	struct nf_conntrack_ecache *ecache;
 
+	if (!ve_is_super(get_exec_env()))
+		return;
+
 	local_bh_disable();
 	ecache = &__get_cpu_var(nf_conntrack_ecache);
 	if (ecache->ct == ct)
@@ -65,6 +68,9 @@ EXPORT_SYMBOL_GPL(nf_ct_deliver_cached_events);
 void __nf_ct_event_cache_init(struct nf_conn *ct)
 {
 	struct nf_conntrack_ecache *ecache;
+
+	if (!ve_is_super(get_exec_env()))
+		return;
 
 	/* take care of delivering potentially old events */
 	ecache = &__get_cpu_var(nf_conntrack_ecache);
@@ -83,6 +89,9 @@ void nf_ct_event_cache_flush(void)
 {
 	struct nf_conntrack_ecache *ecache;
 	int cpu;
+
+	if (!ve_is_super(get_exec_env()))
+		return;
 
 	for_each_possible_cpu(cpu) {
 		ecache = &per_cpu(nf_conntrack_ecache, cpu);

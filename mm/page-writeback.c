@@ -35,6 +35,9 @@
 #include <linux/buffer_head.h>
 #include <linux/pagevec.h>
 
+#include <bc/io_prio.h>
+#include <bc/io_acct.h>
+
 /*
  * The maximum number of pages to writeout in a single bdflush/kupdate
  * operation.  We do this so we don't hold I_SYNC against an inode for
@@ -899,6 +902,7 @@ retry:
 		scanned = 1;
 		for (i = 0; i < nr_pages; i++) {
 			struct page *page = pvec.pages[i];
+			struct user_beancounter *old_ub;
 
 			/*
 			 * At this point we hold neither mapping->tree_lock nor
@@ -929,7 +933,9 @@ retry:
 				continue;
 			}
 
+			old_ub = bc_io_switch_context(page);
 			ret = (*writepage)(page, wbc, data);
+			bc_io_restore_context(old_ub);
 
 			if (unlikely(ret == AOP_WRITEPAGE_ACTIVATE)) {
 				unlock_page(page);
@@ -1025,11 +1031,14 @@ int write_one_page(struct page *page, int wait)
 		.sync_mode = WB_SYNC_ALL,
 		.nr_to_write = 1,
 	};
+	struct user_beancounter *old_ub;
 
 	BUG_ON(!PageLocked(page));
 
 	if (wait)
 		wait_on_page_writeback(page);
+
+	old_ub = bc_io_switch_context(page);
 
 	if (clear_page_dirty_for_io(page)) {
 		page_cache_get(page);
@@ -1043,6 +1052,9 @@ int write_one_page(struct page *page, int wait)
 	} else {
 		unlock_page(page);
 	}
+
+	bc_io_restore_context(old_ub);
+	
 	return ret;
 }
 EXPORT_SYMBOL(write_one_page);
@@ -1074,6 +1086,9 @@ int __set_page_dirty_no_writeback(struct page *page)
  */
 int __set_page_dirty_nobuffers(struct page *page)
 {
+	int acct;
+
+	acct = 0;
 	if (!TestSetPageDirty(page)) {
 		struct address_space *mapping = page_mapping(page);
 		struct address_space *mapping2;
@@ -1081,6 +1096,7 @@ int __set_page_dirty_nobuffers(struct page *page)
 		if (!mapping)
 			return 1;
 
+		acct = 0;
 		write_lock_irq(&mapping->tree_lock);
 		mapping2 = page_mapping(page);
 		if (mapping2) { /* Race with truncate? */
@@ -1090,12 +1106,14 @@ int __set_page_dirty_nobuffers(struct page *page)
 				__inc_zone_page_state(page, NR_FILE_DIRTY);
 				__inc_bdi_stat(mapping->backing_dev_info,
 						BDI_RECLAIMABLE);
-				task_io_account_write(PAGE_CACHE_SIZE);
+				acct = 1;
 			}
 			radix_tree_tag_set(&mapping->page_tree,
 				page_index(page), PAGECACHE_TAG_DIRTY);
 		}
 		write_unlock_irq(&mapping->tree_lock);
+		if (acct)
+			task_io_account_write(page, PAGE_CACHE_SIZE, 0);
 		if (mapping->host) {
 			/* !PageAnon && !swapper_space */
 			__mark_inode_dirty(mapping->host, I_DIRTY_PAGES);
@@ -1234,6 +1252,7 @@ int clear_page_dirty_for_io(struct page *page)
 			dec_zone_page_state(page, NR_FILE_DIRTY);
 			dec_bdi_stat(mapping->backing_dev_info,
 					BDI_RECLAIMABLE);
+			ub_io_release_context(page, PAGE_CACHE_SIZE);
 			return 1;
 		}
 		return 0;

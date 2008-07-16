@@ -68,7 +68,8 @@ struct sock *__inet6_lookup_established(struct net *net,
 	/* Optimize here for direct hit, only listening connections can
 	 * have wildcards anyways.
 	 */
-	unsigned int hash = inet6_ehashfn(daddr, hnum, saddr, sport);
+	struct ve_struct *env = get_exec_env();
+	unsigned int hash = inet6_ehashfn(daddr, hnum, saddr, sport, VEID(env));
 	struct inet_ehash_bucket *head = inet_ehash_bucket(hashinfo, hash);
 	rwlock_t *lock = inet_ehash_lockp(hashinfo, hash);
 
@@ -102,9 +103,10 @@ struct sock *inet6_lookup_listener(struct net *net,
 	const struct hlist_node *node;
 	struct sock *result = NULL;
 	int score, hiscore = 0;
+	struct ve_struct *ve = get_exec_env();
 
 	read_lock(&hashinfo->lhash_lock);
-	sk_for_each(sk, node, &hashinfo->listening_hash[inet_lhashfn(hnum)]) {
+	sk_for_each(sk, node, &hashinfo->listening_hash[inet_lhashfn(hnum, VEID(ve))]) {
 		if (net_eq(sock_net(sk), net) && inet_sk(sk)->num == hnum &&
 				sk->sk_family == PF_INET6) {
 			const struct ipv6_pinfo *np = inet6_sk(sk);
@@ -156,7 +158,8 @@ EXPORT_SYMBOL_GPL(inet6_lookup);
 
 static int __inet6_check_established(struct inet_timewait_death_row *death_row,
 				     struct sock *sk, const __u16 lport,
-				     struct inet_timewait_sock **twp)
+				     struct inet_timewait_sock **twp,
+				     struct ve_struct *ve)
 {
 	struct inet_hashinfo *hinfo = death_row->hashinfo;
 	struct inet_sock *inet = inet_sk(sk);
@@ -166,7 +169,7 @@ static int __inet6_check_established(struct inet_timewait_death_row *death_row,
 	const int dif = sk->sk_bound_dev_if;
 	const __portpair ports = INET_COMBINED_PORTS(inet->dport, lport);
 	const unsigned int hash = inet6_ehashfn(daddr, lport, saddr,
-						inet->dport);
+						inet->dport, VEID(ve));
 	struct inet_ehash_bucket *head = inet_ehash_bucket(hinfo, hash);
 	rwlock_t *lock = inet_ehash_lockp(hinfo, hash);
 	struct sock *sk2;

@@ -112,6 +112,11 @@ void printk_address(unsigned long address, int reliable)
 	char namebuf[KSYM_NAME_LEN];
 	char reliab[4] = "";
 
+	if (!decode_call_traces) {
+		printk("[<%016lx>]", address);
+		return;
+	}
+
 	symname = kallsyms_lookup(address, &symsize, &offset,
 					&modname, namebuf);
 	if (!symname) {
@@ -421,7 +426,7 @@ _show_stack(struct task_struct *tsk, struct pt_regs *regs, unsigned long *sp,
 		if (((long) stack & (THREAD_SIZE-1)) == 0)
 			break;
 		}
-		if (i && ((i % 4) == 0))
+		if (i && ((i % 4) == 0) && decode_call_traces)
 			printk("\n");
 		printk(" %016lx", *stack++);
 		touch_nmi_watchdog();
@@ -469,10 +474,12 @@ void show_registers(struct pt_regs *regs)
 
 	sp = regs->sp;
 	ip = (u8 *) regs->ip - code_prologue;
-	printk("CPU %d ", cpu);
+	printk("CPU: %d ", cpu);
 	__show_regs(regs);
-	printk("Process %s (pid: %d, threadinfo %p, task %p)\n",
-		cur->comm, cur->pid, task_thread_info(cur), cur);
+	printk("Process %s (pid: %d, veid=%d, threadinfo %p, task %p)\n",
+		cur->comm, cur->pid,
+		VEID(VE_TASK_INFO(current)->owner_env),
+		task_thread_info(cur), cur);
 
 	/*
 	 * When in-kernel, we also print out the stack and code at the

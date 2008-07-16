@@ -208,7 +208,7 @@ config TASK_XACCT
 
 config TASK_IO_ACCOUNTING
 	bool "Enable per-task storage I/O accounting (EXPERIMENTAL)"
-	depends on TASK_XACCT
+	depends on TASK_XACCT && BEANCOUNTERS
 	help
 	  Collect information on the number of bytes of storage I/O which this
 	  task has caused.
@@ -352,10 +352,11 @@ config RT_GROUP_SCHED
 choice
 	depends on GROUP_SCHED
 	prompt "Basis for grouping tasks"
-	default USER_SCHED
+	default VZ_FAIRSCHED
 
 config USER_SCHED
 	bool "user id"
+	depends on !VE
 	help
 	  This option will choose userid as the basis for grouping
 	  tasks, thus providing equal CPU bandwidth to each user.
@@ -369,6 +370,12 @@ config CGROUP_SCHED
 	  the cpu bandwidth allocated to each such task group.
 	  Refer to Documentation/cgroups.txt for more information
 	  on "cgroup" pseudo filesystem.
+
+config VZ_FAIRSCHED
+	bool "OpenVZ groups"
+	help
+	  This option add customizable task groups with OpenVZ compatible
+	  syscall and procfs interface.
 
 endchoice
 

@@ -238,6 +238,7 @@ extern int put_compat_itimerspec(struct compat_itimerspec __user *dst,
 asmlinkage long compat_sys_adjtimex(struct compat_timex __user *utp);
 
 extern int compat_printk(const char *fmt, ...);
+extern int ve_compat_printk(int dst, const char *fmt, ...);
 extern void sigset_from_compat(sigset_t *set, compat_sigset_t *compat);
 
 asmlinkage long compat_sys_migrate_pages(compat_pid_t pid,

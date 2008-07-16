@@ -19,6 +19,7 @@
 #define __IF_TUN_H
 
 #include <linux/types.h>
+#include <linux/if_ether.h>
 
 /* Read queue size */
 #define TUN_READQ_SIZE	500
@@ -54,5 +55,41 @@ struct tun_pi {
 	__be16 proto;
 };
 #define TUN_PKT_STRIP	0x0001
+
+struct sk_buff_head;
+struct tun_struct {
+	struct list_head        list;
+	unsigned long 		flags;
+	int			attached;
+	void			*bind_file;
+	uid_t			owner;
+	gid_t			group;
+
+	wait_queue_head_t	read_wait;
+	struct sk_buff_head	readq;
+
+	struct net_device	*dev;
+
+	struct fasync_struct    *fasync;
+
+	unsigned long if_flags;
+	u8 dev_addr[ETH_ALEN];
+	u32 chr_filter[2];
+	u32 net_filter[2];
+
+#ifdef TUN_DEBUG
+	int debug;
+#endif
+};
+
+struct tun_net {
+	struct list_head dev_list;
+};
+
+extern int tun_net_open(struct net_device *dev);
+extern int tun_chr_open(struct inode *inode, struct file * file);
+extern void tun_net_init(struct net_device *dev);
+extern void tun_setup(struct net_device *dev);
+extern struct list_head tun_dev_list;
 
 #endif /* __IF_TUN_H */

@@ -14,6 +14,7 @@
 #include <linux/init.h>
 #include <linux/ip.h>
 #include <linux/moduleparam.h>
+#include <linux/nsproxy.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/string.h>
@@ -52,6 +53,19 @@ MODULE_PARM_DESC(ip_list_perms, "permissions on /proc/net/ipt_recent/* files");
 MODULE_PARM_DESC(ip_list_uid,"owner of /proc/net/ipt_recent/* files");
 MODULE_PARM_DESC(ip_list_gid,"owning group of /proc/net/ipt_recent/* files");
 
+#include <linux/sched.h>
+
+#if defined(CONFIG_VE_IPTABLES)
+#define tables		(get_exec_env()->_ipt_recent->tables)
+#define proc_dir	(get_exec_env()->_ipt_recent->proc_dir)
+#else
+static LIST_HEAD(tables);
+static struct proc_dir_entry	*proc_dir;
+#endif /* CONFIG_VE_IPTABLES */
+
+static int init_ipt_recent(struct ve_struct *ve);
+static void fini_ipt_recent(struct ve_struct *ve);
+
 struct recent_entry {
 	struct list_head	list;
 	struct list_head	lru_list;
@@ -74,12 +88,10 @@ struct recent_table {
 	struct list_head	iphash[0];
 };
 
-static LIST_HEAD(tables);
 static DEFINE_SPINLOCK(recent_lock);
 static DEFINE_MUTEX(recent_mutex);
 
 #ifdef CONFIG_PROC_FS
-static struct proc_dir_entry	*proc_dir;
 static const struct file_operations	recent_fops;
 #endif
 
@@ -258,6 +270,9 @@ recent_mt_check(const char *tablename, const void *ip,
 	    strnlen(info->name, IPT_RECENT_NAME_LEN) == IPT_RECENT_NAME_LEN)
 		return false;
 
+	if (init_ipt_recent(get_exec_env()))
+		return 0;
+
 	mutex_lock(&recent_mutex);
 	t = recent_table_lookup(info->name);
 	if (t != NULL) {
@@ -298,6 +313,13 @@ static void recent_mt_destroy(const struct xt_match *match, void *matchinfo)
 {
 	const struct ipt_recent_info *info = matchinfo;
 	struct recent_table *t;
+	struct ve_struct *ve;
+
+	ve = get_exec_env();
+#ifdef CONFIG_VE_IPTABLES
+	if (!ve->_ipt_recent)
+		return;
+#endif
 
 	mutex_lock(&recent_mutex);
 	t = recent_table_lookup(info->name);
@@ -312,6 +334,8 @@ static void recent_mt_destroy(const struct xt_match *match, void *matchinfo)
 		kfree(t);
 	}
 	mutex_unlock(&recent_mutex);
+	if (!ve_is_super(ve) && list_empty(&tables))
+		fini_ipt_recent(ve);
 }
 
 #ifdef CONFIG_PROC_FS
@@ -467,6 +491,49 @@ static struct xt_match recent_mt_reg __read_mostly = {
 	.me		= THIS_MODULE,
 };
 
+static int init_ipt_recent(struct ve_struct *ve)
+{
+	int err = 0;
+
+#ifdef CONFIG_VE_IPTABLES
+	if (ve->_ipt_recent)
+		return 0;
+
+	ve->_ipt_recent = kzalloc(sizeof(struct ve_ipt_recent), GFP_KERNEL);
+	if (!ve->_ipt_recent) {
+		err = -ENOMEM;
+		goto out;
+	}
+
+	INIT_LIST_HEAD(&tables);
+#endif
+#ifdef CONFIG_PROC_FS
+	if (err)
+		return err;
+	proc_dir = proc_mkdir("ipt_recent", ve->ve_netns->proc_net);
+	if (proc_dir == NULL) {
+		err = -ENOMEM;
+		goto out_mem;
+	}
+#endif
+out:
+	return err;
+out_mem:
+#ifdef CONFIG_VE_IPTABLES
+	kfree(ve->_ipt_recent);
+#endif
+	goto out;
+}
+
+static void fini_ipt_recent(struct ve_struct *ve)
+{
+	remove_proc_entry("ipt_recent", ve->ve_netns->proc_net);
+#ifdef CONFIG_VE_IPTABLES
+	kfree(ve->_ipt_recent);
+	ve->_ipt_recent = NULL;
+#endif
+}
+
 static int __init recent_mt_init(void)
 {
 	int err;
@@ -476,25 +543,24 @@ static int __init recent_mt_init(void)
 	ip_list_hash_size = 1 << fls(ip_list_tot);
 
 	err = xt_register_match(&recent_mt_reg);
-#ifdef CONFIG_PROC_FS
 	if (err)
 		return err;
-	proc_dir = proc_mkdir("ipt_recent", init_net.proc_net);
-	if (proc_dir == NULL) {
+
+	err = init_ipt_recent(&ve0);
+	if (err) {
 		xt_unregister_match(&recent_mt_reg);
-		err = -ENOMEM;
+		return err;
 	}
-#endif
-	return err;
+
+	return 0;
 }
 
 static void __exit recent_mt_exit(void)
 {
 	BUG_ON(!list_empty(&tables));
+
+	fini_ipt_recent(&ve0);
 	xt_unregister_match(&recent_mt_reg);
-#ifdef CONFIG_PROC_FS
-	remove_proc_entry("ipt_recent", init_net.proc_net);
-#endif
 }
 
 module_init(recent_mt_init);

@@ -12,12 +12,15 @@
 #include <linux/mm.h>
 #include <linux/smp.h>
 #include <linux/vmalloc.h>
+#include <linux/module.h>
 
 #include <asm/uaccess.h>
 #include <asm/system.h>
 #include <asm/ldt.h>
 #include <asm/desc.h>
 #include <asm/mmu_context.h>
+
+#include <bc/kmem.h>
 
 #ifdef CONFIG_SMP
 static void flush_ldt(void *null)
@@ -38,9 +41,9 @@ static int alloc_ldt(mm_context_t *pc, int mincount, int reload)
 	mincount = (mincount + (PAGE_SIZE / LDT_ENTRY_SIZE - 1)) &
 			(~(PAGE_SIZE / LDT_ENTRY_SIZE - 1));
 	if (mincount * LDT_ENTRY_SIZE > PAGE_SIZE)
-		newldt = vmalloc(mincount * LDT_ENTRY_SIZE);
+		newldt = ub_vmalloc(mincount * LDT_ENTRY_SIZE);
 	else
-		newldt = (void *)__get_free_page(GFP_KERNEL);
+		newldt = (void *)__get_free_page(GFP_KERNEL_UBC);
 
 	if (!newldt)
 		return -ENOMEM;
@@ -112,6 +115,7 @@ int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
 	}
 	return retval;
 }
+EXPORT_SYMBOL_GPL(init_new_context);
 
 /*
  * No need to lock the MM as we are the last user

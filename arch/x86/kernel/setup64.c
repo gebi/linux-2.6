@@ -285,3 +285,5 @@ void __cpuinit cpu_init (void)
 	if (is_uv_system())
 		uv_cpu_init();
 }
+
+EXPORT_SYMBOL_GPL(cpu_gdt_descr);

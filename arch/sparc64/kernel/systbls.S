@@ -83,6 +83,24 @@ sys_call_table32:
 /*310*/	.word compat_sys_utimensat, compat_sys_signalfd, sys_timerfd_create, sys_eventfd, compat_sys_fallocate
 	.word compat_sys_timerfd_settime, compat_sys_timerfd_gettime
 
+	.rept 500-317
+	.word sys_nis_syscall
+	.endr
+	.word sys_fairsched_mknod	/* 500 */
+	.word sys_fairsched_rmnod
+	.word sys_fairsched_chwt
+	.word sys_fairsched_mvpr
+	.word sys_fairsched_rate
+	.word sys_nis_syscall		/* 505 */
+	.word sys_nis_syscall
+	.word sys_nis_syscall
+	.word sys_nis_syscall
+	.word sys_nis_syscall
+	.word sys_getluid		/* 510 */
+	.word sys_setluid
+	.word compat_sys_setublimit
+	.word compat_sys_ubstat
+
 #endif /* CONFIG_COMPAT */
 
 	/* Now the 64-bit native Linux syscall table. */
@@ -155,3 +173,20 @@ sys_call_table:
 	.word sys_set_mempolicy, sys_kexec_load, sys_move_pages, sys_getcpu, sys_epoll_pwait
 /*310*/	.word sys_utimensat, sys_signalfd, sys_timerfd_create, sys_eventfd, sys_fallocate
 	.word sys_timerfd_settime, sys_timerfd_gettime
+	.rept 500-317
+	.word sys_nis_syscall
+	.endr
+	.word sys_fairsched_mknod	/* 500 */
+	.word sys_fairsched_rmnod
+	.word sys_fairsched_chwt
+	.word sys_fairsched_mvpr
+	.word sys_fairsched_rate
+	.word sys_nis_syscall		/* 505 */
+	.word sys_nis_syscall
+	.word sys_nis_syscall
+	.word sys_nis_syscall
+	.word sys_nis_syscall
+	.word sys_getluid		/* 510 */
+	.word sys_setluid
+	.word sys_setublimit
+	.word sys_ubstat

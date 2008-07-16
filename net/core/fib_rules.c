@@ -20,7 +20,7 @@ int fib_default_rule_add(struct fib_rules_ops *ops,
 {
 	struct fib_rule *r;
 
-	r = kzalloc(ops->rule_size, GFP_KERNEL);
+	r = kzalloc(ops->rule_size, GFP_KERNEL_UBC);
 	if (r == NULL)
 		return -ENOMEM;
 
@@ -69,7 +69,7 @@ static void rules_ops_put(struct fib_rules_ops *ops)
 static void flush_route_cache(struct fib_rules_ops *ops)
 {
 	if (ops->flush_cache)
-		ops->flush_cache();
+		ops->flush_cache(ops);
 }
 
 int fib_rules_register(struct fib_rules_ops *ops)
@@ -238,7 +238,7 @@ static int fib_nl_newrule(struct sk_buff *skb, struct nlmsghdr* nlh, void *arg)
 	if (err < 0)
 		goto errout;
 
-	rule = kzalloc(ops->rule_size, GFP_KERNEL);
+	rule = kzalloc(ops->rule_size, GFP_KERNEL_UBC);
 	if (rule == NULL) {
 		err = -ENOMEM;
 		goto errout;

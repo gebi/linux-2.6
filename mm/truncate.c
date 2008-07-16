@@ -77,6 +77,7 @@ void cancel_dirty_page(struct page *page, unsigned int account_size)
 					BDI_RECLAIMABLE);
 			if (account_size)
 				task_io_account_cancelled_write(account_size);
+			ub_io_release_context(page, account_size);
 		}
 	}
 }

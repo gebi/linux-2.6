@@ -146,7 +146,7 @@ static void fib_flush(struct net *net)
 	}
 
 	if (flushed)
-		rt_cache_flush(-1);
+		rt_cache_flush(net, -1);
 }
 
 /*
@@ -260,7 +260,8 @@ int fib_validate_source(__be32 src, __be32 dst, u8 tos, int oif,
 	net = dev_net(dev);
 	if (fib_lookup(net, &fl, &res))
 		goto last_resort;
-	if (res.type != RTN_UNICAST)
+	if (res.type != RTN_UNICAST &&
+		(!(dev->features & NETIF_F_VENET) || res.type != RTN_LOCAL))
 		goto e_inval_res;
 	*spec_dst = FIB_RES_PREFSRC(res);
 	fib_combine_itag(itag, &res);
@@ -462,7 +463,7 @@ int ip_rt_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 	switch (cmd) {
 	case SIOCADDRT:		/* Add a route */
 	case SIOCDELRT:		/* Delete a route */
-		if (!capable(CAP_NET_ADMIN))
+		if (!capable(CAP_VE_NET_ADMIN))
 			return -EPERM;
 
 		if (copy_from_user(&rt, arg, sizeof(rt)))
@@ -899,21 +900,22 @@ static void fib_disable_ip(struct net_device *dev, int force)
 {
 	if (fib_sync_down_dev(dev, force))
 		fib_flush(dev_net(dev));
-	rt_cache_flush(0);
+	rt_cache_flush(dev_net(dev), 0);
 	arp_ifdown(dev);
 }
 
 static int fib_inetaddr_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
 	struct in_ifaddr *ifa = (struct in_ifaddr*)ptr;
+	struct net_device *dev = ifa->ifa_dev->dev;
 
 	switch (event) {
 	case NETDEV_UP:
 		fib_add_ifaddr(ifa);
 #ifdef CONFIG_IP_ROUTE_MULTIPATH
-		fib_sync_up(ifa->ifa_dev->dev);
+		fib_sync_up(dev);
 #endif
-		rt_cache_flush(-1);
+		rt_cache_flush(dev_net(dev), -1);
 		break;
 	case NETDEV_DOWN:
 		fib_del_ifaddr(ifa);
@@ -921,9 +923,9 @@ static int fib_inetaddr_event(struct notifier_block *this, unsigned long event, 
 			/* Last address was deleted from this interface.
 			   Disable IP.
 			 */
-			fib_disable_ip(ifa->ifa_dev->dev, 1);
+			fib_disable_ip(dev, 1);
 		} else {
-			rt_cache_flush(-1);
+			rt_cache_flush(dev_net(dev), -1);
 		}
 		break;
 	}
@@ -951,14 +953,14 @@ static int fib_netdev_event(struct notifier_block *this, unsigned long event, vo
 #ifdef CONFIG_IP_ROUTE_MULTIPATH
 		fib_sync_up(dev);
 #endif
-		rt_cache_flush(-1);
+		rt_cache_flush(dev_net(dev), -1);
 		break;
 	case NETDEV_DOWN:
 		fib_disable_ip(dev, 0);
 		break;
 	case NETDEV_CHANGEMTU:
 	case NETDEV_CHANGE:
-		rt_cache_flush(0);
+		rt_cache_flush(dev_net(dev), 0);
 		break;
 	}
 	return NOTIFY_DONE;

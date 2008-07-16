@@ -336,9 +336,14 @@
 #define __NR_timerfd_settime	311
 #define __NR_timerfd_gettime	312
 
+#define __NR_getluid            410
+#define __NR_setluid            411
+#define __NR_setublimit         412
+#define __NR_ubstat             413
+
 #ifdef __KERNEL__
 
-#define __NR_syscalls		313
+#define __NR_syscalls		414
 
 #define __NR__exit __NR_exit
 #define NR_syscalls	__NR_syscalls

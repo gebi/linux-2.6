@@ -50,6 +50,7 @@ extern struct inodes_stat_t inodes_stat;
 
 extern int leases_enable, lease_break_time;
 
+extern int odirect_enable;
 #ifdef CONFIG_DNOTIFY
 extern int dir_notify_enable;
 #endif
@@ -60,6 +61,7 @@ extern int dir_notify_enable;
 #define MAY_WRITE 2
 #define MAY_READ 4
 #define MAY_APPEND 8
+#define MAY_QUOTACTL 16 /* for devgroup-vs-openvz only */
 
 #define FMODE_READ 1
 #define FMODE_WRITE 2
@@ -68,6 +70,7 @@ extern int dir_notify_enable;
 #define FMODE_LSEEK	4
 #define FMODE_PREAD	8
 #define FMODE_PWRITE	FMODE_PREAD	/* These go hand in hand */
+#define FMODE_QUOTACTL	4
 
 /* File is being opened for execution. Primary users of this flag are
    distributed filesystems that can use it to achieve correct ETXTBUSY
@@ -94,6 +97,8 @@ extern int dir_notify_enable;
 #define FS_REQUIRES_DEV 1 
 #define FS_BINARY_MOUNTDATA 2
 #define FS_HAS_SUBTYPE 4
+#define FS_VIRTUALIZED	64	/* Can mount this fstype inside ve */
+#define FS_MANGLE_PROC	128	/* hide some /proc/mounts info inside VE */
 #define FS_REVAL_DOT	16384	/* Check the paths ".", ".." for staleness */
 #define FS_RENAME_DOES_D_MOVE	32768	/* FS will handle d_move()
 					 * during rename() internally.
@@ -366,6 +371,9 @@ struct iattr {
  * Includes for diskquotas.
  */
 #include <linux/quota.h>
+#if defined(CONFIG_VZ_QUOTA) || defined(CONFIG_VZ_QUOTA_MODULE)
+#include <linux/vzquota_qlnk.h>
+#endif
 
 /** 
  * enum positive_aop_returns - aop return codes with specific semantics
@@ -625,6 +633,9 @@ struct inode {
 #ifdef CONFIG_QUOTA
 	struct dquot		*i_dquot[MAXQUOTAS];
 #endif
+#if defined(CONFIG_VZ_QUOTA) || defined(CONFIG_VZ_QUOTA_MODULE)
+	struct vz_quota_ilink	i_qlnk;
+#endif
 	struct list_head	i_devices;
 	union {
 		struct pipe_inode_info	*i_pipe;
@@ -679,6 +690,8 @@ enum inode_i_mutex_lock_class
 
 extern void inode_double_lock(struct inode *inode1, struct inode *inode2);
 extern void inode_double_unlock(struct inode *inode1, struct inode *inode2);
+
+extern struct kmem_cache *inode_cachep;
 
 /*
  * NOTE: in a 32bit arch with a preemptable kernel and
@@ -799,6 +812,7 @@ struct file {
 	struct fown_struct	f_owner;
 	unsigned int		f_uid, f_gid;
 	struct file_ra_state	f_ra;
+	struct user_beancounter	*f_ub;
 
 	u64			f_version;
 #ifdef CONFIG_SECURITY
@@ -816,6 +830,7 @@ struct file {
 #ifdef CONFIG_DEBUG_WRITECOUNT
 	unsigned long f_mnt_write_state;
 #endif
+	struct ve_struct	*owner_env;
 };
 extern spinlock_t files_lock;
 #define file_list_lock() spin_lock(&files_lock);
@@ -924,6 +939,9 @@ struct file_lock {
 	struct file *fl_file;
 	unsigned char fl_flags;
 	unsigned char fl_type;
+#ifdef CONFIG_BEANCOUNTERS
+	unsigned char fl_charged;
+#endif
 	loff_t fl_start;
 	loff_t fl_end;
 
@@ -1245,6 +1263,7 @@ struct file_operations {
 	ssize_t (*splice_write)(struct pipe_inode_info *, struct file *, loff_t *, size_t, unsigned int);
 	ssize_t (*splice_read)(struct file *, loff_t *, struct pipe_inode_info *, size_t, unsigned int);
 	int (*setlease)(struct file *, long, struct file_lock **);
+	struct file * (*get_host)(struct file *);
 };
 
 struct inode_operations {
@@ -1311,6 +1330,7 @@ struct super_operations {
 #ifdef CONFIG_QUOTA
 	ssize_t (*quota_read)(struct super_block *, int, char *, size_t, loff_t);
 	ssize_t (*quota_write)(struct super_block *, int, const char *, size_t, loff_t);
+	struct inode *(*get_quota_root)(struct super_block *);
 #endif
 };
 
@@ -1487,7 +1507,13 @@ struct file_system_type {
 	struct lock_class_key i_mutex_key;
 	struct lock_class_key i_mutex_dir_key;
 	struct lock_class_key i_alloc_sem_key;
+
+	struct file_system_type *proto;
+	struct ve_struct *owner_env;
 };
+
+void get_filesystem(struct file_system_type *fs);
+void put_filesystem(struct file_system_type *fs);
 
 extern int get_sb_bdev(struct file_system_type *fs_type,
 	int flags, const char *dev_name, void *data,
@@ -1528,6 +1554,11 @@ extern int register_filesystem(struct file_system_type *);
 extern int unregister_filesystem(struct file_system_type *);
 extern struct vfsmount *kern_mount_data(struct file_system_type *, void *data);
 #define kern_mount(type) kern_mount_data(type, NULL)
+extern int register_ve_fs_type(struct ve_struct *, struct file_system_type *,
+		struct file_system_type **, struct vfsmount **);
+extern void unregister_ve_fs_type(struct file_system_type *, struct vfsmount *);
+extern void umount_ve_fs_type(struct file_system_type *local_fs_type);
+#define kern_umount mntput
 extern int may_umount_tree(struct vfsmount *);
 extern int may_umount(struct vfsmount *);
 extern long do_mount(char *, char *, char *, unsigned long, void *);
@@ -1535,6 +1566,7 @@ extern struct vfsmount *collect_mounts(struct vfsmount *, struct dentry *);
 extern void drop_collected_mounts(struct vfsmount *);
 
 extern int vfs_statfs(struct dentry *, struct kstatfs *);
+extern int faudit_statfs(struct super_block *, struct kstatfs *);
 
 /* /sys/fs */
 extern struct kobject *fs_kobj;
@@ -1707,7 +1739,8 @@ extern int check_disk_change(struct block_device *);
 extern int __invalidate_device(struct block_device *);
 extern int invalidate_partition(struct gendisk *, int);
 #endif
-extern int invalidate_inodes(struct super_block *);
+extern int invalidate_inodes_check(struct super_block *, int check);
+#define invalidate_inodes(sb) invalidate_inodes_check(sb, 0)
 unsigned long __invalidate_mapping_pages(struct address_space *mapping,
 					pgoff_t start, pgoff_t end,
 					bool be_atomic);
@@ -2127,6 +2160,17 @@ static inline char *alloc_secdata(void)
 static inline void free_secdata(void *secdata)
 { }
 #endif	/* CONFIG_SECURITY */
+
+static inline void *file_private(struct file *file)
+{
+	struct file *host = file;
+
+	while (host->f_op->get_host) {
+		host = host->f_op->get_host(host);
+		BUG_ON(host->f_mapping != file->f_mapping);
+	}
+	return host->private_data;
+}
 
 struct ctl_table;
 int proc_nr_files(struct ctl_table *table, int write, struct file *filp,

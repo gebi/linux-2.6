@@ -702,15 +702,7 @@ static inline int page_mapped(struct page *page)
 
 extern void show_free_areas(void);
 
-#ifdef CONFIG_SHMEM
-int shmem_lock(struct file *file, int lock, struct user_struct *user);
-#else
-static inline int shmem_lock(struct file *file, int lock,
-			     struct user_struct *user)
-{
-	return 0;
-}
-#endif
+#define shmem_nopage filemap_nopage
 struct file *shmem_file_setup(char *name, loff_t size, unsigned long flags);
 
 int shmem_zero_setup(struct vm_area_struct *);
@@ -776,7 +768,9 @@ void free_pgd_range(struct mmu_gather **tlb, unsigned long addr,
 void free_pgtables(struct mmu_gather **tlb, struct vm_area_struct *start_vma,
 		unsigned long floor, unsigned long ceiling);
 int copy_page_range(struct mm_struct *dst, struct mm_struct *src,
-			struct vm_area_struct *vma);
+		struct vm_area_struct *dst_vma, struct vm_area_struct *src_vma);
+int __copy_page_range(struct vm_area_struct *dst_vma, struct vm_area_struct *vma,
+		      unsigned long addr, size_t size);
 void unmap_mapping_range(struct address_space *mapping,
 		loff_t const holebegin, loff_t const holelen, int even_cows);
 

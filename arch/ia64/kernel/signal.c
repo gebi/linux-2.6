@@ -14,6 +14,7 @@
 #include <linux/sched.h>
 #include <linux/signal.h>
 #include <linux/smp.h>
+#include <linux/freezer.h>
 #include <linux/stddef.h>
 #include <linux/tty.h>
 #include <linux/binfmts.h>
@@ -464,6 +465,12 @@ ia64_do_signal (struct sigscratch *scr, long in_syscall)
 	if (!user_mode(&scr->pt))
 		return;
 
+	if (try_to_freeze() && !signal_pending(current)) {
+		if ((long) scr->pt.r10 != -1)
+			restart = 0;
+ 		goto no_signal;
+	}
+
 	if (current_thread_info()->status & TS_RESTORE_SIGMASK)
 		oldset = &current->saved_sigmask;
 	else
@@ -519,8 +526,10 @@ ia64_do_signal (struct sigscratch *scr, long in_syscall)
 				if (IS_IA32_PROCESS(&scr->pt)) {
 					scr->pt.r8 = scr->pt.r1;
 					scr->pt.cr_iip -= 2;
-				} else
+				} else {
 					ia64_decrement_ip(&scr->pt);
+					scr->pt.r10 = 0;
+				}
 				restart = 0; /* don't restart twice if handle_signal() fails... */
 			}
 		}
@@ -542,6 +551,7 @@ ia64_do_signal (struct sigscratch *scr, long in_syscall)
 	}
 
 	/* Did we come from a system call? */
+no_signal:
 	if (restart) {
 		/* Restart the system call - no handlers present */
 		if (errno == ERESTARTNOHAND || errno == ERESTARTSYS || errno == ERESTARTNOINTR
@@ -561,6 +571,7 @@ ia64_do_signal (struct sigscratch *scr, long in_syscall)
 				ia64_decrement_ip(&scr->pt);
 				if (errno == ERESTART_RESTARTBLOCK)
 					scr->pt.r15 = __NR_restart_syscall;
+				scr->pt.r10 = 0;
 			}
 		}
 	}

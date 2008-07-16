@@ -112,9 +112,9 @@ static inline void devinet_sysctl_unregister(struct in_device *idev)
 
 /* Locks all the inet devices. */
 
-static struct in_ifaddr *inet_alloc_ifa(void)
+struct in_ifaddr *inet_alloc_ifa(void)
 {
-	struct in_ifaddr *ifa = kzalloc(sizeof(*ifa), GFP_KERNEL);
+	struct in_ifaddr *ifa = kzalloc(sizeof(*ifa), GFP_KERNEL_UBC);
 
 	if (ifa) {
 		INIT_RCU_HEAD(&ifa->rcu_head);
@@ -122,6 +122,7 @@ static struct in_ifaddr *inet_alloc_ifa(void)
 
 	return ifa;
 }
+EXPORT_SYMBOL_GPL(inet_alloc_ifa);
 
 static void inet_rcu_free_ifa(struct rcu_head *head)
 {
@@ -154,7 +155,7 @@ void in_dev_finish_destroy(struct in_device *idev)
 	}
 }
 
-static struct in_device *inetdev_init(struct net_device *dev)
+struct in_device *inetdev_init(struct net_device *dev)
 {
 	struct in_device *in_dev;
 
@@ -189,6 +190,7 @@ out_kfree:
 	in_dev = NULL;
 	goto out;
 }
+EXPORT_SYMBOL_GPL(inetdev_init);
 
 static void in_dev_rcu_put(struct rcu_head *head)
 {
@@ -382,7 +384,7 @@ static int __inet_insert_ifa(struct in_ifaddr *ifa, struct nlmsghdr *nlh,
 	return 0;
 }
 
-static int inet_insert_ifa(struct in_ifaddr *ifa)
+int inet_insert_ifa(struct in_ifaddr *ifa)
 {
 	return __inet_insert_ifa(ifa, NULL, 0);
 }
@@ -433,6 +435,7 @@ struct in_ifaddr *inet_ifa_byprefix(struct in_device *in_dev, __be32 prefix,
 	} endfor_ifa(in_dev);
 	return NULL;
 }
+EXPORT_SYMBOL_GPL(inet_insert_ifa);
 
 static int inet_rtm_deladdr(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
 {
@@ -633,7 +636,7 @@ int devinet_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 
 	case SIOCSIFFLAGS:
 		ret = -EACCES;
-		if (!capable(CAP_NET_ADMIN))
+		if (!capable(CAP_VE_NET_ADMIN))
 			goto out;
 		break;
 	case SIOCSIFADDR:	/* Set interface address (and family) */
@@ -641,7 +644,7 @@ int devinet_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 	case SIOCSIFDSTADDR:	/* Set the destination address */
 	case SIOCSIFNETMASK: 	/* Set the netmask for the interface */
 		ret = -EACCES;
-		if (!capable(CAP_NET_ADMIN))
+		if (!capable(CAP_VE_NET_ADMIN))
 			goto out;
 		ret = -EINVAL;
 		if (sin->sin_family != AF_INET)
@@ -1249,7 +1252,7 @@ static void inet_forward_change(struct net *net)
 	}
 	read_unlock(&dev_base_lock);
 
-	rt_cache_flush(0);
+	rt_cache_flush(net, 0);
 }
 
 static int devinet_conf_proc(ctl_table *ctl, int write,
@@ -1338,7 +1341,7 @@ static int devinet_sysctl_forward(ctl_table *ctl, int write,
 		if (valp == &IPV4_DEVCONF_ALL(net, FORWARDING))
 			inet_forward_change(net);
 		else if (valp != &IPV4_DEVCONF_DFLT(net, FORWARDING))
-			rt_cache_flush(0);
+			rt_cache_flush(net, 0);
 	}
 
 	return ret;
@@ -1351,9 +1354,10 @@ int ipv4_doint_and_flush(ctl_table *ctl, int write,
 	int *valp = ctl->data;
 	int val = *valp;
 	int ret = proc_dointvec(ctl, write, filp, buffer, lenp, ppos);
+	struct net *net = ctl->extra2;
 
 	if (write && *valp != val)
-		rt_cache_flush(0);
+		rt_cache_flush(net, 0);
 
 	return ret;
 }
@@ -1364,9 +1368,10 @@ int ipv4_doint_and_flush_strategy(ctl_table *table, int __user *name, int nlen,
 {
 	int ret = devinet_conf_sysctl(table, name, nlen, oldval, oldlenp,
 				      newval, newlen);
+	struct net *net = table->extra2;
 
 	if (ret == 1)
-		rt_cache_flush(0);
+		rt_cache_flush(net, 0);
 
 	return ret;
 }

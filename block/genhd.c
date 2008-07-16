@@ -513,6 +513,7 @@ static void disk_release(struct device *dev)
 struct class block_class = {
 	.name		= "block",
 };
+EXPORT_SYMBOL(block_class);
 
 static struct device_type disk_type = {
 	.name		= "disk",

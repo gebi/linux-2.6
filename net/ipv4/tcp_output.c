@@ -41,6 +41,9 @@
 #include <linux/compiler.h>
 #include <linux/module.h>
 
+#include <bc/net.h>
+#include <bc/tcp.h>
+
 /* People can turn this off for buggy TCP's found in printers etc. */
 int sysctl_tcp_retrans_collapse __read_mostly = 1;
 
@@ -455,6 +458,13 @@ static void tcp_syn_build_options(__be32 *ptr, int mss, int ts, int sack,
 #endif
 }
 
+static int skb_header_size(struct sock *sk, int tcp_hlen)
+{
+	struct ip_options *opt = inet_sk(sk)->opt;
+	return tcp_hlen + sizeof(struct iphdr) +
+		(opt ? opt->optlen : 0)	+ ETH_HLEN /* For hard header */;
+}
+
 /* This routine actually transmits TCP packets queued in by
  * tcp_do_sendmsg().  This is used by both the initial
  * transmission and possible later retransmissions.
@@ -474,6 +484,7 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 	struct tcp_sock *tp;
 	struct tcp_skb_cb *tcb;
 	int tcp_header_size;
+	int header_size;
 #ifdef CONFIG_TCP_MD5SIG
 	struct tcp_md5sig_key *md5;
 	__u8 *md5_hash_location;
@@ -531,6 +542,20 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 		tcp_header_size += (TCPOLEN_SACK_BASE_ALIGNED +
 				    (tp->rx_opt.eff_sacks *
 				     TCPOLEN_SACK_PERBLOCK));
+	}
+
+	/* Unfortunately, we can have skb from outside world here
+	 * with size insufficient for header. It is impossible to make
+	 * guess when we queue skb, so the decision should be made
+	 * here. Den
+	 */
+	header_size = skb_header_size(sk, tcp_header_size);
+	if (skb->data - header_size < skb->head) {
+		int delta = header_size - skb_headroom(skb);
+		err = pskb_expand_head(skb, SKB_DATA_ALIGN(delta),
+				0, GFP_ATOMIC);
+		if (err)
+			return err;
 	}
 
 	if (tcp_packets_in_flight(tp) == 0)
@@ -706,15 +731,23 @@ int tcp_fragment(struct sock *sk, struct sk_buff *skb, u32 len,
 	if (nsize < 0)
 		nsize = 0;
 
-	if (skb_cloned(skb) &&
-	    skb_is_nonlinear(skb) &&
-	    pskb_expand_head(skb, 0, 0, GFP_ATOMIC))
-		return -ENOMEM;
+	if (skb_cloned(skb) && skb_is_nonlinear(skb)) {
+		unsigned long chargesize;
+		chargesize = skb_bc(skb)->charged;
+		if (pskb_expand_head(skb, 0, 0, GFP_ATOMIC))
+			return -ENOMEM;
+		ub_sock_tcp_unchargesend(sk, chargesize);
+		ub_tcpsndbuf_charge_forced(sk, skb);
+	}
 
 	/* Get a new skb... force flag on. */
 	buff = sk_stream_alloc_skb(sk, nsize, GFP_ATOMIC);
 	if (buff == NULL)
 		return -ENOMEM; /* We'll just try again later. */
+	if (ub_tcpsndbuf_charge(sk, buff) < 0) {
+		kfree_skb(buff);
+		return -ENOMEM;
+	}
 
 	sk->sk_wmem_queued += buff->truesize;
 	sk_mem_charge(sk, buff->truesize);
@@ -1216,6 +1249,11 @@ static int tso_fragment(struct sock *sk, struct sk_buff *skb, unsigned int len,
 	if (unlikely(buff == NULL))
 		return -ENOMEM;
 
+	if (ub_tcpsndbuf_charge(sk, buff) < 0) {
+		kfree_skb(buff);
+		return -ENOMEM;
+	}
+
 	sk->sk_wmem_queued += buff->truesize;
 	sk_mem_charge(sk, buff->truesize);
 	buff->truesize += nlen;
@@ -1651,7 +1689,7 @@ u32 __tcp_select_window(struct sock *sk)
 	if (free_space < (full_space >> 1)) {
 		icsk->icsk_ack.quick = 0;
 
-		if (tcp_memory_pressure)
+		if (ub_tcp_shrink_rcvbuf(sk))
 			tp->rcv_ssthresh = min(tp->rcv_ssthresh,
 					       4U * tp->advmss);
 
@@ -2096,6 +2134,7 @@ void tcp_send_fin(struct sock *sk)
 				break;
 			yield();
 		}
+		ub_tcpsndbuf_charge_forced(sk, skb);
 
 		/* Reserve space for headers and prepare control bits. */
 		skb_reserve(skb, MAX_TCP_HEADER);
@@ -2154,6 +2193,10 @@ int tcp_send_synack(struct sock *sk)
 			struct sk_buff *nskb = skb_copy(skb, GFP_ATOMIC);
 			if (nskb == NULL)
 				return -ENOMEM;
+			if (ub_tcpsndbuf_charge(sk, skb) < 0) {
+				kfree_skb(nskb);
+				return -ENOMEM;
+			}
 			tcp_unlink_write_queue(skb, sk);
 			skb_header_release(nskb);
 			__tcp_add_write_queue_head(sk, nskb);
@@ -2282,6 +2325,7 @@ static void tcp_connect_init(struct sock *sk)
 	struct dst_entry *dst = __sk_dst_get(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
 	__u8 rcv_wscale;
+	static int once = 0;
 
 	/* We'll fix this up when we get a response from the other end.
 	 * See tcp_input.c:tcp_rcv_state_process case TCP_SYN_SENT.
@@ -2301,9 +2345,23 @@ static void tcp_connect_init(struct sock *sk)
 	tcp_mtup_init(sk);
 	tcp_sync_mss(sk, dst_mtu(dst));
 
+	if (!once && dst_metric(dst, RTAX_ADVMSS) == 0) {
+		once = 1;
+
+		printk("Oops in connect_init! dst->advmss=%d\n",
+						dst_metric(dst, RTAX_ADVMSS));
+		printk("dst: pmtu=%u\n", dst_metric(dst, RTAX_MTU));
+		printk("sk->state=%d, tp: ack.rcv_mss=%d, mss_cache=%d, "
+				"advmss=%d, user_mss=%d\n",
+				sk->sk_state, inet_csk(sk)->icsk_ack.rcv_mss,
+				tp->mss_cache, tp->advmss, tp->rx_opt.user_mss);
+	}
+
 	if (!tp->window_clamp)
 		tp->window_clamp = dst_metric(dst, RTAX_WINDOW);
 	tp->advmss = dst_metric(dst, RTAX_ADVMSS);
+	if (tp->advmss == 0)
+		tp->advmss = 1460;
 	tcp_initialize_rcv_mss(sk);
 
 	tcp_select_initial_window(tcp_full_space(sk),
@@ -2344,6 +2402,10 @@ int tcp_connect(struct sock *sk)
 	buff = alloc_skb_fclone(MAX_TCP_HEADER + 15, sk->sk_allocation);
 	if (unlikely(buff == NULL))
 		return -ENOBUFS;
+	if (ub_tcpsndbuf_charge(sk, buff) < 0) {
+		kfree_skb(buff);
+		return -ENOBUFS;
+	}
 
 	/* Reserve space for headers. */
 	skb_reserve(buff, MAX_TCP_HEADER);

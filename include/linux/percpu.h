@@ -74,6 +74,13 @@ struct percpu_data {
         (__typeof__(ptr))__p->ptrs[(cpu)];	          \
 })
 
+#define static_percpu_ptr(sptr, sptrs) ({		\
+		int i;					\
+		for (i = 0; i < NR_CPUS; i++)		\
+			(sptr)->ptrs[i] = &(sptrs)[i];	\
+		(__typeof__(&sptrs[0]))__percpu_disguise(sptr);\
+	})
+
 extern void *percpu_populate(void *__pdata, size_t size, gfp_t gfp, int cpu);
 extern void percpu_depopulate(void *__pdata, int cpu);
 extern int __percpu_populate_mask(void *__pdata, size_t size, gfp_t gfp,
@@ -85,6 +92,7 @@ extern void percpu_free(void *__pdata);
 #else /* CONFIG_SMP */
 
 #define percpu_ptr(ptr, cpu) ({ (void)(cpu); (ptr); })
+#define static_percpu_ptr(sptr, sptrs)	(&sptrs[0])
 
 static inline void percpu_depopulate(void *__pdata, int cpu)
 {

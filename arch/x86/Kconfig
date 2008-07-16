@@ -1711,6 +1711,7 @@ config SYSVIPC_COMPAT
 
 endmenu
 
+source "kernel/Kconfig.openvz"
 
 source "net/Kconfig"
 
@@ -1729,3 +1730,5 @@ source "crypto/Kconfig"
 source "arch/x86/kvm/Kconfig"
 
 source "lib/Kconfig"
+
+source "kernel/bc/Kconfig"

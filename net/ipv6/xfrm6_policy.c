@@ -14,6 +14,7 @@
 #include <linux/err.h>
 #include <linux/kernel.h>
 #include <linux/netdevice.h>
+#include <linux/nsproxy.h>
 #include <net/addrconf.h>
 #include <net/dst.h>
 #include <net/xfrm.h>
@@ -38,7 +39,7 @@ static struct dst_entry *xfrm6_dst_lookup(int tos, xfrm_address_t *saddr,
 	if (saddr)
 		memcpy(&fl.fl6_src, saddr, sizeof(fl.fl6_src));
 
-	dst = ip6_route_output(&init_net, NULL, &fl);
+	dst = ip6_route_output(get_exec_env()->ve_netns, NULL, &fl);
 
 	err = dst->error;
 	if (dst->error) {

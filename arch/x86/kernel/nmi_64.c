@@ -354,10 +354,10 @@ nmi_watchdog_tick(struct pt_regs *regs, unsigned reason)
 	if (!touched && __get_cpu_var(last_irq_sum) == sum) {
 		/*
 		 * Ayiee, looks like this CPU is stuck ...
-		 * wait a few IRQs (5 seconds) before doing the oops ...
+		 * wait a few IRQs (30 seconds) before doing the oops ...
 		 */
 		local_inc(&__get_cpu_var(alert_counter));
-		if (local_read(&__get_cpu_var(alert_counter)) == 5*nmi_hz)
+		if (local_read(&__get_cpu_var(alert_counter)) == 30*nmi_hz)
 			die_nmi("NMI Watchdog detected LOCKUP on CPU %d\n", regs,
 				panic_on_timeout);
 	} else {
@@ -385,14 +385,33 @@ nmi_watchdog_tick(struct pt_regs *regs, unsigned reason)
 
 static unsigned ignore_nmis;
 
+static int dummy_nmi_callback(struct pt_regs *regs, int cpu)
+{
+	return 0;
+}
+
+static nmi_callback_t nmi_ipi_callback = dummy_nmi_callback;
+
 asmlinkage notrace __kprobes void
 do_nmi(struct pt_regs *regs, long error_code)
 {
 	nmi_enter();
 	add_pda(__nmi_count,1);
-	if (!ignore_nmis)
-		default_do_nmi(regs);
+	if (!ignore_nmis) {
+		if (!nmi_ipi_callback(regs, smp_processor_id()))
+			default_do_nmi(regs);
+	}
 	nmi_exit();
+}
+
+void set_nmi_ipi_callback(nmi_callback_t callback)
+{
+	nmi_ipi_callback = callback;
+}
+
+void unset_nmi_ipi_callback(void)
+{
+	nmi_ipi_callback = dummy_nmi_callback;
 }
 
 void stop_nmi(void)

@@ -16,6 +16,7 @@
 #include <net/ip.h>
 #include <net/checksum.h>
 #include <linux/spinlock.h>
+#include <linux/nfcalls.h>
 
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_core.h>
@@ -282,6 +283,41 @@ static struct nf_hook_ops nf_nat_ops[] __read_mostly = {
 	},
 };
 
+int init_nftable_nat(void)
+{
+	int ret;
+
+	if (!ve_is_super(get_exec_env()))
+		__module_get(THIS_MODULE);
+
+	ret = nf_nat_rule_init();
+	if (ret < 0) {
+		printk("nf_nat_init: can't setup rules.\n");
+		goto out_modput;
+	}
+	ret = nf_register_hooks(nf_nat_ops, ARRAY_SIZE(nf_nat_ops));
+	if (ret < 0) {
+		printk("nf_nat_init: can't register hooks.\n");
+		goto cleanup_rule_init;
+	}
+	return 0;
+
+cleanup_rule_init:
+	nf_nat_rule_cleanup();
+out_modput:
+	if (!ve_is_super(get_exec_env()))
+		module_put(THIS_MODULE);
+	return ret;
+}
+
+void fini_nftable_nat(void)
+{
+	nf_unregister_hooks(nf_nat_ops, ARRAY_SIZE(nf_nat_ops));
+	nf_nat_rule_cleanup();
+	if (!ve_is_super(get_exec_env()))
+		module_put(THIS_MODULE);
+}
+
 static int __init nf_nat_standalone_init(void)
 {
 	int ret = 0;
@@ -292,20 +328,19 @@ static int __init nf_nat_standalone_init(void)
 	BUG_ON(ip_nat_decode_session != NULL);
 	rcu_assign_pointer(ip_nat_decode_session, nat_decode_session);
 #endif
-	ret = nf_nat_rule_init();
-	if (ret < 0) {
-		printk("nf_nat_init: can't setup rules.\n");
-		goto cleanup_decode_session;
+
+	if (!ip_conntrack_disable_ve0) {
+		ret = init_nftable_nat();
+		if (ret < 0)
+			goto cleanup_decode_session;
 	}
-	ret = nf_register_hooks(nf_nat_ops, ARRAY_SIZE(nf_nat_ops));
-	if (ret < 0) {
-		printk("nf_nat_init: can't register hooks.\n");
-		goto cleanup_rule_init;
-	}
+
+	KSYMRESOLVE(init_nftable_nat);
+	KSYMRESOLVE(fini_nftable_nat);
+	KSYMMODRESOLVE(iptable_nat);
+
 	return ret;
 
- cleanup_rule_init:
-	nf_nat_rule_cleanup();
  cleanup_decode_session:
 #ifdef CONFIG_XFRM
 	rcu_assign_pointer(ip_nat_decode_session, NULL);
@@ -316,8 +351,12 @@ static int __init nf_nat_standalone_init(void)
 
 static void __exit nf_nat_standalone_fini(void)
 {
-	nf_unregister_hooks(nf_nat_ops, ARRAY_SIZE(nf_nat_ops));
-	nf_nat_rule_cleanup();
+	KSYMMODUNRESOLVE(iptable_nat);
+	KSYMUNRESOLVE(init_nftable_nat);
+	KSYMUNRESOLVE(fini_nftable_nat);
+
+	if (!ip_conntrack_disable_ve0)
+		fini_nftable_nat();
 #ifdef CONFIG_XFRM
 	rcu_assign_pointer(ip_nat_decode_session, NULL);
 	synchronize_net();

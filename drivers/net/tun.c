@@ -82,45 +82,20 @@ static int debug;
 #define DBG1( a... )
 #endif
 
-struct tun_struct {
-	struct list_head        list;
-	unsigned long 		flags;
-	int			attached;
-	uid_t			owner;
-	gid_t			group;
-
-	wait_queue_head_t	read_wait;
-	struct sk_buff_head	readq;
-
-	struct net_device	*dev;
-
-	struct fasync_struct    *fasync;
-
-	unsigned long if_flags;
-	u8 dev_addr[ETH_ALEN];
-	u32 chr_filter[2];
-	u32 net_filter[2];
-
-#ifdef TUN_DEBUG
-	int debug;
-#endif
-};
-
 /* Network device part of the driver */
 
-static unsigned int tun_net_id;
-struct tun_net {
-	struct list_head dev_list;
-};
+unsigned int tun_net_id;
+EXPORT_SYMBOL(tun_net_id);
 
 static const struct ethtool_ops tun_ethtool_ops;
 
 /* Net device open. */
-static int tun_net_open(struct net_device *dev)
+int tun_net_open(struct net_device *dev)
 {
 	netif_start_queue(dev);
 	return 0;
 }
+EXPORT_SYMBOL(tun_net_open);
 
 /* Net device close. */
 static int tun_net_close(struct net_device *dev)
@@ -223,7 +198,7 @@ tun_net_change_mtu(struct net_device *dev, int new_mtu)
 }
 
 /* Initialize net device. */
-static void tun_net_init(struct net_device *dev)
+void tun_net_init(struct net_device *dev)
 {
 	struct tun_struct *tun = netdev_priv(dev);
 
@@ -255,6 +230,7 @@ static void tun_net_init(struct net_device *dev)
 		break;
 	}
 }
+EXPORT_SYMBOL(tun_net_init);
 
 /* Character device part */
 
@@ -477,7 +453,7 @@ static ssize_t tun_chr_aio_read(struct kiocb *iocb, const struct iovec *iv,
 	return ret;
 }
 
-static void tun_setup(struct net_device *dev)
+void tun_setup(struct net_device *dev)
 {
 	struct tun_struct *tun = netdev_priv(dev);
 
@@ -494,6 +470,7 @@ static void tun_setup(struct net_device *dev)
 	dev->destructor = free_netdev;
 	dev->features |= NETIF_F_NETNS_LOCAL;
 }
+EXPORT_SYMBOL(tun_setup);
 
 static struct tun_struct *tun_get_by_name(struct tun_net *tn, const char *name)
 {
@@ -526,7 +503,8 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 		      current->euid != tun->owner) ||
 		     (tun->group != -1 &&
 		      current->egid != tun->group)) &&
-		     !capable(CAP_NET_ADMIN))
+		     !capable(CAP_NET_ADMIN) &&
+		     !capable(CAP_VE_NET_ADMIN))
 			return -EPERM;
 	}
 	else if (__dev_get_by_name(net, ifr->ifr_name))
@@ -601,6 +579,7 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 	file->private_data = tun;
 	tun->attached = 1;
 	get_net(dev_net(tun->dev));
+	tun->bind_file = file;
 
 	/* Make sure persistent devices do not get stuck in
 	 * xoff state.
@@ -816,12 +795,13 @@ static int tun_chr_fasync(int fd, struct file *file, int on)
 	return 0;
 }
 
-static int tun_chr_open(struct inode *inode, struct file * file)
+int tun_chr_open(struct inode *inode, struct file * file)
 {
 	DBG1(KERN_INFO "tunX: tun_chr_open\n");
 	file->private_data = NULL;
 	return 0;
 }
+EXPORT_SYMBOL(tun_chr_open);
 
 static int tun_chr_close(struct inode *inode, struct file *file)
 {

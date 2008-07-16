@@ -7,6 +7,9 @@
 #include <asm/hardirq.h>
 #include <asm/system.h>
 
+#include <bc/task.h>
+#include <linux/ve_task.h>
+
 /*
  * We put the hardirq and softirq counter into the preemption
  * counter. The bitmask has the following meaning:
@@ -126,6 +129,24 @@ extern void rcu_irq_exit(void);
 # define rcu_irq_exit() do { } while (0)
 #endif /* CONFIG_PREEMPT_RCU */
 
+#define save_context()		do {				\
+		struct task_struct *tsk;			\
+		if (hardirq_count() == HARDIRQ_OFFSET) {	\
+			tsk = current;				\
+			ve_save_context(tsk);			\
+			ub_save_context(tsk);			\
+		}						\
+	} while (0)
+
+#define restore_context()		do {			\
+		struct task_struct *tsk;			\
+		if (hardirq_count() == HARDIRQ_OFFSET) {	\
+			tsk = current;				\
+			ve_restore_context(tsk);		\
+			ub_restore_context(tsk);		\
+		}						\
+	} while (0)
+
 /*
  * It is safe to do non-atomic ops on ->hardirq_context,
  * because NMI handlers may not preempt and the ops are
@@ -137,6 +158,7 @@ extern void rcu_irq_exit(void);
 		rcu_irq_enter();			\
 		account_system_vtime(current);		\
 		add_preempt_count(HARDIRQ_OFFSET);	\
+		save_context();				\
 		trace_hardirq_enter();			\
 	} while (0)
 
@@ -152,6 +174,7 @@ extern void irq_enter(void);
 	do {						\
 		trace_hardirq_exit();			\
 		account_system_vtime(current);		\
+		restore_context();			\
 		sub_preempt_count(HARDIRQ_OFFSET);	\
 		rcu_irq_exit();				\
 	} while (0)

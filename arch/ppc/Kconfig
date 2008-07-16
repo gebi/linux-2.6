@@ -1181,6 +1181,10 @@ source "lib/Kconfig"
 
 source "arch/ppc/Kconfig.debug"
 
+source "kernel/Kconfig.openvz"
+
 source "security/Kconfig"
+
+source "kernel/bc/Kconfig"
 
 source "crypto/Kconfig"

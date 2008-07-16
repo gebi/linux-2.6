@@ -74,6 +74,7 @@ struct inet_ehash_bucket {
  * ports are created in O(1) time?  I thought so. ;-)	-DaveM
  */
 struct inet_bind_bucket {
+	struct ve_struct	*owner_env;
 	struct net		*ib_net;
 	unsigned short		port;
 	signed short		fastreuse;
@@ -197,27 +198,29 @@ extern struct inet_bind_bucket *
 		    inet_bind_bucket_create(struct kmem_cache *cachep,
 					    struct net *net,
 					    struct inet_bind_hashbucket *head,
-					    const unsigned short snum);
+					    const unsigned short snum,
+					    struct ve_struct *env);
 extern void inet_bind_bucket_destroy(struct kmem_cache *cachep,
 				     struct inet_bind_bucket *tb);
 
-static inline int inet_bhashfn(const __u16 lport, const int bhash_size)
+static inline int inet_bhashfn(const __u16 lport, const int bhash_size,
+		unsigned veid)
 {
-	return lport & (bhash_size - 1);
+	return ((lport + (veid ^ (veid >> 16))) & (bhash_size - 1));
 }
 
 extern void inet_bind_hash(struct sock *sk, struct inet_bind_bucket *tb,
 			   const unsigned short snum);
 
 /* These can have wildcards, don't try too hard. */
-static inline int inet_lhashfn(const unsigned short num)
+static inline int inet_lhashfn(const unsigned short num, unsigned veid)
 {
-	return num & (INET_LHTABLE_SIZE - 1);
+	return ((num + (veid ^ (veid >> 16))) & (INET_LHTABLE_SIZE - 1));
 }
 
 static inline int inet_sk_listen_hashfn(const struct sock *sk)
 {
-	return inet_lhashfn(inet_sk(sk)->num);
+	return inet_lhashfn(inet_sk(sk)->num, VEID(sk->owner_env));
 }
 
 /* Caller must disable local BH processing. */
@@ -372,7 +375,8 @@ static inline struct sock *inet_lookup(struct net *net,
 extern int __inet_hash_connect(struct inet_timewait_death_row *death_row,
 		struct sock *sk, u32 port_offset,
 		int (*check_established)(struct inet_timewait_death_row *,
-			struct sock *, __u16, struct inet_timewait_sock **),
+			struct sock *, __u16, struct inet_timewait_sock **,
+			struct ve_struct *),
 			       void (*hash)(struct sock *sk));
 extern int inet_hash_connect(struct inet_timewait_death_row *death_row,
 			     struct sock *sk);

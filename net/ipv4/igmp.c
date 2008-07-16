@@ -83,6 +83,7 @@
 #include <linux/sockios.h>
 #include <linux/in.h>
 #include <linux/inet.h>
+#include <linux/nsproxy.h>
 #include <linux/netdevice.h>
 #include <linux/skbuff.h>
 #include <linux/inetdevice.h>
@@ -2317,7 +2318,7 @@ static inline struct ip_mc_list *igmp_mc_get_first(struct seq_file *seq)
 	struct igmp_mc_iter_state *state = igmp_mc_seq_private(seq);
 
 	state->in_dev = NULL;
-	for_each_netdev(&init_net, state->dev) {
+	for_each_netdev(get_exec_env()->ve_netns, state->dev) {
 		struct in_device *in_dev;
 		in_dev = in_dev_get(state->dev);
 		if (!in_dev)
@@ -2466,7 +2467,7 @@ static inline struct ip_sf_list *igmp_mcf_get_first(struct seq_file *seq)
 
 	state->idev = NULL;
 	state->im = NULL;
-	for_each_netdev(&init_net, state->dev) {
+	for_each_netdev(get_exec_env()->ve_netns, state->dev) {
 		struct in_device *idev;
 		idev = in_dev_get(state->dev);
 		if (unlikely(idev == NULL))
@@ -2609,11 +2610,34 @@ static const struct file_operations igmp_mcf_seq_fops = {
 	.release	=	seq_release_private,
 };
 
+static int igmp_net_init(struct net *net)
+{
+	if (!proc_net_fops_create(net, "igmp", S_IRUGO, &igmp_mc_seq_fops))
+		goto out_igmp;
+	if (!proc_net_fops_create(net, "mcfilter", S_IRUGO, &igmp_mcf_seq_fops))
+		goto out_mcfilter;
+	return 0;
+
+out_mcfilter:
+	proc_net_remove(net, "igmp");
+out_igmp:
+	return -ENOMEM;
+}
+
+static void igmp_net_exit(struct net *net)
+{
+	proc_net_remove(net, "igmp");
+	proc_net_remove(net, "mcfilter");
+}
+
+static struct pernet_operations igmp_net_ops = {
+	.init = igmp_net_init,
+	.exit = igmp_net_exit,
+};
+
 int __init igmp_mc_proc_init(void)
 {
-	proc_net_fops_create(&init_net, "igmp", S_IRUGO, &igmp_mc_seq_fops);
-	proc_net_fops_create(&init_net, "mcfilter", S_IRUGO, &igmp_mcf_seq_fops);
-	return 0;
+	return register_pernet_subsys(&igmp_net_ops);
 }
 #endif
 

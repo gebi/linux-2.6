@@ -209,6 +209,7 @@ void lru_cache_add_active(struct page *page)
 		__pagevec_lru_add_active(pvec);
 	put_cpu_var(lru_add_active_pvecs);
 }
+EXPORT_SYMBOL(lru_cache_add_active);
 
 /*
  * Drain pages out of the cpu's pagevecs.
@@ -243,6 +244,8 @@ void lru_add_drain(void)
 	drain_cpu_pagevecs(get_cpu());
 	put_cpu();
 }
+
+EXPORT_SYMBOL(lru_add_drain);
 
 #ifdef CONFIG_NUMA
 static void lru_add_drain_per_cpu(struct work_struct *dummy)

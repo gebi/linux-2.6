@@ -198,8 +198,10 @@ static void ip6_frag_expire(unsigned long data)
 	struct frag_queue *fq;
 	struct net_device *dev = NULL;
 	struct net *net;
+	struct ve_struct *old_ve;
 
 	fq = container_of((struct inet_frag_queue *)data, struct frag_queue, q);
+	old_ve = set_exec_env(fq->q.owner_ve);
 
 	spin_lock(&fq->q.lock);
 
@@ -234,6 +236,8 @@ out:
 		dev_put(dev);
 	spin_unlock(&fq->q.lock);
 	fq_put(fq);
+
+	(void)set_exec_env(old_ve);
 }
 
 static __inline__ struct frag_queue *
@@ -510,6 +514,7 @@ static int ip6_frag_reasm(struct frag_queue *fq, struct sk_buff *prev,
 		clone->csum = 0;
 		clone->ip_summed = head->ip_summed;
 		atomic_add(clone->truesize, &fq->q.net->mem);
+		clone->owner_env = head->owner_env;
 	}
 
 	/* We have to remove fragment header from datagram and to relocate

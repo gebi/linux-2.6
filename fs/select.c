@@ -27,6 +27,8 @@
 
 #include <asm/uaccess.h>
 
+#include <bc/kmem.h>
+
 struct poll_table_page {
 	struct poll_table_page * next;
 	struct poll_table_entry * entry;
@@ -332,7 +334,8 @@ int core_sys_select(int n, fd_set __user *inp, fd_set __user *outp,
 	if (size > sizeof(stack_fds) / 6) {
 		/* Not enough space in on-stack array; must use kmalloc */
 		ret = -ENOMEM;
-		bits = kmalloc(6 * size, GFP_KERNEL);
+		bits = kmalloc(6 * size, size > PAGE_SIZE / 6 ?
+				GFP_KERNEL_UBC : GFP_KERNEL);
 		if (!bits)
 			goto out_nofds;
 	}
@@ -678,7 +681,7 @@ int do_sys_poll(struct pollfd __user *ufds, unsigned int nfds, s64 *timeout)
 
 		len = min(todo, POLLFD_PER_PAGE);
 		size = sizeof(struct poll_list) + sizeof(struct pollfd) * len;
-		walk = walk->next = kmalloc(size, GFP_KERNEL);
+		walk = walk->next = kmalloc(size, GFP_KERNEL_UBC);
 		if (!walk) {
 			err = -ENOMEM;
 			goto out_fds;
@@ -710,7 +713,7 @@ out_fds:
 	return err;
 }
 
-static long do_restart_poll(struct restart_block *restart_block)
+long do_restart_poll(struct restart_block *restart_block)
 {
 	struct pollfd __user *ufds = (struct pollfd __user*)restart_block->arg0;
 	int nfds = restart_block->arg1;
@@ -726,6 +729,7 @@ static long do_restart_poll(struct restart_block *restart_block)
 	}
 	return ret;
 }
+EXPORT_SYMBOL_GPL(do_restart_poll);
 
 asmlinkage long sys_poll(struct pollfd __user *ufds, unsigned int nfds,
 			long timeout_msecs)

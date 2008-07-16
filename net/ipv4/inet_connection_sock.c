@@ -24,6 +24,9 @@
 #include <net/tcp_states.h>
 #include <net/xfrm.h>
 
+#include <bc/net.h>
+#include <bc/sock_orphan.h>
+
 #ifdef INET_CSK_DEBUG
 const char inet_csk_timer_bug_msg[] = "inet_csk BUG: unknown timer value\n";
 EXPORT_SYMBOL(inet_csk_timer_bug_msg);
@@ -93,6 +96,7 @@ int inet_csk_get_port(struct sock *sk, unsigned short snum)
 	struct inet_bind_bucket *tb;
 	int ret;
 	struct net *net = sock_net(sk);
+	struct ve_struct *env = sk->owner_env;
 
 	local_bh_disable();
 	if (!snum) {
@@ -103,7 +107,8 @@ int inet_csk_get_port(struct sock *sk, unsigned short snum)
 		rover = net_random() % remaining + low;
 
 		do {
-			head = &hashinfo->bhash[inet_bhashfn(rover, hashinfo->bhash_size)];
+			head = &hashinfo->bhash[inet_bhashfn(rover,
+					hashinfo->bhash_size, VEID(env))];
 			spin_lock(&head->lock);
 			inet_bind_bucket_for_each(tb, node, &head->chain)
 				if (tb->ib_net == net && tb->port == rover)
@@ -130,7 +135,8 @@ int inet_csk_get_port(struct sock *sk, unsigned short snum)
 		 */
 		snum = rover;
 	} else {
-		head = &hashinfo->bhash[inet_bhashfn(snum, hashinfo->bhash_size)];
+		head = &hashinfo->bhash[inet_bhashfn(snum,
+				hashinfo->bhash_size, VEID(env))];
 		spin_lock(&head->lock);
 		inet_bind_bucket_for_each(tb, node, &head->chain)
 			if (tb->ib_net == net && tb->port == snum)
@@ -152,7 +158,7 @@ tb_found:
 tb_not_found:
 	ret = 1;
 	if (!tb && (tb = inet_bind_bucket_create(hashinfo->bind_bucket_cachep,
-					net, head, snum)) == NULL)
+					net, head, snum, env)) == NULL)
 		goto fail_unlock;
 	if (hlist_empty(&tb->owners)) {
 		if (sk->sk_reuse && sk->sk_state != TCP_LISTEN)
@@ -553,7 +559,7 @@ void inet_csk_destroy_sock(struct sock *sk)
 
 	sk_refcnt_debug_release(sk);
 
-	atomic_dec(sk->sk_prot->orphan_count);
+	ub_dec_orphan_count(sk);
 	sock_put(sk);
 }
 
@@ -633,7 +639,7 @@ void inet_csk_listen_stop(struct sock *sk)
 
 		sock_orphan(child);
 
-		atomic_inc(sk->sk_prot->orphan_count);
+		ub_inc_orphan_count(sk);
 
 		inet_csk_destroy_sock(child);
 
