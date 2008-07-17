@@ -380,11 +380,9 @@ static const struct file_operations ct_cpu_seq_fops = {
 };
 
 #ifdef CONFIG_VE_IPTABLES
-#define ve_ip_ct_net_table		(get_exec_env()->_nf_conntrack->_ip_ct_net_table)
 #define ve_ip_ct_netfilter_table	(get_exec_env()->_nf_conntrack->_ip_ct_netfilter_table)
 #define ve_ip_ct_sysctl_header		(get_exec_env()->_nf_conntrack->_ip_ct_sysctl_header)
 #else
-#define ve_ip_ct_net_table		ip_ct_net_table
 #define ve_ip_ct_netfilter_table	ip_ct_netfilter_table
 #define ve_ip_ct_sysctl_header		ip_ct_sysctl_header
 #endif
@@ -400,30 +398,17 @@ static ctl_table ip_ct_netfilter_table[] = {
 	{}
 };
 
-static ctl_table ip_ct_ipv4_table[] = {
-	{
-		.ctl_name	= NET_IPV4,
-		.procname	= "ipv4",
-		.mode		= 0555,
-		.child		= ip_ct_netfilter_table,
-	},
-	{}
-};
-
-static ctl_table ip_ct_net_table[] = {
-	{
-		.ctl_name	= CTL_NET,
-		.procname	= "net",
-		.mode		= 0555,
-		.child		= ip_ct_ipv4_table,
-	},
-	{}
+static struct ctl_path ip_ct_net_table_path[] = {
+	{ .procname = "net", .ctl_name = CTL_NET, },
+	{ .procname = "ipv4", .ctl_name = NET_IPV4, },
+	{},
 };
 
 int nf_conntrack_ipv4_compat_init(void)
 {
 	struct net *net = get_exec_env()->ve_netns;
 	struct proc_dir_entry *proc, *proc_exp, *proc_stat;
+	static ctl_table *table;
 
 	proc = proc_net_fops_create(net, "ip_conntrack", 0440, &ct_file_ops);
 	if (!proc)
@@ -439,24 +424,27 @@ int nf_conntrack_ipv4_compat_init(void)
 	if (!proc_stat)
 		goto err3;
 
-	if (ve_is_super(get_exec_env())) {
-		ve_ip_ct_net_table = ip_ct_net_table;
-	} else {
-		ve_ip_ct_net_table = clone_sysctl_template(ip_ct_net_table);
-		if (!ve_ip_ct_net_table)
+	table = ip_ct_netfilter_table;
+	if (net != &init_net) {
+		 table = kmemdup(table,
+				 sizeof(ip_ct_netfilter_table),
+				 GFP_KERNEL);
+		if (!table)
 			goto err4;
 	}
-	ve_ip_ct_netfilter_table = ve_ip_ct_net_table[0].child[0].child;
-	ve_ip_ct_netfilter_table[0].data = &ve_nf_conntrack_max;
-	ve_ip_ct_sysctl_header = register_sysctl_table(ve_ip_ct_net_table);
+
+	table[0].data = &ve_nf_conntrack_max;
+	ve_ip_ct_sysctl_header = register_net_sysctl_table(net,
+							   ip_ct_net_table_path,
+							   table);
 	if (!ve_ip_ct_sysctl_header)
 		goto err5;
 
 	return 0;
 
 err5:
-	if (!ve_is_super(get_exec_env()))
-		free_sysctl_clone(ve_ip_ct_net_table);
+	if (net != &init_net)
+		kfree(table);
 err4:
 	remove_proc_entry("ip_conntrack", net->proc_net_stat);
 err3:
@@ -470,10 +458,11 @@ err1:
 void nf_conntrack_ipv4_compat_fini(void)
 {
 	struct net *net = get_exec_env()->ve_netns;
+	struct ctl_table *table = ve_ip_ct_sysctl_header->ctl_table_arg;
 
-	unregister_sysctl_table(ve_ip_ct_sysctl_header);
-	if (!ve_is_super(get_exec_env()))
-		free_sysctl_clone(ve_ip_ct_net_table);
+	unregister_net_sysctl_table(ve_ip_ct_sysctl_header);
+	if (net != &init_net)
+		kfree(table);
 	remove_proc_entry("ip_conntrack", net->proc_net_stat);
 	proc_net_remove(net, "ip_conntrack_expect");
 	proc_net_remove(net, "ip_conntrack");

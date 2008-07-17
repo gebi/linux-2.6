@@ -114,7 +114,6 @@ struct ve_nf_conntrack {
 	ctl_table			*_nf_ct_sysctl_table;
 	ctl_table			*_nf_ct_netfilter_table;
 	ctl_table			*_nf_ct_net_table;
-	ctl_table			*_ip_ct_net_table;
 	ctl_table			*_ip_ct_netfilter_table;
 	struct ctl_table_header		*_ip_ct_sysctl_header;
 	int				_nf_ct_log_invalid_proto_min;
