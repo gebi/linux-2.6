@@ -347,8 +347,9 @@ int nf_ct_proto_icmp_sysctl_init(void)
 
 #ifdef CONFIG_NF_CONNTRACK_PROC_COMPAT
 	icmp->ctl_compat_table_header = ve_icmp_compat_sysctl_header;
-	icmp->ctl_compat_table =
-		clone_sysctl_template(icmp_compat_sysctl_table);
+	icmp->ctl_compat_table = kmemdup(icmp_compat_sysctl_table,
+					 sizeof(icmp_compat_sysctl_table),
+					 GFP_KERNEL);
 	if (icmp->ctl_compat_table == NULL)
 		goto no_mem_compat;
 	icmp->ctl_compat_table[0].data = &ve_nf_ct_icmp_timeout;
@@ -361,7 +362,7 @@ out:
 
 #ifdef CONFIG_NF_CONNTRACK_PROC_COMPAT
 no_mem_compat:
-	free_sysctl_clone(icmp->ctl_table);
+	kfree(icmp->ctl_table);
 #endif
 no_mem_sys:
 	kfree(icmp);
@@ -374,8 +375,7 @@ void nf_ct_proto_icmp_sysctl_cleanup(void)
 {
 	if (!ve_is_super(get_exec_env())) {
 #ifdef CONFIG_NF_CONNTRACK_PROC_COMPAT
-		free_sysctl_clone(
-				ve_nf_conntrack_l4proto_icmp->ctl_compat_table);
+		kfree(ve_nf_conntrack_l4proto_icmp->ctl_compat_table);
 #endif
 		kfree(ve_nf_conntrack_l4proto_icmp->ctl_table);
 		kfree(ve_nf_conntrack_l4proto_icmp);
