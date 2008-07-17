@@ -423,12 +423,21 @@ MODULE_LICENSE("GPL");
 static int nf_ct_proto_ipv4_sysctl_init(void)
 {
 	struct nf_conntrack_l3proto *ipv4 = ve_nf_conntrack_l3proto_ipv4;
+	struct ctl_table *ct_table;
+	struct net *net = get_exec_env()->ve_netns;
+
+	ct_table = ip_ct_sysctl_table;
+
+	if (net != &init_net) {
+		ct_table = kmemdup(ct_table, sizeof(ip_ct_sysctl_table),
+				   GFP_KERNEL);
+		if (!ct_table)
+			return -ENOMEM;
+	}
 
 	ipv4->ctl_table_header = NULL;
 	ipv4->ctl_table_path = nf_net_ipv4_netfilter_sysctl_path;
-	ipv4->ctl_table = clone_sysctl_template(ip_ct_sysctl_table);
-	if (ipv4->ctl_table == NULL)
-		return -ENOMEM;
+	ipv4->ctl_table = ct_table;
 
 	ipv4->ctl_table[0].data = &ve_nf_conntrack_max;
 	ipv4->ctl_table[1].data = &ve_nf_conntrack_count;
@@ -440,8 +449,11 @@ static int nf_ct_proto_ipv4_sysctl_init(void)
 
 static void nf_ct_proto_ipv4_sysctl_cleanup(void)
 {
-	if (!ve_is_super(get_exec_env()))
-		free_sysctl_clone(ve_nf_conntrack_l3proto_ipv4->ctl_table);
+	struct net *net = get_exec_env()->ve_netns;
+
+	if (net != &init_net) {
+		kfree(ve_nf_conntrack_l3proto_ipv4->ctl_table);
+	}
 }
 #else
 static inline int nf_ct_proto_ipv4_sysctl_init(void)
