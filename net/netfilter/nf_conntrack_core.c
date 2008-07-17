@@ -1046,10 +1046,10 @@ skip_ct_cache:
 	nf_conntrack_helper_fini();
 	nf_conntrack_expect_fini();
 
+	nf_conntrack_proto_fini();
 	nf_ct_proto_generic_sysctl_cleanup();
 	nf_ct_free_hashtable(ve_nf_conntrack_hash, ve_nf_conntrack_vmalloc,
 			nf_conntrack_htable_size);
-	nf_conntrack_proto_fini();
 #ifdef CONFIG_VE_IPTABLES
 	kfree(ve->_nf_conntrack);
 #endif
