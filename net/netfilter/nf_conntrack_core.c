@@ -1202,6 +1202,11 @@ int nf_conntrack_init(void)
 	ret = nf_ct_proto_generic_sysctl_init();
 	if (ret < 0)
 		goto err_free_conntrack_slab;
+
+	ret = nf_conntrack_proto_init();
+	if (ret < 0)
+		goto err_generic_proto;
+
 	/* Don't NEED lock here, but good form anyway. */
 	spin_lock_bh(&nf_conntrack_lock);
 	for (i = 0; i < AF_MAX; i++)
@@ -1230,13 +1235,12 @@ int nf_conntrack_init(void)
 
 	return 0;
 
-#if defined(CONFIG_VE_IPTABLES) && defined(CONFIG_SYSCTL)
-	nf_ct_proto_generic_sysctl_cleanup();
-#endif
 out_fini_expect:
 	nf_conntrack_expect_fini();
 out_fini_proto:
 	nf_conntrack_proto_fini();
+err_generic_proto:
+	nf_ct_proto_generic_sysctl_cleanup();
 err_free_conntrack_slab:
 	if (ve_is_super(ve))
 		kmem_cache_destroy(nf_conntrack_cachep);
