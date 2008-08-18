@@ -202,7 +202,7 @@ int rst_restore_route(struct cpt_context *ctx)
 	if (err < 0)
 		return err;
 
-	err = sock_create_kern(AF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE, &sock);
+	err = sock_create(AF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE, &sock);
 	if (err)
 		return err;
 

@@ -268,13 +268,13 @@ static int open_socket(cpt_object_t *obj, struct cpt_sock_image *si,
 	cpt_object_t *fobj;
 	cpt_object_t *pobj = NULL;
 
-	err = sock_create_kern(si->cpt_family, si->cpt_type, si->cpt_protocol,
+	err = sock_create(si->cpt_family, si->cpt_type, si->cpt_protocol,
 			       &sock);
 	if (err)
 		return err;
 
 	if (si->cpt_socketpair) {
-		err = sock_create_kern(si->cpt_family, si->cpt_type,
+		err = sock_create(si->cpt_family, si->cpt_type,
 				       si->cpt_protocol, &sock2);
 		if (err)
 			goto err_out;
@@ -436,10 +436,10 @@ static int open_listening_socket(loff_t pos, struct cpt_sock_image *si,
 	struct file *file;
 	cpt_object_t *obj, *fobj;
 
-	err = sock_create_kern(si->cpt_family, si->cpt_type, si->cpt_protocol,
+	err = sock_create(si->cpt_family, si->cpt_type, si->cpt_protocol,
 			       &sock);
 	if (err) {
-		eprintk_ctx("open_listening_socket: sock_create_kern: %d\n", err);
+		eprintk_ctx("open_listening_socket: sock_create: %d\n", err);
 		return err;
 	}
 

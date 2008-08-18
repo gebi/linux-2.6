@@ -337,7 +337,7 @@ static int cpt_dump_route(struct cpt_context * ctx)
 	mm_segment_t oldfs;
 	char *pg;
 
-	err = sock_create_kern(AF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE, &sock);
+	err = sock_create(AF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE, &sock);
 	if (err)
 		return err;
 
