@@ -138,6 +138,8 @@ void __init proc_root_init(void)
 	proc_mkdir("sysvipc", &glob_proc_root);
 #endif
 	proc_mkdir("fs", &glob_proc_root);
+	proc_mkdir("fs", NULL);	/* care about proc_mkdir("fs/xxx", NULL); */
+
 	proc_mkdir("driver", NULL);
 	proc_mkdir("fs/nfsd", &glob_proc_root); /* somewhere for the nfsd filesystem to be mounted */
 #if defined(CONFIG_SUN_OPENPROMFS) || defined(CONFIG_SUN_OPENPROMFS_MODULE)
