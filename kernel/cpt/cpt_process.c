@@ -471,6 +471,9 @@ static int dump_fpustate(struct task_struct *tsk, struct cpt_context *ctx)
 	unsigned long size;
 	int type;
 
+	if (!tsk->thread.xstate)
+		return 0;
+
 	cpt_open_object(NULL, ctx);
 
 	type = CPT_CONTENT_X86_FPUSTATE;
@@ -489,7 +492,7 @@ static int dump_fpustate(struct task_struct *tsk, struct cpt_context *ctx)
 	hdr.cpt_size = size;
 
 	ctx->write(&hdr, sizeof(hdr), ctx);
-	ctx->write(&tsk->thread.xstate, size, ctx);
+	ctx->write(tsk->thread.xstate, size, ctx);
 	ctx->align(ctx);
 	cpt_close_object(ctx);
 	return 0;

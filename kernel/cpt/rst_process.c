@@ -1192,6 +1192,10 @@ static void rst_apply_mxcsr_mask(struct task_struct *tsk)
 #endif
 }
 
+#ifdef CONFIG_X86
+#include <asm/i387.h>
+#endif
+
 int rst_restore_process(struct cpt_context *ctx)
 {
 	cpt_object_t *obj;
@@ -1365,7 +1369,9 @@ int rst_restore_process(struct cpt_context *ctx)
 			case CPT_OBJ_BITS:
 				if (b->cpt_content == CPT_CONTENT_X86_FPUSTATE &&
 				    cpu_has_fxsr) {
-					memcpy(&tsk->thread.xstate,
+					if (init_fpu(tsk))
+						return -ENOMEM;
+					memcpy(tsk->thread.xstate,
 					       (void*)b + b->cpt_hdrlen,
 					       sizeof(struct i387_fxsave_struct));
 					rst_apply_mxcsr_mask(tsk);
@@ -1375,7 +1381,9 @@ int rst_restore_process(struct cpt_context *ctx)
 #ifndef CONFIG_X86_64
 				else if (b->cpt_content == CPT_CONTENT_X86_FPUSTATE_OLD &&
 					 !cpu_has_fxsr) {		
-					memcpy(&tsk->thread.xstate,
+					if (init_fpu(tsk))
+						return -ENOMEM;
+					memcpy(tsk->thread.xstate,
 					       (void*)b + b->cpt_hdrlen,
 					       sizeof(struct i387_fsave_struct));
 					if (ti->cpt_used_math)
