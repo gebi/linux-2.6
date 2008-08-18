@@ -1268,6 +1268,7 @@ void set_mm_exe_file(struct mm_struct *mm, struct file *new_exe_file)
 	mm->exe_file = new_exe_file;
 	mm->num_exe_file_vmas = 0;
 }
+EXPORT_SYMBOL(set_mm_exe_file);
 
 struct file *get_mm_exe_file(struct mm_struct *mm)
 {

@@ -481,6 +481,8 @@ static int copy_mm_pages(struct mm_struct *src, unsigned long start,
 	return 0;
 }
 
+#include <linux/proc_fs.h>
+
 static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos, struct cpt_context *ctx)
 {
 	int err = 0;
@@ -518,6 +520,10 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos, s
 	}
 
 	down_write(&mm->mmap_sem);
+
+	if ((make_flags(vmai) & VM_EXECUTABLE) && mm->exe_file != file)
+		set_mm_exe_file(mm, file);
+
 	addr = do_mmap_pgoff(file, vmai->cpt_start,
 			     vmai->cpt_end-vmai->cpt_start,
 			     prot, make_flags(vmai),

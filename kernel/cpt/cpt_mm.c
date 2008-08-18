@@ -78,6 +78,11 @@ static int collect_one_mm(struct mm_struct *mm, cpt_context_t * ctx)
 				return -ENOMEM;
 		}
 	}
+
+	if (mm->exe_file &&
+	    cpt_object_add(CPT_OBJ_FILE, mm->exe_file, ctx) == NULL)
+		return -ENOMEM;
+
 #ifdef CONFIG_BEANCOUNTERS
 	if (cpt_add_ubc(mm->mm_ub, ctx) == NULL)
 		return -ENOMEM;
