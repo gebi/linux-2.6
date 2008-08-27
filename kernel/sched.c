@@ -8747,7 +8747,7 @@ static unsigned long to_ratio(u64 period, u64 runtime)
 	return div64_u64(runtime << 16, period);
 }
 
-#ifdef CONFIG_CGROUP_SCHED
+#if defined(CONFIG_CGROUP_SCHED) || defined(CONFIG_VZ_FAIRSCHED)
 static int __rt_schedulable(struct task_group *tg, u64 period, u64 runtime)
 {
 	struct task_group *tgi, *parent = tg ? tg->parent : NULL;
@@ -8804,10 +8804,10 @@ static int __rt_schedulable(struct task_group *tg, u64 period, u64 runtime)
 static inline int tg_has_rt_tasks(struct task_group *tg)
 {
 	struct task_struct *g, *p;
-	do_each_thread(g, p) {
+	do_each_thread_ve(g, p) {
 		if (rt_task(p) && rt_rq_of_se(&p->rt)->tg == tg)
 			return 1;
-	} while_each_thread(g, p);
+	} while_each_thread_ve(g, p);
 	return 0;
 }
 
