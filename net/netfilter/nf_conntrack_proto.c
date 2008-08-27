@@ -358,8 +358,4 @@ void nf_conntrack_proto_fini(void)
 	/* free l3proto protocol tables */
 	for (i = 0; i < PF_MAX; i++)
 		kfree(ve_nf_ct_protos[i]);
-#ifdef CONFIG_VE_IPTABLES
-	if (!ve_is_super(get_exec_env()))
-		kfree(ve_nf_conntrack_l4proto_generic);
-#endif
 }

@@ -163,6 +163,8 @@ void nf_ct_proto_generic_sysctl_cleanup(void)
 		kfree(ve_nf_conntrack_l4proto_generic->ctl_compat_table);
 #endif
 		kfree(ve_nf_conntrack_l4proto_generic->ctl_table);
+
+		kfree(ve_nf_conntrack_l4proto_generic);
 	}
 }
 EXPORT_SYMBOL(nf_ct_proto_generic_sysctl_cleanup);
