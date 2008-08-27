@@ -1041,7 +1041,8 @@ void nf_conntrack_cleanup(void)
 
 	rcu_assign_pointer(nf_ct_destroy, NULL);
 
-	kmem_cache_destroy(nf_conntrack_cachep);
+	if (ve_is_super(ve))
+		kmem_cache_destroy(nf_conntrack_cachep);
 skip_ct_cache:
 	nf_conntrack_helper_fini();
 	nf_conntrack_expect_fini();
