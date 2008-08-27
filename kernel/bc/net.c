@@ -1142,14 +1142,6 @@ int ub_sock_tcp_chargesend(struct sock *sk, struct sk_buff *skb,
 }
 EXPORT_SYMBOL(ub_sock_tcp_chargesend);
 
-void ub_sock_tcp_unchargesend(struct sock *sk, unsigned long size)
-{
-	if (unlikely(!sock_has_ubc(sk)))
-		return;
-	/* see ub_tcpsndbuf_uncharge */
-	ub_sock_ret_wreserv(sk, UB_TCPSNDBUF, size, sock_bc(sk)->poll_reserv);
-}
-
 /*
  * Initialization
  */

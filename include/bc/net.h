@@ -63,8 +63,6 @@ UB_DECLARE_VOID_FUNC(ub_sock_ret_wreserv(struct sock *sk, int bufid,
 			unsigned long size, unsigned long ressize))
 UB_DECLARE_FUNC(int, ub_sock_tcp_chargesend(struct sock *sk,
 			struct sk_buff *skb, enum ub_severity strict))
-UB_DECLARE_VOID_FUNC(ub_sock_tcp_unchargesend(struct sock *sk,
-			unsigned long size))
 UB_DECLARE_FUNC(int, ub_sock_tcp_chargepage(struct sock *sk))
 UB_DECLARE_VOID_FUNC(ub_sock_tcp_detachpage(struct sock *sk))
 

@@ -732,11 +732,9 @@ int tcp_fragment(struct sock *sk, struct sk_buff *skb, u32 len,
 		nsize = 0;
 
 	if (skb_cloned(skb) && skb_is_nonlinear(skb)) {
-		unsigned long chargesize;
-		chargesize = skb_bc(skb)->charged;
 		if (pskb_expand_head(skb, 0, 0, GFP_ATOMIC))
 			return -ENOMEM;
-		ub_sock_tcp_unchargesend(sk, chargesize);
+		ub_skb_uncharge(skb);
 		ub_tcpsndbuf_charge_forced(sk, skb);
 	}
 
