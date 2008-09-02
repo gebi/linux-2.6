@@ -322,6 +322,10 @@ int cpt_dump_ifaddr(struct cpt_context * ctx)
 	return 0;
 }
 
+#ifdef CONFIG_IP_FIB_TRIE
+#error "Trie fib rules are known not to be restored proprly yet"
+#endif
+
 static int cpt_dump_route(struct cpt_context * ctx)
 {
 	int err;
