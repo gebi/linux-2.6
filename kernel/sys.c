@@ -10,6 +10,7 @@
 #include <linux/mman.h>
 #include <linux/smp_lock.h>
 #include <linux/notifier.h>
+#include <linux/virtinfo.h>
 #include <linux/reboot.h>
 #include <linux/prctl.h>
 #include <linux/highuid.h>
@@ -33,6 +34,7 @@
 #include <linux/task_io_accounting_ops.h>
 #include <linux/seccomp.h>
 #include <linux/cpu.h>
+#include <linux/pid_namespace.h>
 
 #include <linux/compat.h>
 #include <linux/syscalls.h>
@@ -112,6 +114,102 @@ EXPORT_SYMBOL(cad_pid);
 
 void (*pm_power_off_prepare)(void);
 
+DECLARE_MUTEX(virtinfo_sem);
+EXPORT_SYMBOL(virtinfo_sem);
+static struct vnotifier_block *virtinfo_chain[VIRT_TYPES];
+
+void __virtinfo_notifier_register(int type, struct vnotifier_block *nb)
+{
+	struct vnotifier_block **p;
+
+	for (p = &virtinfo_chain[type];
+	     *p != NULL && nb->priority < (*p)->priority;
+	     p = &(*p)->next);
+	nb->next = *p;
+	smp_wmb();
+	*p = nb;
+}
+
+EXPORT_SYMBOL(__virtinfo_notifier_register);
+
+void virtinfo_notifier_register(int type, struct vnotifier_block *nb)
+{
+	down(&virtinfo_sem);
+	__virtinfo_notifier_register(type, nb);
+	up(&virtinfo_sem);
+}
+
+EXPORT_SYMBOL(virtinfo_notifier_register);
+
+struct virtinfo_cnt_struct {
+	volatile unsigned long exit[NR_CPUS];
+	volatile unsigned long entry;
+};
+static DEFINE_PER_CPU(struct virtinfo_cnt_struct, virtcnt);
+
+void virtinfo_notifier_unregister(int type, struct vnotifier_block *nb)
+{
+	struct vnotifier_block **p;
+	int entry_cpu, exit_cpu;
+	unsigned long cnt, ent;
+
+	down(&virtinfo_sem);
+	for (p = &virtinfo_chain[type]; *p != nb; p = &(*p)->next);
+	*p = nb->next;
+	smp_mb();
+
+	for_each_cpu_mask(entry_cpu, cpu_possible_map) {
+		while (1) {
+			cnt = 0;
+			for_each_cpu_mask(exit_cpu, cpu_possible_map)
+				cnt +=
+				    per_cpu(virtcnt, entry_cpu).exit[exit_cpu];
+			smp_rmb();
+			ent = per_cpu(virtcnt, entry_cpu).entry;
+			if (cnt == ent)
+				break;
+			__set_current_state(TASK_UNINTERRUPTIBLE);
+			schedule_timeout(HZ / 100);
+		}
+	}
+	up(&virtinfo_sem);
+}
+
+EXPORT_SYMBOL(virtinfo_notifier_unregister);
+
+int virtinfo_notifier_call(int type, unsigned long n, void *data)
+{
+	int ret;
+	int entry_cpu, exit_cpu;
+	struct vnotifier_block *nb;
+
+	entry_cpu = get_cpu();
+	per_cpu(virtcnt, entry_cpu).entry++;
+	smp_wmb();
+	put_cpu();
+
+	nb = virtinfo_chain[type];
+	ret = NOTIFY_DONE;
+	while (nb)
+	{
+		ret = nb->notifier_call(nb, n, data, ret);
+		if(ret & NOTIFY_STOP_MASK) {
+			ret &= ~NOTIFY_STOP_MASK;
+			break;
+		}
+		nb = nb->next;
+	}
+
+	exit_cpu = get_cpu();
+	smp_wmb();
+	per_cpu(virtcnt, entry_cpu).exit[exit_cpu]++;
+	put_cpu();
+
+	return ret;
+}
+
+EXPORT_SYMBOL(virtinfo_notifier_call);
+
 static int set_one_prio(struct task_struct *p, int niceval, int error)
 {
 	int no_nice;
@@ -181,10 +279,10 @@ asmlinkage long sys_setpriority(int which, int who, int niceval)
 				if ((who != current->uid) && !(user = find_user(who)))
 					goto out_unlock;	/* No processes for this user */
 
-			do_each_thread(g, p)
+			do_each_thread_ve(g, p)
 				if (p->uid == who)
 					error = set_one_prio(p, niceval, error);
-			while_each_thread(g, p);
+			while_each_thread_ve(g, p);
 			if (who != current->uid)
 				free_uid(user);		/* For find_user() */
 			break;
@@ -243,13 +341,13 @@ asmlinkage long sys_getpriority(int which, int who)
 				if ((who != current->uid) && !(user = find_user(who)))
 					goto out_unlock;	/* No processes for this user */
 
-			do_each_thread(g, p)
+			do_each_thread_ve(g, p)
 				if (p->uid == who) {
 					niceval = 20 - task_nice(p);
 					if (niceval > retval)
 						retval = niceval;
 				}
-			while_each_thread(g, p);
+			while_each_thread_ve(g, p);
 			if (who != current->uid)
 				free_uid(user);		/* for find_user() */
 			break;
@@ -362,6 +460,25 @@ asmlinkage long sys_reboot(int magic1, int magic2, unsigned int cmd, void __user
 			magic2 != LINUX_REBOOT_MAGIC2B &&
 	                magic2 != LINUX_REBOOT_MAGIC2C))
 		return -EINVAL;
+
+#ifdef CONFIG_VE
+	if (!ve_is_super(get_exec_env()))
+		switch (cmd) {
+		case LINUX_REBOOT_CMD_RESTART:
+		case LINUX_REBOOT_CMD_HALT:
+		case LINUX_REBOOT_CMD_POWER_OFF:
+		case LINUX_REBOOT_CMD_RESTART2:
+			force_sig(SIGKILL,
+				get_exec_env()->ve_ns->pid_ns->child_reaper);
+
+		case LINUX_REBOOT_CMD_CAD_ON:
+		case LINUX_REBOOT_CMD_CAD_OFF:
+			return 0;
+
+		default:
+			return -EINVAL;
+		}
+#endif
 
 	/* Instead of trying to make the power_off code look like
 	 * halt when pm_power_off is not set do it the easy way.
@@ -549,7 +666,7 @@ asmlinkage long sys_setgid(gid_t gid)
 	return 0;
 }
   
-static int set_user(uid_t new_ruid, int dumpclear)
+int set_user(uid_t new_ruid, int dumpclear)
 {
 	struct user_struct *new_user;
 
@@ -853,8 +970,27 @@ asmlinkage long sys_setfsgid(gid_t gid)
 	return old_fsgid;
 }
 
+#ifdef CONFIG_VE
+unsigned long long ve_relative_clock(struct timespec * ts)
+{
+	unsigned long long offset = 0;
+
+	if (ts->tv_sec > get_exec_env()->start_timespec.tv_sec ||
+	    (ts->tv_sec == get_exec_env()->start_timespec.tv_sec &&
+	     ts->tv_nsec >= get_exec_env()->start_timespec.tv_nsec))
+		offset = (unsigned long long)(ts->tv_sec -
+			get_exec_env()->start_timespec.tv_sec) * NSEC_PER_SEC
+			+ ts->tv_nsec -	get_exec_env()->start_timespec.tv_nsec;
+	return nsec_to_clock_t(offset);
+}
+#endif
+
 asmlinkage long sys_times(struct tms __user * tbuf)
 {
+#ifdef CONFIG_VE
+	struct timespec now;
+#endif
+
 	/*
 	 *	In the SMP world we might just be unlucky and have one of
 	 *	the times increment as we use it. Since the value is an
@@ -888,7 +1024,13 @@ asmlinkage long sys_times(struct tms __user * tbuf)
 		if (copy_to_user(tbuf, &tmp, sizeof(struct tms)))
 			return -EFAULT;
 	}
+#ifndef CONFIG_VE
 	return (long) jiffies_64_to_clock_t(get_jiffies_64());
+#else
+	/* Compare to calculation in fs/proc/array.c */
+	do_posix_clock_monotonic_gettime(&now);
+	return ve_relative_clock(&now);
+#endif
 }
 
 /*
@@ -1062,6 +1204,7 @@ asmlinkage long sys_setsid(void)
 
 	spin_lock(&group_leader->sighand->siglock);
 	group_leader->signal->tty = NULL;
+	group_leader->signal->tty_old_pgrp = 0;
 	spin_unlock(&group_leader->sighand->siglock);
 
 	err = session;
@@ -1344,7 +1487,7 @@ asmlinkage long sys_sethostname(char __user *name, int len)
 	int errno;
 	char tmp[__NEW_UTS_LEN];
 
-	if (!capable(CAP_SYS_ADMIN))
+	if (!capable(CAP_VE_SYS_ADMIN))
 		return -EPERM;
 	if (len < 0 || len > __NEW_UTS_LEN)
 		return -EINVAL;
@@ -1389,7 +1532,7 @@ asmlinkage long sys_setdomainname(char __user *name, int len)
 	int errno;
 	char tmp[__NEW_UTS_LEN];
 
-	if (!capable(CAP_SYS_ADMIN))
+	if (!capable(CAP_VE_SYS_ADMIN))
 		return -EPERM;
 	if (len < 0 || len > __NEW_UTS_LEN)
 		return -EINVAL;

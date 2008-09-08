@@ -1,6 +1,7 @@
 #include <linux/workqueue.h>
 #include <linux/rtnetlink.h>
 #include <linux/cache.h>
+#include <linux/proc_fs.h>
 #include <linux/slab.h>
 #include <linux/list.h>
 #include <linux/delay.h>
@@ -33,6 +34,10 @@ static __net_init int setup_net(struct net *net)
 	struct pernet_operations *ops;
 	int error;
 	struct net_generic *ng;
+
+#ifdef CONFIG_VE
+	net->owner_ve = get_exec_env();
+#endif
 
 	atomic_set(&net->count, 1);
 #ifdef NETNS_REFCNT_DEBUG
@@ -85,6 +90,8 @@ static struct net *net_alloc(void)
 
 static void net_free(struct net *net)
 {
+	struct completion *sysfs_completion;
+
 	if (!net)
 		return;
 
@@ -96,7 +103,10 @@ static void net_free(struct net *net)
 	}
 #endif
 
+	sysfs_completion = net->sysfs_completion;
 	kmem_cache_free(net_cachep, net);
+	if (sysfs_completion)
+		complete(sysfs_completion);
 }
 
 struct net *copy_net_ns(unsigned long flags, struct net *old_net)
@@ -139,6 +149,7 @@ static void cleanup_net(struct work_struct *work)
 {
 	struct pernet_operations *ops;
 	struct net *net;
+	struct ve_struct *old_ve;
 
 	/* Be very certain incoming network packets will not find us */
 	rcu_barrier();
@@ -152,11 +163,13 @@ static void cleanup_net(struct work_struct *work)
 	list_del(&net->list);
 	rtnl_unlock();
 
+	old_ve = set_exec_env(net->owner_ve);
 	/* Run all of the network namespace exit methods */
 	list_for_each_entry_reverse(ops, &pernet_list, list) {
 		if (ops->exit)
 			ops->exit(net);
 	}
+	(void)set_exec_env(old_ve);
 
 	mutex_unlock(&net_mutex);
 

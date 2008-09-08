@@ -37,6 +37,8 @@
 #include <linux/tick.h>
 #include <linux/percpu.h>
 #include <linux/prctl.h>
+#include <linux/sysctl.h>
+#include <linux/utsrelease.h>
 
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
@@ -57,6 +59,9 @@
 #include <asm/kdebug.h>
 
 asmlinkage void ret_from_fork(void) __asm__("ret_from_fork");
+EXPORT_SYMBOL(ret_from_fork);
+asmlinkage void i386_ret_from_resume(void) __asm__("i386_ret_from_resume");
+EXPORT_SYMBOL_GPL(i386_ret_from_resume);
 
 DEFINE_PER_CPU(struct task_struct *, current_task) = &init_task;
 EXPORT_PER_CPU_SYMBOL(current_task);
@@ -171,16 +176,17 @@ void __show_registers(struct pt_regs *regs, int all)
 	}
 
 	printk("\n");
-	printk("Pid: %d, comm: %s %s (%s %.*s)\n",
+	printk("Pid: %d, comm: %s %s (%s %.*s %s)\n",
 			task_pid_nr(current), current->comm,
 			print_tainted(), init_utsname()->release,
 			(int)strcspn(init_utsname()->version, " "),
-			init_utsname()->version);
+			init_utsname()->version, VZVERSION);
 
 	printk("EIP: %04x:[<%08lx>] EFLAGS: %08lx CPU: %d\n",
 			(u16)regs->cs, regs->ip, regs->flags,
 			smp_processor_id());
-	print_symbol("EIP is at %s\n", regs->ip);
+	if (decode_call_traces)
+		print_symbol("EIP is at %s\n", regs->ip);
 
 	printk("EAX: %08lx EBX: %08lx ECX: %08lx EDX: %08lx\n",
 		regs->ax, regs->bx, regs->cx, regs->dx);
@@ -216,6 +222,8 @@ void show_regs(struct pt_regs *regs)
 {
 	__show_registers(regs, 1);
 	show_trace(NULL, regs, &regs->sp, regs->bp);
+	if (!decode_call_traces)
+		printk(" EIP: [<%08lx>]\n", regs->ip);
 }
 
 /*
@@ -224,6 +232,7 @@ void show_regs(struct pt_regs *regs)
  * the "args".
  */
 extern void kernel_thread_helper(void);
+EXPORT_SYMBOL(kernel_thread_helper);
 
 /*
  * Create a kernel thread
@@ -231,6 +240,13 @@ extern void kernel_thread_helper(void);
 int kernel_thread(int (*fn)(void *), void * arg, unsigned long flags)
 {
 	struct pt_regs regs;
+
+	/* Don't allow kernel_thread() inside VE */
+	if (!ve_allow_kthreads && !ve_is_super(get_exec_env())) {
+		printk("kernel_thread call inside container\n");
+		dump_stack();
+		return -EPERM;
+	}
 
 	memset(&regs, 0, sizeof(regs));
 

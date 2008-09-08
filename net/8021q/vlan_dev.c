@@ -292,6 +292,7 @@ static int vlan_dev_hard_header(struct sk_buff *skb, struct net_device *dev,
 
 static int vlan_dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
+	struct ve_struct *env;
 	struct net_device_stats *stats = &dev->stats;
 	struct vlan_ethhdr *veth = (struct vlan_ethhdr *)(skb->data);
 
@@ -323,13 +324,17 @@ static int vlan_dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	stats->tx_bytes += skb->len;
 
 	skb->dev = vlan_dev_info(dev)->real_dev;
+	skb->owner_env = skb->dev->owner_env;
+	env = set_exec_env(skb->owner_env);
 	dev_queue_xmit(skb);
+	set_exec_env(env);
 	return NETDEV_TX_OK;
 }
 
 static int vlan_dev_hwaccel_hard_start_xmit(struct sk_buff *skb,
 					    struct net_device *dev)
 {
+	struct ve_struct *env;
 	struct net_device_stats *stats = &dev->stats;
 	u16 vlan_tci;
 
@@ -341,7 +346,10 @@ static int vlan_dev_hwaccel_hard_start_xmit(struct sk_buff *skb,
 	stats->tx_bytes += skb->len;
 
 	skb->dev = vlan_dev_info(dev)->real_dev;
+	skb->owner_env = skb->dev->owner_env;
+	env = set_exec_env(skb->owner_env);
 	dev_queue_xmit(skb);
+	set_exec_env(env);
 	return NETDEV_TX_OK;
 }
 
@@ -697,4 +705,6 @@ void vlan_setup(struct net_device *dev)
 	dev->ethtool_ops	= &vlan_ethtool_ops;
 
 	memset(dev->broadcast, 0, ETH_ALEN);
+	if (!ve_is_super(get_exec_env()))
+		dev->features |= NETIF_F_VIRTUAL;
 }

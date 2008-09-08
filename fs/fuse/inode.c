@@ -19,13 +19,16 @@
 #include <linux/random.h>
 #include <linux/sched.h>
 #include <linux/exportfs.h>
+#include <linux/ve_proto.h>
 
 MODULE_AUTHOR("Miklos Szeredi <miklos@szeredi.hu>");
 MODULE_DESCRIPTION("Filesystem in Userspace");
 MODULE_LICENSE("GPL");
 
 static struct kmem_cache *fuse_inode_cachep;
+#ifndef CONFIG_VE
 struct list_head fuse_conn_list;
+#endif
 DEFINE_MUTEX(fuse_mutex);
 
 #define FUSE_SUPER_MAGIC 0x65735546
@@ -1033,6 +1036,41 @@ static void fuse_sysfs_cleanup(void)
 	kobject_put(fuse_kobj);
 }
 
+#ifdef CONFIG_VE
+static int fuse_start(void *data)
+{
+	struct ve_struct *ve;
+
+	ve = (struct ve_struct *)data;
+	if (ve->fuse_fs_type != NULL)
+		return -EBUSY;
+
+	INIT_LIST_HEAD(&ve->_fuse_conn_list);
+	return register_ve_fs_type(ve, &fuse_fs_type, &ve->fuse_fs_type, NULL);
+}
+
+static void fuse_stop(void *data)
+{
+	struct ve_struct *ve;
+
+	ve = (struct ve_struct *)data;
+	if (ve->fuse_fs_type == NULL)
+		return;
+
+	unregister_ve_fs_type(ve->fuse_fs_type, NULL);
+	kfree(ve->fuse_fs_type);
+	ve->fuse_fs_type = NULL;
+	BUG_ON(!list_empty(&ve->_fuse_conn_list));
+}
+
+static struct ve_hook fuse_ve_hook = {
+	.init		= fuse_start,
+	.fini		= fuse_stop,
+	.owner		= THIS_MODULE,
+	.priority	= HOOK_PRIO_FS,
+};
+#endif
+
 static int __init fuse_init(void)
 {
 	int res;
@@ -1057,6 +1095,7 @@ static int __init fuse_init(void)
 	if (res)
 		goto err_sysfs_cleanup;
 
+	ve_hook_register(VE_SS_CHAIN, &fuse_ve_hook);
 	return 0;
 
  err_sysfs_cleanup:
@@ -1073,6 +1112,7 @@ static void __exit fuse_exit(void)
 {
 	printk(KERN_DEBUG "fuse exit\n");
 
+	ve_hook_unregister(&fuse_ve_hook);
 	fuse_ctl_cleanup();
 	fuse_sysfs_cleanup();
 	fuse_fs_cleanup();

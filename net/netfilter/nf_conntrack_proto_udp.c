@@ -7,6 +7,7 @@
  */
 
 #include <linux/types.h>
+#include <linux/sched.h>
 #include <linux/timer.h>
 #include <linux/module.h>
 #include <linux/udp.h>
@@ -72,12 +73,13 @@ static int udp_packet(struct nf_conn *ct,
 	/* If we've seen traffic both ways, this is some kind of UDP
 	   stream.  Extend timeout. */
 	if (test_bit(IPS_SEEN_REPLY_BIT, &ct->status)) {
-		nf_ct_refresh_acct(ct, ctinfo, skb, nf_ct_udp_timeout_stream);
+		nf_ct_refresh_acct(ct, ctinfo, skb,
+				   ve_nf_ct_udp_timeout_stream);
 		/* Also, more likely to be important, and not a probe */
 		if (!test_and_set_bit(IPS_ASSURED_BIT, &ct->status))
 			nf_conntrack_event_cache(IPCT_STATUS, skb);
 	} else
-		nf_ct_refresh_acct(ct, ctinfo, skb, nf_ct_udp_timeout);
+		nf_ct_refresh_acct(ct, ctinfo, skb, ve_nf_ct_udp_timeout);
 
 	return NF_ACCEPT;
 }
@@ -229,3 +231,85 @@ struct nf_conntrack_l4proto nf_conntrack_l4proto_udp6 __read_mostly =
 #endif
 };
 EXPORT_SYMBOL_GPL(nf_conntrack_l4proto_udp6);
+
+#if defined(CONFIG_VE_IPTABLES) && defined(CONFIG_SYSCTL)
+int nf_ct_proto_udp_sysctl_init(void)
+{
+	struct nf_conntrack_l4proto *udp4, *udp6;
+
+	if (ve_is_super(get_exec_env())) {
+		udp4 = &nf_conntrack_l4proto_udp4;
+		udp6 = &nf_conntrack_l4proto_udp6;
+		goto out;
+	}
+
+	udp4 = kmemdup(&nf_conntrack_l4proto_udp4,
+			sizeof(struct nf_conntrack_l4proto), GFP_KERNEL);
+	if (udp4 == NULL)
+		goto no_mem_ct4;
+
+	udp4->ctl_table_users = &ve_udp_sysctl_table_users;
+	udp4->ctl_table_header = &ve_udp_sysctl_header;
+	udp4->ctl_table = kmemdup(udp_sysctl_table,
+			sizeof(udp_sysctl_table), GFP_KERNEL);
+	if (udp4->ctl_table == NULL)
+		goto no_mem_sys;
+	udp4->ctl_table[0].data = &ve_nf_ct_udp_timeout;
+	udp4->ctl_table[1].data = &ve_nf_ct_udp_timeout_stream;
+
+#ifdef CONFIG_NF_CONNTRACK_PROC_COMPAT
+	udp4->ctl_compat_table_header = ve_udp_compat_sysctl_header;
+	udp4->ctl_compat_table = kmemdup(udp_compat_sysctl_table,
+			sizeof(udp_compat_sysctl_table), GFP_KERNEL);
+	if (udp4->ctl_compat_table == NULL)
+		goto no_mem_compat;
+	udp4->ctl_compat_table[0].data = &ve_nf_ct_udp_timeout;
+	udp4->ctl_compat_table[1].data = &ve_nf_ct_udp_timeout_stream;
+#endif
+
+	udp6 = kmemdup(&nf_conntrack_l4proto_udp6,
+			sizeof(struct nf_conntrack_l4proto), GFP_KERNEL);
+	if (!udp6)
+		goto no_mem_ct6;
+
+	udp6->ctl_table_users = &ve_udp_sysctl_table_users;
+	udp6->ctl_table_header = &ve_udp_sysctl_header;
+	udp6->ctl_table = udp4->ctl_table;
+
+	udp6->ctl_table[0].data = &ve_nf_ct_udp_timeout;
+	udp6->ctl_table[1].data = &ve_nf_ct_udp_timeout_stream;
+out:
+	ve_nf_ct_udp_timeout = nf_ct_udp_timeout;
+	ve_nf_ct_udp_timeout_stream = nf_ct_udp_timeout_stream;
+
+	ve_nf_conntrack_l4proto_udp4 = udp4;
+	ve_nf_conntrack_l4proto_udp6 = udp6;
+	return 0;
+
+no_mem_ct6:
+#ifdef CONFIG_NF_CONNTRACK_PROC_COMPAT
+	kfree(udp4->ctl_compat_table);
+no_mem_compat:
+#endif
+	kfree(udp4->ctl_table);
+no_mem_sys:
+	kfree(udp4);
+no_mem_ct4:
+	return -ENOMEM;
+}
+EXPORT_SYMBOL(nf_ct_proto_udp_sysctl_init);
+
+void nf_ct_proto_udp_sysctl_cleanup(void)
+{
+	if (!ve_is_super(get_exec_env())) {
+#ifdef CONFIG_NF_CONNTRACK_PROC_COMPAT
+		kfree(ve_nf_conntrack_l4proto_udp4->ctl_compat_table);
+#endif
+		kfree(ve_nf_conntrack_l4proto_udp4->ctl_table);
+		kfree(ve_nf_conntrack_l4proto_udp4);
+
+		kfree(ve_nf_conntrack_l4proto_udp6);
+	}
+}
+EXPORT_SYMBOL(nf_ct_proto_udp_sysctl_cleanup);
+#endif /* CONFIG_VE_IPTABLES && CONFIG_SYSCTL */

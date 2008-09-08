@@ -1773,7 +1773,7 @@ static void cgroup_enable_task_cg_lists(void)
 	struct task_struct *p, *g;
 	write_lock(&css_set_lock);
 	use_task_css_set_links = 1;
-	do_each_thread(g, p) {
+	do_each_thread_all(g, p) {
 		task_lock(p);
 		/*
 		 * We should check if the process is exiting, otherwise
@@ -1783,7 +1783,7 @@ static void cgroup_enable_task_cg_lists(void)
 		if (!(p->flags & PF_EXITING) && list_empty(&p->cg_list))
 			list_add(&p->cg_list, &p->cgroups->tasks);
 		task_unlock(p);
-	} while_each_thread(g, p);
+	} while_each_thread_all(g, p);
 	write_unlock(&css_set_lock);
 }
 
@@ -2872,9 +2872,6 @@ int cgroup_clone(struct task_struct *tsk, struct cgroup_subsys *subsys,
  again:
 	root = subsys->root;
 	if (root == &rootnode) {
-		printk(KERN_INFO
-		       "Not cloning cgroup for unused subsystem %s\n",
-		       subsys->name);
 		mutex_unlock(&cgroup_mutex);
 		return 0;
 	}

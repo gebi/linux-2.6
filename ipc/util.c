@@ -38,6 +38,8 @@
 
 #include <asm/unistd.h>
 
+#include <bc/kmem.h>
+
 #include "util.h"
 
 struct ipc_proc_iface {
@@ -247,6 +249,7 @@ int ipc_get_maxid(struct ipc_ids *ids)
  *	@ids: IPC identifier set
  *	@new: new IPC permission set
  *	@size: limit for the number of used ids
+ *	@reqid: if >= 0, get this id exactly. If -1 -- don't care.
  *
  *	Add an entry 'new' to the IPC ids idr. The permissions object is
  *	initialised and the first free entry is set up and the id assigned
@@ -256,9 +259,17 @@ int ipc_get_maxid(struct ipc_ids *ids)
  *	Called with ipc_ids.rw_mutex held as a writer.
  */
  
-int ipc_addid(struct ipc_ids* ids, struct kern_ipc_perm* new, int size)
+int ipc_addid(struct ipc_ids* ids, struct kern_ipc_perm* new, int size, int reqid)
 {
 	int id, err;
+
+	if (reqid >= 0) {
+		id = reqid % SEQ_MULTIPLIER;
+		err = idr_get_new_above(&ids->ipcs_idr, new, id, &id);
+		if (err || id != (reqid % SEQ_MULTIPLIER))
+			return -EEXIST;
+		goto found;
+	}
 
 	if (size > IPCMNI)
 		size = IPCMNI;
@@ -270,14 +281,19 @@ int ipc_addid(struct ipc_ids* ids, struct kern_ipc_perm* new, int size)
 	if (err)
 		return err;
 
+found:
 	ids->in_use++;
 
 	new->cuid = new->uid = current->euid;
 	new->gid = new->cgid = current->egid;
 
-	new->seq = ids->seq++;
-	if(ids->seq > ids->seq_max)
-		ids->seq = 0;
+	if (reqid >= 0) {
+		new->seq = reqid/SEQ_MULTIPLIER;
+	} else {
+		new->seq = ids->seq++;
+		if(ids->seq > ids->seq_max)
+			ids->seq = 0;
+	}
 
 	new->id = ipc_buildid(id, new->seq);
 	spin_lock_init(&new->lock);
@@ -445,9 +461,9 @@ void* ipc_alloc(int size)
 {
 	void* out;
 	if(size > PAGE_SIZE)
-		out = vmalloc(size);
+		out = ub_vmalloc(size);
 	else
-		out = kmalloc(size, GFP_KERNEL);
+		out = kmalloc(size, GFP_KERNEL_UBC);
 	return out;
 }
 
@@ -530,14 +546,14 @@ void* ipc_rcu_alloc(int size)
 	 * workqueue if necessary (for vmalloc). 
 	 */
 	if (rcu_use_vmalloc(size)) {
-		out = vmalloc(HDRLEN_VMALLOC + size);
+		out = ub_vmalloc(HDRLEN_VMALLOC + size);
 		if (out) {
 			out += HDRLEN_VMALLOC;
 			container_of(out, struct ipc_rcu_hdr, data)->is_vmalloc = 1;
 			container_of(out, struct ipc_rcu_hdr, data)->refcount = 1;
 		}
 	} else {
-		out = kmalloc(HDRLEN_KMALLOC + size, GFP_KERNEL);
+		out = kmalloc(HDRLEN_KMALLOC + size, GFP_KERNEL_UBC);
 		if (out) {
 			out += HDRLEN_KMALLOC;
 			container_of(out, struct ipc_rcu_hdr, data)->is_vmalloc = 0;
@@ -715,6 +731,7 @@ struct kern_ipc_perm *ipc_lock(struct ipc_ids *ids, int id)
 
 	return out;
 }
+EXPORT_SYMBOL_GPL(ipc_lock);
 
 struct kern_ipc_perm *ipc_lock_check(struct ipc_ids *ids, int id)
 {
@@ -804,7 +821,7 @@ struct kern_ipc_perm *ipcctl_pre_down(struct ipc_ids *ids, int id, int cmd,
 			goto out_unlock;
 	}
 	if (current->euid == ipcp->cuid ||
-	    current->euid == ipcp->uid || capable(CAP_SYS_ADMIN))
+	    current->euid == ipcp->uid || capable(CAP_VE_SYS_ADMIN))
 		return ipcp;
 
 	err = -EPERM;

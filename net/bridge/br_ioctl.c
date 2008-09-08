@@ -15,6 +15,7 @@
 #include <linux/kernel.h>
 #include <linux/if_bridge.h>
 #include <linux/netdevice.h>
+#include <linux/nsproxy.h>
 #include <linux/times.h>
 #include <net/net_namespace.h>
 #include <asm/uaccess.h>
@@ -26,7 +27,7 @@ static int get_bridge_ifindices(int *indices, int num)
 	struct net_device *dev;
 	int i = 0;
 
-	for_each_netdev(&init_net, dev) {
+	for_each_netdev(current->nsproxy->net_ns, dev) {
 		if (i >= num)
 			break;
 		if (dev->priv_flags & IFF_EBRIDGE)
@@ -89,7 +90,7 @@ static int add_del_if(struct net_bridge *br, int ifindex, int isadd)
 	if (!capable(CAP_NET_ADMIN))
 		return -EPERM;
 
-	dev = dev_get_by_index(&init_net, ifindex);
+	dev = dev_get_by_index(current->nsproxy->net_ns, ifindex);
 	if (dev == NULL)
 		return -EINVAL;
 
@@ -140,6 +141,7 @@ static int old_dev_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 		b.root_port = br->root_port;
 
 		b.stp_enabled = (br->stp_enabled != BR_NO_STP);
+		b.via_phys_dev = br->via_phys_dev;
 		b.ageing_time = jiffies_to_clock_t(br->ageing_time);
 		b.hello_timer_value = br_timer_value(&br->hello_timer);
 		b.tcn_timer_value = br_timer_value(&br->tcn_timer);
@@ -254,6 +256,13 @@ static int old_dev_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 			return -EPERM;
 
 		br_stp_set_enabled(br, args[1]);
+		return 0;
+
+	case BRCTL_SET_VIA_ORIG_DEV:
+		if (!capable(CAP_NET_ADMIN))
+			return -EPERM;
+
+		br->via_phys_dev = args[1] ? 1 : 0;
 		return 0;
 
 	case BRCTL_SET_BRIDGE_PRIORITY:

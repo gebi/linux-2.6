@@ -98,6 +98,7 @@ masquerade_tg(struct sk_buff *skb, const struct net_device *in,
 	return nf_nat_setup_info(ct, &newrange, IP_NAT_MANIP_SRC);
 }
 
+#if 0
 static int
 device_cmp(struct nf_conn *i, void *ifindex)
 {
@@ -119,9 +120,6 @@ static int masq_device_event(struct notifier_block *this,
 			     void *ptr)
 {
 	const struct net_device *dev = ptr;
-
-	if (!net_eq(dev_net(dev), &init_net))
-		return NOTIFY_DONE;
 
 	if (event == NETDEV_DOWN) {
 		/* Device was downed.  Search entire table for
@@ -150,6 +148,7 @@ static struct notifier_block masq_dev_notifier = {
 static struct notifier_block masq_inet_notifier = {
 	.notifier_call	= masq_inet_event,
 };
+#endif
 
 static struct xt_target masquerade_tg_reg __read_mostly = {
 	.name		= "MASQUERADE",
@@ -168,12 +167,16 @@ static int __init masquerade_tg_init(void)
 
 	ret = xt_register_target(&masquerade_tg_reg);
 
+#if 0
+/*	These notifiers are unnecessary and may
+	lead to oops in virtual environments */
 	if (ret == 0) {
 		/* Register for device down reports */
 		register_netdevice_notifier(&masq_dev_notifier);
 		/* Register IP address change reports */
 		register_inetaddr_notifier(&masq_inet_notifier);
 	}
+#endif
 
 	return ret;
 }
@@ -181,8 +184,8 @@ static int __init masquerade_tg_init(void)
 static void __exit masquerade_tg_exit(void)
 {
 	xt_unregister_target(&masquerade_tg_reg);
-	unregister_netdevice_notifier(&masq_dev_notifier);
-	unregister_inetaddr_notifier(&masq_inet_notifier);
+/*	unregister_netdevice_notifier(&masq_dev_notifier);
+	unregister_inetaddr_notifier(&masq_inet_notifier);*/
 }
 
 module_init(masquerade_tg_init);

@@ -72,6 +72,12 @@ static int loopback_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct pcpu_lstats *pcpu_lstats, *lb_stats;
 
+#ifdef CONFIG_VE
+	if (unlikely(get_exec_env()->disable_net)) {
+		kfree_skb(skb);
+		return 0;
+	}
+#endif
 	skb_orphan(skb);
 
 	skb->protocol = eth_type_trans(skb,dev);
@@ -173,7 +179,8 @@ static void loopback_setup(struct net_device *dev)
 		| NETIF_F_NO_CSUM
 		| NETIF_F_HIGHDMA
 		| NETIF_F_LLTX
-		| NETIF_F_NETNS_LOCAL;
+		| NETIF_F_NETNS_LOCAL
+		| NETIF_F_VIRTUAL;
 	dev->ethtool_ops	= &loopback_ethtool_ops;
 	dev->header_ops		= &eth_header_ops;
 	dev->init = loopback_dev_init;

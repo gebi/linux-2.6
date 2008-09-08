@@ -32,12 +32,43 @@ int br_dev_xmit(struct sk_buff *skb, struct net_device *dev)
 	skb_reset_mac_header(skb);
 	skb_pull(skb, ETH_HLEN);
 
+	skb->brmark = BR_ALREADY_SEEN;
+
 	if (dest[0] & 1)
 		br_flood_deliver(br, skb);
 	else if ((dst = __br_fdb_get(br, dest)) != NULL)
-		br_deliver(dst->dst, skb);
+		br_deliver(dst->dst, skb, 1);
 	else
 		br_flood_deliver(br, skb);
+
+	return 0;
+}
+
+int br_xmit(struct sk_buff *skb, struct net_bridge_port *port)
+{
+	struct net_bridge *br = port->br;
+	const unsigned char *dest = skb->data;
+	struct net_bridge_fdb_entry *dst;
+
+	if (!br->via_phys_dev)
+		return 0;
+
+	br->statistics.tx_packets++;
+	br->statistics.tx_bytes += skb->len;
+
+	skb_reset_mac_header(skb);
+	skb_pull(skb, ETH_HLEN);
+
+	skb->brmark = BR_ALREADY_SEEN;
+
+	if (dest[0] & 1)
+		br_xmit_deliver(br, port, skb);
+	else if ((dst = __br_fdb_get(br, dest)) != NULL)
+		br_deliver(dst->dst, skb, 0);
+	else
+		br_xmit_deliver(br, port, skb);
+
+	skb_push(skb, ETH_HLEN);
 
 	return 0;
 }

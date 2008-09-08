@@ -15,6 +15,7 @@
 #include <linux/sysctl.h>
 #include <net/route.h>
 #include <net/ip.h>
+#include <linux/nfcalls.h>
 
 #include <linux/netfilter_ipv4.h>
 #include <net/netfilter/nf_conntrack.h>
@@ -417,6 +418,204 @@ MODULE_ALIAS("nf_conntrack-" __stringify(AF_INET));
 MODULE_ALIAS("ip_conntrack");
 MODULE_LICENSE("GPL");
 
+#ifdef CONFIG_VE_IPTABLES
+#if defined(CONFIG_SYSCTL) && defined(CONFIG_NF_CONNTRACK_PROC_COMPAT)
+static int nf_ct_proto_ipv4_sysctl_init(void)
+{
+	struct nf_conntrack_l3proto *ipv4 = ve_nf_conntrack_l3proto_ipv4;
+	struct ctl_table *ct_table;
+	struct net *net = get_exec_env()->ve_netns;
+
+	ct_table = ip_ct_sysctl_table;
+
+	if (net != &init_net) {
+		ct_table = kmemdup(ct_table, sizeof(ip_ct_sysctl_table),
+				   GFP_KERNEL);
+		if (!ct_table)
+			return -ENOMEM;
+	}
+
+	ipv4->ctl_table_header = NULL;
+	ipv4->ctl_table_path = nf_net_ipv4_netfilter_sysctl_path;
+	ipv4->ctl_table = ct_table;
+
+	ipv4->ctl_table[0].data = &ve_nf_conntrack_max;
+	ipv4->ctl_table[1].data = &ve_nf_conntrack_count;
+	ipv4->ctl_table[3].data = &ve_nf_conntrack_checksum;
+	ipv4->ctl_table[4].data = &ve_nf_ct_log_invalid;
+
+	return 0;
+}
+
+static void nf_ct_proto_ipv4_sysctl_cleanup(void)
+{
+	struct net *net = get_exec_env()->ve_netns;
+
+	if (net != &init_net) {
+		kfree(ve_nf_conntrack_l3proto_ipv4->ctl_table);
+	}
+}
+#else
+static inline int nf_ct_proto_ipv4_sysctl_init(void)
+{
+	return 0;
+}
+static inline void nf_ct_proto_ipv4_sysctl_cleanup(void)
+{
+}
+#endif /* SYSCTL && NF_CONNTRACK_PROC_COMPAT */
+
+/*
+ *  Functions init/fini_nf_ct_l3proto_ipv4 glue distributed nf_conntrack
+ *  virtualization efforts. They are to be called from 2 places:
+ * 
+ *  1) on loading/unloading module nf_conntrack_ipv4 from 
+ *     nf_conntrack_l3proto_ipv4_init/fini
+ *  2) on start/stop ve - from do_ve_iptables
+ */
+static int nf_ct_proto_ipv4_init(void)
+{
+	struct nf_conntrack_l3proto *ipv4;
+
+	if (ve_is_super(get_exec_env())) {
+		ipv4 = &nf_conntrack_l3proto_ipv4;
+		goto out;
+	}
+	ipv4 = kmemdup(&nf_conntrack_l3proto_ipv4,
+			sizeof(struct nf_conntrack_l3proto), GFP_KERNEL);
+	if (!ipv4)
+		return -ENOMEM;
+out:
+	ve_nf_conntrack_l3proto_ipv4 = ipv4;
+	return 0;
+}
+
+static void nf_ct_proto_ipv4_fini(void)
+{
+	if (!ve_is_super(get_exec_env()))
+		kfree(ve_nf_conntrack_l3proto_ipv4);
+}
+#endif
+
+int init_nf_ct_l3proto_ipv4(void)
+{
+	int ret = -ENOMEM;
+	int do_hooks = ve_is_super(get_exec_env());
+
+#ifdef CONFIG_VE_IPTABLES
+	if (!ve_is_super(get_exec_env())) 
+		__module_get(THIS_MODULE);
+
+	ret = nf_ct_proto_ipv4_init();
+	if (ret < 0)
+		goto err_out;
+	ret = nf_ct_proto_ipv4_sysctl_init();
+	if (ret < 0)
+		goto no_mem_ipv4;
+	ret = nf_ct_proto_tcp_sysctl_init();
+	if (ret < 0)
+		goto no_mem_tcp;
+	ret = nf_ct_proto_udp_sysctl_init();
+	if (ret < 0)
+		goto no_mem_udp;
+	ret = nf_ct_proto_icmp_sysctl_init();
+	if (ret < 0)
+		goto no_mem_icmp;
+#endif /* CONFIG_VE_IPTABLES */
+
+	ret = nf_conntrack_l4proto_register(ve_nf_conntrack_l4proto_tcp4);
+	if (ret < 0) {
+		printk("nf_conntrack_ipv4: can't register tcp.\n");
+		goto cleanup_sys;
+	}
+
+	ret = nf_conntrack_l4proto_register(ve_nf_conntrack_l4proto_udp4);
+	if (ret < 0) {
+		printk("nf_conntrack_ipv4: can't register udp.\n");
+		goto unreg_tcp;
+	}
+
+	ret = nf_conntrack_l4proto_register(ve_nf_conntrack_l4proto_icmp);
+	if (ret < 0) {
+		printk("nf_conntrack_ipv4: can't register icmp.\n");
+		goto unreg_udp;
+	}
+
+	ret = nf_conntrack_l3proto_register(ve_nf_conntrack_l3proto_ipv4);
+	if (ret < 0) {
+		printk("nf_conntrack_ipv4: can't register ipv4\n");
+		goto unreg_icmp;
+	}
+
+	if (do_hooks) {
+		ret = nf_register_hooks(ipv4_conntrack_ops,
+					ARRAY_SIZE(ipv4_conntrack_ops));
+		if (ret < 0) {
+			printk("nf_conntrack_ipv4: can't register hooks.\n");
+			goto unreg_ipv4;
+		}
+	}
+	ret = nf_conntrack_ipv4_compat_init();
+	if (ret < 0)
+		goto unreg_hooks;
+	return 0;
+
+unreg_hooks:
+	if (do_hooks)
+		nf_unregister_hooks(ipv4_conntrack_ops,
+				    ARRAY_SIZE(ipv4_conntrack_ops));
+unreg_ipv4:
+	nf_conntrack_l3proto_unregister(ve_nf_conntrack_l3proto_ipv4);
+unreg_icmp:
+	nf_conntrack_l4proto_unregister(ve_nf_conntrack_l4proto_icmp);
+unreg_udp:
+	nf_conntrack_l4proto_unregister(ve_nf_conntrack_l4proto_udp4);
+unreg_tcp:
+	nf_conntrack_l4proto_unregister(ve_nf_conntrack_l4proto_tcp4);
+cleanup_sys:
+#ifdef CONFIG_VE_IPTABLES
+no_mem_icmp:
+	nf_ct_proto_udp_sysctl_cleanup();
+no_mem_udp:
+	nf_ct_proto_tcp_sysctl_cleanup();
+no_mem_tcp:
+	nf_ct_proto_ipv4_sysctl_cleanup();
+no_mem_ipv4:
+	nf_ct_proto_ipv4_fini();
+err_out:
+	if (!ve_is_super(get_exec_env()))
+		module_put(THIS_MODULE);
+#endif /* CONFIG_VE_IPTABLES */
+	return ret;
+}
+EXPORT_SYMBOL(init_nf_ct_l3proto_ipv4);
+
+void fini_nf_ct_l3proto_ipv4(void)
+{
+	int do_hooks = ve_is_super(get_exec_env());
+
+	nf_conntrack_ipv4_compat_fini();
+	if (do_hooks)
+		nf_unregister_hooks(ipv4_conntrack_ops,
+				    ARRAY_SIZE(ipv4_conntrack_ops));
+
+	nf_conntrack_l3proto_unregister(ve_nf_conntrack_l3proto_ipv4);
+	nf_conntrack_l4proto_unregister(ve_nf_conntrack_l4proto_icmp);
+	nf_conntrack_l4proto_unregister(ve_nf_conntrack_l4proto_udp4);
+	nf_conntrack_l4proto_unregister(ve_nf_conntrack_l4proto_tcp4);
+
+#ifdef CONFIG_VE_IPTABLES 
+	nf_ct_proto_icmp_sysctl_cleanup();
+	nf_ct_proto_udp_sysctl_cleanup();
+	nf_ct_proto_tcp_sysctl_cleanup();
+	nf_ct_proto_ipv4_sysctl_cleanup();
+	nf_ct_proto_ipv4_fini();
+	if (!ve_is_super(get_exec_env()))
+		module_put(THIS_MODULE);
+#endif /* CONFIG_VE_IPTABLES */
+}
+EXPORT_SYMBOL(fini_nf_ct_l3proto_ipv4);
+
 static int __init nf_conntrack_l3proto_ipv4_init(void)
 {
 	int ret = 0;
@@ -429,54 +628,16 @@ static int __init nf_conntrack_l3proto_ipv4_init(void)
 		return ret;
 	}
 
-	ret = nf_conntrack_l4proto_register(&nf_conntrack_l4proto_tcp4);
+	ret = init_nf_ct_l3proto_ipv4();
 	if (ret < 0) {
-		printk("nf_conntrack_ipv4: can't register tcp.\n");
+		printk(KERN_ERR "Unable to initialize netfilter protocols\n");
 		goto cleanup_sockopt;
 	}
-
-	ret = nf_conntrack_l4proto_register(&nf_conntrack_l4proto_udp4);
-	if (ret < 0) {
-		printk("nf_conntrack_ipv4: can't register udp.\n");
-		goto cleanup_tcp;
-	}
-
-	ret = nf_conntrack_l4proto_register(&nf_conntrack_l4proto_icmp);
-	if (ret < 0) {
-		printk("nf_conntrack_ipv4: can't register icmp.\n");
-		goto cleanup_udp;
-	}
-
-	ret = nf_conntrack_l3proto_register(&nf_conntrack_l3proto_ipv4);
-	if (ret < 0) {
-		printk("nf_conntrack_ipv4: can't register ipv4\n");
-		goto cleanup_icmp;
-	}
-
-	ret = nf_register_hooks(ipv4_conntrack_ops,
-				ARRAY_SIZE(ipv4_conntrack_ops));
-	if (ret < 0) {
-		printk("nf_conntrack_ipv4: can't register hooks.\n");
-		goto cleanup_ipv4;
-	}
-#if defined(CONFIG_PROC_FS) && defined(CONFIG_NF_CONNTRACK_PROC_COMPAT)
-	ret = nf_conntrack_ipv4_compat_init();
-	if (ret < 0)
-		goto cleanup_hooks;
-#endif
+	KSYMRESOLVE(init_nf_ct_l3proto_ipv4);
+	KSYMRESOLVE(fini_nf_ct_l3proto_ipv4);
+	KSYMMODRESOLVE(nf_conntrack_ipv4);
 	return ret;
-#if defined(CONFIG_PROC_FS) && defined(CONFIG_NF_CONNTRACK_PROC_COMPAT)
- cleanup_hooks:
-	nf_unregister_hooks(ipv4_conntrack_ops, ARRAY_SIZE(ipv4_conntrack_ops));
-#endif
- cleanup_ipv4:
-	nf_conntrack_l3proto_unregister(&nf_conntrack_l3proto_ipv4);
- cleanup_icmp:
-	nf_conntrack_l4proto_unregister(&nf_conntrack_l4proto_icmp);
- cleanup_udp:
-	nf_conntrack_l4proto_unregister(&nf_conntrack_l4proto_udp4);
- cleanup_tcp:
-	nf_conntrack_l4proto_unregister(&nf_conntrack_l4proto_tcp4);
+
  cleanup_sockopt:
 	nf_unregister_sockopt(&so_getorigdst);
 	return ret;
@@ -485,14 +646,12 @@ static int __init nf_conntrack_l3proto_ipv4_init(void)
 static void __exit nf_conntrack_l3proto_ipv4_fini(void)
 {
 	synchronize_net();
-#if defined(CONFIG_PROC_FS) && defined(CONFIG_NF_CONNTRACK_PROC_COMPAT)
-	nf_conntrack_ipv4_compat_fini();
-#endif
-	nf_unregister_hooks(ipv4_conntrack_ops, ARRAY_SIZE(ipv4_conntrack_ops));
-	nf_conntrack_l3proto_unregister(&nf_conntrack_l3proto_ipv4);
-	nf_conntrack_l4proto_unregister(&nf_conntrack_l4proto_icmp);
-	nf_conntrack_l4proto_unregister(&nf_conntrack_l4proto_udp4);
-	nf_conntrack_l4proto_unregister(&nf_conntrack_l4proto_tcp4);
+
+	KSYMMODUNRESOLVE(nf_conntrack_ipv4);
+	KSYMUNRESOLVE(init_nf_ct_l3proto_ipv4);
+	KSYMUNRESOLVE(fini_nf_ct_l3proto_ipv4);
+
+	fini_nf_ct_l3proto_ipv4();
 	nf_unregister_sockopt(&so_getorigdst);
 }
 

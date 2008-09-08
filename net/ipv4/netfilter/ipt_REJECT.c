@@ -186,13 +186,13 @@ reject_tg_check(const char *tablename, const void *e_void,
 	const struct ipt_entry *e = e_void;
 
 	if (rejinfo->with == IPT_ICMP_ECHOREPLY) {
-		printk("ipt_REJECT: ECHOREPLY no longer supported.\n");
+		ve_printk(VE_LOG, "ipt_REJECT: ECHOREPLY no longer supported.\n");
 		return false;
 	} else if (rejinfo->with == IPT_TCP_RESET) {
 		/* Must specify that it's a TCP packet */
 		if (e->ip.proto != IPPROTO_TCP
 		    || (e->ip.invflags & XT_INV_PROTO)) {
-			printk("ipt_REJECT: TCP_RESET invalid for non-tcp\n");
+			ve_printk(VE_LOG, "ipt_REJECT: TCP_RESET invalid for non-tcp\n");
 			return false;
 		}
 	}

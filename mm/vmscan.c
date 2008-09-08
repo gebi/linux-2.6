@@ -40,10 +40,14 @@
 #include <linux/memcontrol.h>
 #include <linux/delayacct.h>
 
+#include <bc/oom_kill.h>
+#include <bc/io_acct.h>
+
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
 
 #include <linux/swapops.h>
+#include <linux/vzstat.h>
 
 #include "internal.h"
 
@@ -178,6 +182,9 @@ unsigned long shrink_slab(unsigned long scanned, gfp_t gfp_mask,
 	if (scanned == 0)
 		scanned = SWAP_CLUSTER_MAX;
 
+	if (unlikely(test_tsk_thread_flag(current, TIF_MEMDIE)))
+		return 1;
+
 	if (!down_read_trylock(&shrinker_rwsem))
 		return 1;	/* Assume we'll be able to shrink next time */
 
@@ -212,6 +219,9 @@ unsigned long shrink_slab(unsigned long scanned, gfp_t gfp_mask,
 			int shrink_ret;
 			int nr_before;
 
+			if (unlikely(test_tsk_thread_flag(current, TIF_MEMDIE)))
+				goto done;
+
 			nr_before = (*shrinker->shrink)(0, gfp_mask);
 			shrink_ret = (*shrinker->shrink)(this_scan, gfp_mask);
 			if (shrink_ret == -1)
@@ -226,6 +236,7 @@ unsigned long shrink_slab(unsigned long scanned, gfp_t gfp_mask,
 
 		shrinker->nr += total_scan;
 	}
+done:
 	up_read(&shrinker_rwsem);
 	return ret;
 }
@@ -339,6 +350,7 @@ static pageout_t pageout(struct page *page, struct address_space *mapping,
 		 */
 		if (PagePrivate(page)) {
 			if (try_to_free_buffers(page)) {
+				ub_io_release_context(page, 0);
 				ClearPageDirty(page);
 				printk("%s: orphaned page\n", __func__);
 				return PAGE_CLEAN;
@@ -1108,6 +1120,7 @@ static void shrink_active_list(unsigned long nr_pages, struct zone *zone,
 	if (sc->may_swap)
 		reclaim_mapped = calc_reclaim_mapped(sc, zone, priority);
 
+	{KSTAT_PERF_ENTER(refill_inact)
 	lru_add_drain();
 	spin_lock_irq(&zone->lru_lock);
 	pgmoved = sc->isolate_pages(nr_pages, &l_hold, &pgscanned, sc->order,
@@ -1197,6 +1210,7 @@ static void shrink_active_list(unsigned long nr_pages, struct zone *zone,
 	spin_unlock_irq(&zone->lru_lock);
 
 	pagevec_release(&pvec);
+	KSTAT_PERF_LEAVE(refill_inact)}
 }
 
 /*
@@ -1249,6 +1263,8 @@ static unsigned long shrink_zone(int priority, struct zone *zone,
 			nr_to_scan = min(nr_active,
 					(unsigned long)sc->swap_cluster_max);
 			nr_active -= nr_to_scan;
+			if (unlikely(test_tsk_thread_flag(current, TIF_MEMDIE)))
+				goto done;
 			shrink_active_list(nr_to_scan, zone, sc, priority);
 		}
 
@@ -1256,12 +1272,15 @@ static unsigned long shrink_zone(int priority, struct zone *zone,
 			nr_to_scan = min(nr_inactive,
 					(unsigned long)sc->swap_cluster_max);
 			nr_inactive -= nr_to_scan;
+			if (unlikely(test_tsk_thread_flag(current, TIF_MEMDIE)))
+				goto done;
 			nr_reclaimed += shrink_inactive_list(nr_to_scan, zone,
 								sc);
 		}
 	}
 
 	throttle_vm_writeout(sc->gfp_mask);
+done:
 	return nr_reclaimed;
 }
 
@@ -1317,6 +1336,9 @@ static unsigned long shrink_zones(int priority, struct zonelist *zonelist,
 		}
 
 		nr_reclaimed += shrink_zone(priority, zone, sc);
+
+		if (unlikely(test_tsk_thread_flag(current, TIF_MEMDIE)))
+			break;
 	}
 
 	return nr_reclaimed;
@@ -1351,10 +1373,13 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 	struct zone *zone;
 	enum zone_type high_zoneidx = gfp_zone(sc->gfp_mask);
 
+	KSTAT_PERF_ENTER(ttfp);
 	delayacct_freepages_start();
 
 	if (scan_global_lru(sc))
 		count_vm_event(ALLOCSTALL);
+
+	ub_oom_start();
 	/*
 	 * mem_cgroup will not do shrink_slab.
 	 */
@@ -1404,6 +1429,11 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 			sc->may_writepage = 1;
 		}
 
+		if (unlikely(test_tsk_thread_flag(current, TIF_MEMDIE))) {
+			ret = 1;
+			goto out;
+		}
+
 		/* Take a nap, wait for some writeback to complete */
 		if (sc->nr_scanned && priority < DEF_PRIORITY - 2)
 			congestion_wait(WRITE, HZ/10);
@@ -1435,6 +1465,7 @@ out:
 
 	delayacct_freepages_end();
 
+	KSTAT_PERF_LEAVE(ttfp);
 	return ret;
 }
 

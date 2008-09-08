@@ -405,7 +405,8 @@ static void show_fault_oops(struct pt_regs *regs, unsigned long error_code,
 		printk(KERN_CONT "paging request");
 	printk(KERN_CONT " at %p\n", (void *) address);
 	printk(KERN_ALERT "IP:");
-	printk_address(regs->ip, 1);
+	if (decode_call_traces)
+		printk_address(regs->ip, 1);
 	dump_pagetable(address);
 }
 
@@ -571,7 +572,7 @@ static int vmalloc_fault(unsigned long address)
 #endif
 }
 
-int show_unhandled_signals = 1;
+int show_unhandled_signals = 0;
 
 /*
  * This routine handles page faults.  It determines the address,
@@ -678,7 +679,6 @@ void __kprobes do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	 */
 	if (user_mode_vm(regs))
 		error_code |= PF_USER;
-again:
 #endif
 	/* When running in the kernel we expect faults to occur only to
 	 * addresses in user space.  All other faults represent errors in the
@@ -744,7 +744,6 @@ good_area:
 	}
 
 #ifdef CONFIG_X86_32
-survive:
 #endif
 	/*
 	 * If for any reason at all we couldn't handle the fault,
@@ -804,7 +803,7 @@ bad_area_nosemaphore:
 
 		if (show_unhandled_signals && unhandled_signal(tsk, SIGSEGV) &&
 		    printk_ratelimit()) {
-			printk(
+			ve_printk(VE_LOG,
 			"%s%s[%d]: segfault at %lx ip %p sp %p error %lx",
 			task_pid_nr(tsk) > 1 ? KERN_INFO : KERN_EMERG,
 			tsk->comm, task_pid_nr(tsk), address,
@@ -878,19 +877,14 @@ no_context:
  */
 out_of_memory:
 	up_read(&mm->mmap_sem);
-	if (is_global_init(tsk)) {
-		yield();
-#ifdef CONFIG_X86_32
-		down_read(&mm->mmap_sem);
-		goto survive;
-#else
-		goto again;
-#endif
+	if (error_code & PF_USER) {
+		/*
+		 * 0-order allocation always success if something really
+		 * fatal not happen: beancounter overdraft or OOM.
+		 */
+		force_sig(SIGKILL, tsk);
+		return;
 	}
-
-	printk("VM: killing process %s\n", tsk->comm);
-	if (error_code & PF_USER)
-		do_group_exit(SIGKILL);
 	goto no_context;
 
 do_sigbus:

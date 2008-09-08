@@ -24,4 +24,12 @@ struct ipt_recent_info {
 	u_int8_t    side;
 };
 
+#ifdef __KERNEL__
+struct ve_ipt_recent {
+	struct list_head	tables;
+#ifdef CONFIG_PROC_FS
+	struct proc_dir_entry	*proc_dir;
+#endif
+};
+#endif
 #endif /*_IPT_RECENT_H*/

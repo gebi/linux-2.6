@@ -14,6 +14,8 @@
 #include <linux/syscalls.h>
 #include <linux/freezer.h>
 
+static atomic_t global_suspend = ATOMIC_INIT(0);
+
 /* 
  * Timeout for stopping processes
  */
@@ -23,7 +25,9 @@ static inline int freezeable(struct task_struct * p)
 {
 	if ((p == current) ||
 	    (p->flags & PF_NOFREEZE) ||
-	    (p->exit_state != 0))
+	    (p->exit_state != 0) ||
+	    (p->state == TASK_STOPPED) ||
+	    (p->state == TASK_TRACED))
 		return 0;
 	return 1;
 }
@@ -47,6 +51,28 @@ void refrigerator(void)
 	   processes around? */
 	long save;
 
+#if defined(CONFIG_VZ_CHECKPOINT) || defined(CONFIG_VZ_CHECKPOINT_MODULE)
+	save = current->state;
+	current->state = TASK_UNINTERRUPTIBLE;
+
+	spin_lock_irq(&current->sighand->siglock);
+	if (test_and_clear_thread_flag(TIF_FREEZE)) {
+		recalc_sigpending(); /* We sent fake signal, clean it up */
+		if (atomic_read(&global_suspend) ||
+				atomic_read(&get_exec_env()->suspend))
+			current->flags |= PF_FROZEN;
+		else
+			current->state = save;
+	} else {
+		/* Freeze request could be canceled before we entered
+		 * refrigerator(). In this case we do nothing. */
+		current->state = save;
+	}
+	spin_unlock_irq(&current->sighand->siglock);
+
+	while (current->flags & PF_FROZEN)
+		schedule();
+#else
 	task_lock(current);
 	if (freezing(current)) {
 		frozen_process();
@@ -68,6 +94,7 @@ void refrigerator(void)
 			break;
 		schedule();
 	}
+#endif
 	pr_debug("%s left refrigerator\n", current->comm);
 	__set_current_state(save);
 }
@@ -158,7 +185,7 @@ static int try_to_freeze_tasks(bool sig_only)
 	do {
 		todo = 0;
 		read_lock(&tasklist_lock);
-		do_each_thread(g, p) {
+		do_each_thread_all(g, p) {
 			if (frozen(p) || !freezeable(p))
 				continue;
 
@@ -174,7 +201,7 @@ static int try_to_freeze_tasks(bool sig_only)
 			if (!task_is_stopped_or_traced(p) &&
 			    !freezer_should_skip(p))
 				todo++;
-		} while_each_thread(g, p);
+		} while_each_thread_all(g, p);
 		read_unlock(&tasklist_lock);
 		yield();			/* Yield is okay here */
 		if (time_after(jiffies, end_time))
@@ -198,13 +225,13 @@ static int try_to_freeze_tasks(bool sig_only)
 				elapsed_csecs / 100, elapsed_csecs % 100, todo);
 		show_state();
 		read_lock(&tasklist_lock);
-		do_each_thread(g, p) {
+		do_each_thread_all(g, p) {
 			task_lock(p);
 			if (freezing(p) && !freezer_should_skip(p))
 				printk(KERN_ERR " %s\n", p->comm);
 			cancel_freezing(p);
 			task_unlock(p);
-		} while_each_thread(g, p);
+		} while_each_thread_all(g, p);
 		read_unlock(&tasklist_lock);
 	} else {
 		printk("(elapsed %d.%02d seconds) ", elapsed_csecs / 100,
@@ -221,6 +248,7 @@ int freeze_processes(void)
 {
 	int error;
 
+	atomic_inc(&global_suspend);
 	printk("Freezing user space processes ... ");
 	error = try_to_freeze_tasks(true);
 	if (error)
@@ -235,6 +263,7 @@ int freeze_processes(void)
  Exit:
 	BUG_ON(in_atomic());
 	printk("\n");
+	atomic_dec(&global_suspend);
 	return error;
 }
 
@@ -243,15 +272,17 @@ static void thaw_tasks(bool nosig_only)
 	struct task_struct *g, *p;
 
 	read_lock(&tasklist_lock);
-	do_each_thread(g, p) {
+	do_each_thread_all(g, p) {
 		if (!freezeable(p))
 			continue;
 
 		if (nosig_only && should_send_signal(p))
 			continue;
 
-		thaw_process(p);
-	} while_each_thread(g, p);
+		if (!thaw_process(p))
+			printk(KERN_WARNING " Strange, %s not stopped\n",
+				p->comm );
+	} while_each_thread_all(g, p);
 	read_unlock(&tasklist_lock);
 }
 

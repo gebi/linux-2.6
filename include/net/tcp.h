@@ -43,6 +43,13 @@
 #include <net/inet_ecn.h>
 
 #include <linux/seq_file.h>
+#include <bc/net.h>
+
+#define TCP_PAGE(sk)	(sk->sk_sndmsg_page)
+#define TCP_OFF(sk)	(sk->sk_sndmsg_off)
+
+#define TW_WSCALE_MASK		0x0f
+#define TW_WSCALE_SPEC		0x10
 
 extern struct inet_hashinfo tcp_hashinfo;
 
@@ -221,7 +228,9 @@ extern int sysctl_tcp_mem[3];
 extern int sysctl_tcp_wmem[3];
 extern int sysctl_tcp_rmem[3];
 extern int sysctl_tcp_app_win;
+#ifndef sysctl_tcp_adv_win_scale
 extern int sysctl_tcp_adv_win_scale;
+#endif
 extern int sysctl_tcp_tw_reuse;
 extern int sysctl_tcp_frto;
 extern int sysctl_tcp_frto_response;
@@ -236,6 +245,10 @@ extern int sysctl_tcp_base_mss;
 extern int sysctl_tcp_workaround_signed_windows;
 extern int sysctl_tcp_slow_start_after_idle;
 extern int sysctl_tcp_max_ssthresh;
+extern int sysctl_tcp_use_sg;
+extern int sysctl_tcp_max_tw_kmem_fraction;
+extern int sysctl_tcp_max_tw_buckets_ub;
+
 
 extern atomic_t tcp_memory_allocated;
 extern atomic_t tcp_sockets_allocated;
@@ -546,7 +559,11 @@ extern u32	__tcp_select_window(struct sock *sk);
  * to use only the low 32-bits of jiffies and hide the ugly
  * casts with the following macro.
  */
+#ifdef CONFIG_VE
+#define tcp_time_stamp		((__u32)(jiffies + get_exec_env()->jiffies_fixup))
+#else
 #define tcp_time_stamp		((__u32)(jiffies))
+#endif
 
 /* This is what the send packet queuing engine uses to pass
  * TCP per-packet control information to the transmission

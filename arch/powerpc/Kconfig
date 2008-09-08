@@ -833,7 +833,11 @@ source "arch/powerpc/sysdev/qe_lib/Kconfig"
 
 source "lib/Kconfig"
 
+source "kernel/bc/Kconfig"
+
 source "arch/powerpc/Kconfig.debug"
+
+source "kernel/Kconfig.openvz"
 
 source "security/Kconfig"
 

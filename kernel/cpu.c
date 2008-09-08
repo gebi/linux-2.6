@@ -176,7 +176,7 @@ static inline void check_for_tasks(int cpu)
 	struct task_struct *p;
 
 	write_lock_irq(&tasklist_lock);
-	for_each_process(p) {
+	for_each_process_all(p) {
 		if (task_cpu(p) == cpu &&
 		    (!cputime_eq(p->utime, cputime_zero) ||
 		     !cputime_eq(p->stime, cputime_zero)))

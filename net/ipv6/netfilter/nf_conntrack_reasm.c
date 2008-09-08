@@ -145,11 +145,12 @@ static void nf_skb_free(struct sk_buff *skb)
 }
 
 /* Memory Tracking Functions. */
-static inline void frag_kfree_skb(struct sk_buff *skb, unsigned int *work)
+static inline void frag_kfree_skb(struct netns_frags *nf,
+		struct sk_buff *skb, unsigned int *work)
 {
 	if (work)
 		*work -= skb->truesize;
-	atomic_sub(skb->truesize, &nf_init_frags.mem);
+	atomic_sub(skb->truesize, &nf->mem);
 	nf_skb_free(skb);
 	kfree_skb(skb);
 }
@@ -169,10 +170,10 @@ static __inline__ void fq_kill(struct nf_ct_frag6_queue *fq)
 	inet_frag_kill(&fq->q, &nf_frags);
 }
 
-static void nf_ct_frag6_evictor(void)
+static void nf_ct_frag6_evictor(struct netns_frags *nf)
 {
 	local_bh_disable();
-	inet_frag_evictor(&nf_init_frags, &nf_frags);
+	inet_frag_evictor(nf, &nf_frags);
 	local_bh_enable();
 }
 
@@ -198,7 +199,7 @@ out:
 /* Creation primitives. */
 
 static __inline__ struct nf_ct_frag6_queue *
-fq_find(__be32 id, struct in6_addr *src, struct in6_addr *dst)
+fq_find(struct net *net, __be32 id, struct in6_addr *src, struct in6_addr *dst)
 {
 	struct inet_frag_queue *q;
 	struct ip6_create_arg arg;
@@ -211,7 +212,7 @@ fq_find(__be32 id, struct in6_addr *src, struct in6_addr *dst)
 	read_lock_bh(&nf_frags.lock);
 	hash = ip6qhashfn(id, src, dst);
 
-	q = inet_frag_find(&nf_init_frags, &nf_frags, &arg, hash);
+	q = inet_frag_find(&net->ipv6.ct_frags, &nf_frags, &arg, hash);
 	local_bh_enable();
 	if (q == NULL)
 		goto oom;
@@ -224,7 +225,8 @@ oom:
 }
 
 
-static int nf_ct_frag6_queue(struct nf_ct_frag6_queue *fq, struct sk_buff *skb,
+static int nf_ct_frag6_queue(struct net *net, struct nf_ct_frag6_queue *fq,
+		struct sk_buff *skb,
 			     const struct frag_hdr *fhdr, int nhoff)
 {
 	struct sk_buff *prev, *next;
@@ -365,7 +367,7 @@ static int nf_ct_frag6_queue(struct nf_ct_frag6_queue *fq, struct sk_buff *skb,
 				fq->q.fragments = next;
 
 			fq->q.meat -= free_it->len;
-			frag_kfree_skb(free_it, NULL);
+			frag_kfree_skb(fq->q.net, free_it, NULL);
 		}
 	}
 
@@ -381,7 +383,7 @@ static int nf_ct_frag6_queue(struct nf_ct_frag6_queue *fq, struct sk_buff *skb,
 	skb->dev = NULL;
 	fq->q.stamp = skb->tstamp;
 	fq->q.meat += skb->len;
-	atomic_add(skb->truesize, &nf_init_frags.mem);
+	atomic_add(skb->truesize, &net->ipv6.ct_frags.mem);
 
 	/* The first fragment.
 	 * nhoffset is obtained from the first fragment, of course.
@@ -391,7 +393,7 @@ static int nf_ct_frag6_queue(struct nf_ct_frag6_queue *fq, struct sk_buff *skb,
 		fq->q.last_in |= INET_FRAG_FIRST_IN;
 	}
 	write_lock(&nf_frags.lock);
-	list_move_tail(&fq->q.lru_list, &nf_init_frags.lru_list);
+	list_move_tail(&fq->q.lru_list, &net->ipv6.ct_frags.lru_list);
 	write_unlock(&nf_frags.lock);
 	return 0;
 
@@ -409,7 +411,8 @@ err:
  *	the last and the first frames arrived and all the bits are here.
  */
 static struct sk_buff *
-nf_ct_frag6_reasm(struct nf_ct_frag6_queue *fq, struct net_device *dev)
+nf_ct_frag6_reasm(struct net *net, struct nf_ct_frag6_queue *fq,
+		struct net_device *dev)
 {
 	struct sk_buff *fp, *op, *head = fq->q.fragments;
 	int    payload_len;
@@ -458,7 +461,7 @@ nf_ct_frag6_reasm(struct nf_ct_frag6_queue *fq, struct net_device *dev)
 		clone->ip_summed = head->ip_summed;
 
 		NFCT_FRAG6_CB(clone)->orig = NULL;
-		atomic_add(clone->truesize, &nf_init_frags.mem);
+		atomic_add(clone->truesize, &net->ipv6.ct_frags.mem);
 	}
 
 	/* We have to remove fragment header from datagram and to relocate
@@ -472,7 +475,7 @@ nf_ct_frag6_reasm(struct nf_ct_frag6_queue *fq, struct net_device *dev)
 	skb_shinfo(head)->frag_list = head->next;
 	skb_reset_transport_header(head);
 	skb_push(head, head->data - skb_network_header(head));
-	atomic_sub(head->truesize, &nf_init_frags.mem);
+	atomic_sub(head->truesize, &net->ipv6.ct_frags.mem);
 
 	for (fp=head->next; fp; fp = fp->next) {
 		head->data_len += fp->len;
@@ -482,7 +485,7 @@ nf_ct_frag6_reasm(struct nf_ct_frag6_queue *fq, struct net_device *dev)
 		else if (head->ip_summed == CHECKSUM_COMPLETE)
 			head->csum = csum_add(head->csum, fp->csum);
 		head->truesize += fp->truesize;
-		atomic_sub(fp->truesize, &nf_init_frags.mem);
+		atomic_sub(fp->truesize, &net->ipv6.ct_frags.mem);
 	}
 
 	head->next = NULL;
@@ -599,6 +602,7 @@ struct sk_buff *nf_ct_frag6_gather(struct sk_buff *skb)
 	int fhoff, nhoff;
 	u8 prevhdr;
 	struct sk_buff *ret_skb = NULL;
+	struct net *net = dev_net(dev);
 
 	/* Jumbo payload inhibits frag. header */
 	if (ipv6_hdr(skb)->payload_len == 0) {
@@ -632,10 +636,11 @@ struct sk_buff *nf_ct_frag6_gather(struct sk_buff *skb)
 		goto ret_orig;
 	}
 
-	if (atomic_read(&nf_init_frags.mem) > nf_init_frags.high_thresh)
-		nf_ct_frag6_evictor();
+	if (atomic_read(&net->ipv6.ct_frags.mem) >
+			net->ipv6.ct_frags.high_thresh)
+		nf_ct_frag6_evictor(&net->ipv6.ct_frags);
 
-	fq = fq_find(fhdr->identification, &hdr->saddr, &hdr->daddr);
+	fq = fq_find(net, fhdr->identification, &hdr->saddr, &hdr->daddr);
 	if (fq == NULL) {
 		pr_debug("Can't find and can't create new queue\n");
 		goto ret_orig;
@@ -643,7 +648,7 @@ struct sk_buff *nf_ct_frag6_gather(struct sk_buff *skb)
 
 	spin_lock_bh(&fq->q.lock);
 
-	if (nf_ct_frag6_queue(fq, clone, fhdr, nhoff) < 0) {
+	if (nf_ct_frag6_queue(net, fq, clone, fhdr, nhoff) < 0) {
 		spin_unlock_bh(&fq->q.lock);
 		pr_debug("Can't insert skb to queue\n");
 		fq_put(fq);
@@ -652,7 +657,7 @@ struct sk_buff *nf_ct_frag6_gather(struct sk_buff *skb)
 
 	if (fq->q.last_in == (INET_FRAG_FIRST_IN | INET_FRAG_LAST_IN) &&
 	    fq->q.meat == fq->q.len) {
-		ret_skb = nf_ct_frag6_reasm(fq, dev);
+		ret_skb = nf_ct_frag6_reasm(net, fq, dev);
 		if (ret_skb == NULL)
 			pr_debug("Can't reassemble fragmented packets\n");
 	}
@@ -687,8 +692,32 @@ void nf_ct_frag6_output(unsigned int hooknum, struct sk_buff *skb,
 	nf_conntrack_put_reasm(skb);
 }
 
+static int nf_ct_frag6_init_net(struct net *net)
+{
+	struct netns_frags *frags = &net->ipv6.ct_frags;
+
+	frags->timeout = IPV6_FRAG_TIMEOUT;
+	frags->high_thresh = 256 * 1024;
+	frags->low_thresh = 192 * 1024;
+	inet_frags_init_net(frags);
+
+	return 0; /* FIXME : sysctls */
+}
+
+static void nf_ct_frag6_exit_net(struct net *net)
+{
+	inet_frags_exit_net(&net->ipv6.ct_frags, &nf_frags);
+}
+
+static struct pernet_operations nf_ct_frag6_ops = {
+	.init = nf_ct_frag6_init_net,
+	.exit = nf_ct_frag6_exit_net,
+};
+
 int nf_ct_frag6_init(void)
 {
+	register_pernet_subsys(&nf_ct_frag6_ops);
+
 	nf_frags.hashfn = nf_hashfn;
 	nf_frags.constructor = ip6_frag_init;
 	nf_frags.destructor = NULL;
@@ -697,10 +726,6 @@ int nf_ct_frag6_init(void)
 	nf_frags.match = ip6_frag_match;
 	nf_frags.frag_expire = nf_ct_frag6_expire;
 	nf_frags.secret_interval = 10 * 60 * HZ;
-	nf_init_frags.timeout = IPV6_FRAG_TIMEOUT;
-	nf_init_frags.high_thresh = 256 * 1024;
-	nf_init_frags.low_thresh = 192 * 1024;
-	inet_frags_init_net(&nf_init_frags);
 	inet_frags_init(&nf_frags);
 
 	return 0;
@@ -709,7 +734,5 @@ int nf_ct_frag6_init(void)
 void nf_ct_frag6_cleanup(void)
 {
 	inet_frags_fini(&nf_frags);
-
-	nf_init_frags.low_thresh = 0;
-	nf_ct_frag6_evictor();
+	unregister_pernet_subsys(&nf_ct_frag6_ops);
 }

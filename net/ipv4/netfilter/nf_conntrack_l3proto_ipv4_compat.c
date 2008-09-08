@@ -9,7 +9,9 @@
  */
 #include <linux/types.h>
 #include <linux/proc_fs.h>
+#include <linux/nsproxy.h>
 #include <linux/seq_file.h>
+#include <linux/sysctl.h>
 #include <linux/percpu.h>
 #include <net/net_namespace.h>
 
@@ -32,7 +34,7 @@ static struct hlist_node *ct_get_first(struct seq_file *seq)
 	for (st->bucket = 0;
 	     st->bucket < nf_conntrack_htable_size;
 	     st->bucket++) {
-		n = rcu_dereference(nf_conntrack_hash[st->bucket].first);
+		n = rcu_dereference(ve_nf_conntrack_hash[st->bucket].first);
 		if (n)
 			return n;
 	}
@@ -48,7 +50,7 @@ static struct hlist_node *ct_get_next(struct seq_file *seq,
 	while (head == NULL) {
 		if (++st->bucket >= nf_conntrack_htable_size)
 			return NULL;
-		head = rcu_dereference(nf_conntrack_hash[st->bucket].first);
+		head = rcu_dereference(ve_nf_conntrack_hash[st->bucket].first);
 	}
 	return head;
 }
@@ -181,7 +183,7 @@ static struct hlist_node *ct_expect_get_first(struct seq_file *seq)
 	struct hlist_node *n;
 
 	for (st->bucket = 0; st->bucket < nf_ct_expect_hsize; st->bucket++) {
-		n = rcu_dereference(nf_ct_expect_hash[st->bucket].first);
+		n = rcu_dereference(ve_nf_ct_expect_hash[st->bucket].first);
 		if (n)
 			return n;
 	}
@@ -197,7 +199,7 @@ static struct hlist_node *ct_expect_get_next(struct seq_file *seq,
 	while (head == NULL) {
 		if (++st->bucket >= nf_ct_expect_hsize)
 			return NULL;
-		head = rcu_dereference(nf_ct_expect_hash[st->bucket].first);
+		head = rcu_dereference(ve_nf_ct_expect_hash[st->bucket].first);
 	}
 	return head;
 }
@@ -314,7 +316,7 @@ static void ct_cpu_seq_stop(struct seq_file *seq, void *v)
 
 static int ct_cpu_seq_show(struct seq_file *seq, void *v)
 {
-	unsigned int nr_conntracks = atomic_read(&nf_conntrack_count);
+	unsigned int nr_conntracks = atomic_read(&ve_nf_conntrack_count);
 	const struct ip_conntrack_stat *st = v;
 
 	if (v == SEQ_START_TOKEN) {
@@ -365,36 +367,91 @@ static const struct file_operations ct_cpu_seq_fops = {
 	.release = seq_release,
 };
 
-int __init nf_conntrack_ipv4_compat_init(void)
-{
-	struct proc_dir_entry *proc, *proc_exp, *proc_stat;
+#ifdef CONFIG_VE_IPTABLES
+#define ve_ip_ct_netfilter_table	(get_exec_env()->_nf_conntrack->_ip_ct_netfilter_table)
+#define ve_ip_ct_sysctl_header		(get_exec_env()->_nf_conntrack->_ip_ct_sysctl_header)
+#else
+#define ve_ip_ct_netfilter_table	ip_ct_netfilter_table
+#define ve_ip_ct_sysctl_header		ip_ct_sysctl_header
+#endif
 
-	proc = proc_net_fops_create(&init_net, "ip_conntrack", 0440, &ct_file_ops);
+static ctl_table ip_ct_netfilter_table[] = {
+	{
+		.procname	= "ip_conntrack_max",
+		.data		= &nf_conntrack_max,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{}
+};
+
+static struct ctl_path ip_ct_net_table_path[] = {
+	{ .procname = "net", .ctl_name = CTL_NET, },
+	{ .procname = "ipv4", .ctl_name = NET_IPV4, },
+	{},
+};
+
+int nf_conntrack_ipv4_compat_init(void)
+{
+	struct net *net = get_exec_env()->ve_netns;
+	struct proc_dir_entry *proc, *proc_exp, *proc_stat;
+	static ctl_table *table;
+
+	proc = proc_net_fops_create(net, "ip_conntrack", 0440, &ct_file_ops);
 	if (!proc)
 		goto err1;
 
-	proc_exp = proc_net_fops_create(&init_net, "ip_conntrack_expect", 0440,
+	proc_exp = proc_net_fops_create(net, "ip_conntrack_expect", 0440,
 					&ip_exp_file_ops);
 	if (!proc_exp)
 		goto err2;
 
 	proc_stat = proc_create("ip_conntrack", S_IRUGO,
-				init_net.proc_net_stat, &ct_cpu_seq_fops);
+				net->proc_net_stat, &ct_cpu_seq_fops);
 	if (!proc_stat)
 		goto err3;
+
+	table = ip_ct_netfilter_table;
+	if (net != &init_net) {
+		 table = kmemdup(table,
+				 sizeof(ip_ct_netfilter_table),
+				 GFP_KERNEL);
+		if (!table)
+			goto err4;
+	}
+
+	table[0].data = &ve_nf_conntrack_max;
+	ve_ip_ct_sysctl_header = register_net_sysctl_table(net,
+							   ip_ct_net_table_path,
+							   table);
+	if (!ve_ip_ct_sysctl_header)
+		goto err5;
+
 	return 0;
 
+err5:
+	if (net != &init_net)
+		kfree(table);
+err4:
+	remove_proc_entry("ip_conntrack", net->proc_net_stat);
 err3:
-	proc_net_remove(&init_net, "ip_conntrack_expect");
+	proc_net_remove(net, "ip_conntrack_expect");
 err2:
-	proc_net_remove(&init_net, "ip_conntrack");
+	proc_net_remove(net, "ip_conntrack");
 err1:
 	return -ENOMEM;
 }
 
-void __exit nf_conntrack_ipv4_compat_fini(void)
+void nf_conntrack_ipv4_compat_fini(void)
 {
-	remove_proc_entry("ip_conntrack", init_net.proc_net_stat);
-	proc_net_remove(&init_net, "ip_conntrack_expect");
-	proc_net_remove(&init_net, "ip_conntrack");
+	struct net *net = get_exec_env()->ve_netns;
+	struct ctl_table *table = ve_ip_ct_sysctl_header->ctl_table_arg;
+
+	unregister_net_sysctl_table(ve_ip_ct_sysctl_header);
+	if (net != &init_net)
+		kfree(table);
+	remove_proc_entry("ip_conntrack", net->proc_net_stat);
+	proc_net_remove(net, "ip_conntrack_expect");
+	proc_net_remove(net, "ip_conntrack");
 }

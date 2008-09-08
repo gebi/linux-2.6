@@ -53,6 +53,8 @@ enum {LAST_NORM, LAST_ROOT, LAST_DOT, LAST_DOTDOT, LAST_BIND};
  */
 #define LOOKUP_OPEN		(0x0100)
 #define LOOKUP_CREATE		(0x0200)
+#define LOOKUP_NOAREACHECK	(0x1000)	/* no area check on lookup */
+#define LOOKUP_STRICT		(0x2000)	/* no symlinks or other filesystems */
 
 extern int user_path_at(int, const char __user *, unsigned, struct path *);
 

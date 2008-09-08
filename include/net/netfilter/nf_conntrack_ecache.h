@@ -34,6 +34,9 @@ nf_conntrack_event_cache(enum ip_conntrack_events event,
 	struct nf_conn *ct = (struct nf_conn *)skb->nfct;
 	struct nf_conntrack_ecache *ecache;
 
+	if (!ve_is_super(get_exec_env()))
+		return;
+
 	local_bh_disable();
 	ecache = &__get_cpu_var(nf_conntrack_ecache);
 	if (ct != ecache->ct)
@@ -45,7 +48,7 @@ nf_conntrack_event_cache(enum ip_conntrack_events event,
 static inline void nf_conntrack_event(enum ip_conntrack_events event,
 				      struct nf_conn *ct)
 {
-	if (nf_ct_is_confirmed(ct) && !nf_ct_is_dying(ct))
+	if (nf_ct_is_confirmed(ct) && !nf_ct_is_dying(ct) && ve_is_super(get_exec_env()))
 		atomic_notifier_call_chain(&nf_conntrack_chain, event, ct);
 }
 
@@ -57,7 +60,8 @@ static inline void
 nf_ct_expect_event(enum ip_conntrack_expect_events event,
 		   struct nf_conntrack_expect *exp)
 {
-	atomic_notifier_call_chain(&nf_ct_expect_chain, event, exp);
+	if (ve_is_super(get_exec_env()))
+		atomic_notifier_call_chain(&nf_ct_expect_chain, event, exp);
 }
 
 #else /* CONFIG_NF_CONNTRACK_EVENTS */

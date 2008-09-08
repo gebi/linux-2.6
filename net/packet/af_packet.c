@@ -78,6 +78,8 @@
 #include <linux/module.h>
 #include <linux/init.h>
 
+#include <bc/net.h>
+
 #ifdef CONFIG_INET
 #include <net/inet_common.h>
 #endif
@@ -493,6 +495,8 @@ static int packet_rcv(struct sk_buff *skb, struct net_device *dev, struct packet
 	if (dev_net(dev) != sock_net(sk))
 		goto drop;
 
+	skb_orphan(skb);
+
 	skb->dev = dev;
 
 	if (dev->header_ops) {
@@ -556,6 +560,9 @@ static int packet_rcv(struct sk_buff *skb, struct net_device *dev, struct packet
 	if (pskb_trim(skb, snaplen))
 		goto drop_n_acct;
 
+	if (ub_sockrcvbuf_charge(sk, skb))
+		goto drop_n_acct;
+
 	skb_set_owner_r(skb, sk);
 	skb->dev = NULL;
 	dst_release(skb->dst);
@@ -615,6 +622,8 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev, struct packe
 	if (dev_net(dev) != sock_net(sk))
 		goto drop;
 
+	skb_orphan(skb);
+
 	if (dev->header_ops) {
 		if (sk->sk_type != SOCK_DGRAM)
 			skb_push(skb, skb->data - skb_mac_header(skb));
@@ -662,6 +671,12 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev, struct packe
 		snaplen = po->frame_size - macoff;
 		if ((int)snaplen < 0)
 			snaplen = 0;
+	}
+
+	if (copy_skb &&
+	    ub_sockrcvbuf_charge(sk, copy_skb)) {
+		spin_lock(&sk->sk_receive_queue.lock);
+		goto ring_is_full;
 	}
 
 	spin_lock(&sk->sk_receive_queue.lock);
@@ -1049,6 +1064,8 @@ static int packet_create(struct net *net, struct socket *sock, int protocol)
 	sk = sk_alloc(net, PF_PACKET, GFP_KERNEL, &packet_proto);
 	if (sk == NULL)
 		goto out;
+	if (ub_other_sock_charge(sk))
+		goto out_free;
 
 	sock->ops = &packet_ops;
 	if (sock->type == SOCK_PACKET)
@@ -1086,6 +1103,9 @@ static int packet_create(struct net *net, struct socket *sock, int protocol)
 	sk_add_node(sk, &net->packet.sklist);
 	write_unlock_bh(&net->packet.sklist_lock);
 	return(0);
+
+out_free:
+	sk_free(sk);
 out:
 	return err;
 }

@@ -22,6 +22,9 @@
 #include <asm/uaccess.h>
 #include <asm/tlbflush.h>
 
+#include <bc/kmem.h>
+#include <bc/debug.h>
+
 
 DEFINE_RWLOCK(vmlist_lock);
 struct vm_struct *vmlist;
@@ -334,6 +337,70 @@ static struct vm_struct *__find_vm_area(const void *addr)
 	return tmp;
 }
 
+struct vm_struct * get_vm_area_best(unsigned long size, unsigned long flags)
+{
+	unsigned long addr, best_addr, delta, best_delta;
+	struct vm_struct **p, **best_p, *tmp, *area;
+
+	area = kmalloc(sizeof(*area), GFP_KERNEL);
+	if (!area)
+		return NULL;
+
+	size += PAGE_SIZE; /* one-page gap at the end */
+	addr = VMALLOC_START;
+	best_addr = 0UL;
+	best_p = NULL;
+	best_delta = PAGE_ALIGN(VMALLOC_END) - VMALLOC_START;
+
+	write_lock(&vmlist_lock);
+	for (p = &vmlist; (tmp = *p) &&
+			(tmp->addr <= (void *)PAGE_ALIGN(VMALLOC_END));
+			p = &tmp->next) {
+		if ((unsigned long)tmp->addr < addr)
+			continue;
+		if ((size + addr) < addr)
+			break;
+		delta = (unsigned long) tmp->addr - (size + addr);
+		if (delta < best_delta) {
+			best_delta = delta;
+			best_addr = addr;
+			best_p = p;
+		}
+		addr = tmp->size + (unsigned long)tmp->addr;
+		if (addr > VMALLOC_END-size)
+			break;
+	}
+
+	if (!tmp || (tmp->addr > (void *)PAGE_ALIGN(VMALLOC_END))) {
+		/* check free area after list end */
+		delta = (unsigned long) PAGE_ALIGN(VMALLOC_END) - (size + addr);
+		if (delta < best_delta) {
+			best_delta = delta;
+			best_addr = addr;
+			best_p = p;
+		}
+	}
+	if (best_addr) {
+		area->flags = flags;
+		/* allocate at the end of this area */
+		area->addr = (void *)(best_addr + best_delta);
+		area->size = size;
+		area->next = *best_p;
+		area->pages = NULL;
+		area->nr_pages = 0;
+		area->phys_addr = 0;
+		*best_p = area;
+		/* check like in __vunmap */
+		WARN_ON((PAGE_SIZE - 1) & (unsigned long)area->addr);
+	} else {
+		kfree(area);
+		area = NULL;
+	}
+	write_unlock(&vmlist_lock);
+
+	return area;
+}
+
 /* Caller must hold vmlist_lock */
 static struct vm_struct *__remove_vm_area(const void *addr)
 {
@@ -373,7 +440,7 @@ struct vm_struct *remove_vm_area(const void *addr)
 	return v;
 }
 
-static void __vunmap(const void *addr, int deallocate_pages)
+static void __vunmap(const void *addr, int deallocate_pages, int uncharge)
 {
 	struct vm_struct *area;
 
@@ -398,6 +465,8 @@ static void __vunmap(const void *addr, int deallocate_pages)
 	if (deallocate_pages) {
 		int i;
 
+		if (uncharge)
+			dec_vmalloc_charged(area);
 		for (i = 0; i < area->nr_pages; i++) {
 			struct page *page = area->pages[i];
 
@@ -428,7 +497,7 @@ static void __vunmap(const void *addr, int deallocate_pages)
 void vfree(const void *addr)
 {
 	BUG_ON(in_interrupt());
-	__vunmap(addr, 1);
+	__vunmap(addr, 1, 1);
 }
 EXPORT_SYMBOL(vfree);
 
@@ -444,7 +513,7 @@ EXPORT_SYMBOL(vfree);
 void vunmap(const void *addr)
 {
 	BUG_ON(in_interrupt());
-	__vunmap(addr, 0);
+	__vunmap(addr, 0, 0);
 }
 EXPORT_SYMBOL(vunmap);
 
@@ -526,10 +595,12 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
 
 	if (map_vm_area(area, prot, &pages))
 		goto fail;
+
+	inc_vmalloc_charged(area, gfp_mask);
 	return area->addr;
 
 fail:
-	vfree(area->addr);
+	__vunmap(area->addr, 1, 0);
 	return NULL;
 }
 
@@ -576,6 +647,22 @@ void *__vmalloc(unsigned long size, gfp_t gfp_mask, pgprot_t prot)
 }
 EXPORT_SYMBOL(__vmalloc);
 
+static void *____vmalloc(unsigned long size, gfp_t mask, pgprot_t prot,
+		void *caller)
+{
+	struct vm_struct *area;
+
+	size = PAGE_ALIGN(size);
+	if (!size || (size >> PAGE_SHIFT) > num_physpages)
+		return NULL;
+
+	area = get_vm_area_best(size, VM_ALLOC);
+	if (!area)
+		return NULL;
+
+	return __vmalloc_area_node(area, mask, prot, -1, caller);
+}
+
 /**
  *	vmalloc  -  allocate virtually contiguous memory
  *	@size:		allocation size
@@ -591,6 +678,28 @@ void *vmalloc(unsigned long size)
 					-1, __builtin_return_address(0));
 }
 EXPORT_SYMBOL(vmalloc);
+
+void *ub_vmalloc(unsigned long size)
+{
+	return __vmalloc(size, GFP_KERNEL_UBC | __GFP_HIGHMEM, PAGE_KERNEL);
+}
+EXPORT_SYMBOL(ub_vmalloc);
+
+void *vmalloc_best(unsigned long size)
+{
+	return ____vmalloc(size, GFP_KERNEL | __GFP_HIGHMEM, PAGE_KERNEL,
+			__builtin_return_address(0));
+}
+
+EXPORT_SYMBOL(vmalloc_best);
+
+void *ub_vmalloc_best(unsigned long size)
+{
+	return ____vmalloc(size, GFP_KERNEL_UBC | __GFP_HIGHMEM, PAGE_KERNEL,
+			__builtin_return_address(0));
+}
+
+EXPORT_SYMBOL(ub_vmalloc_best);
 
 /**
  * vmalloc_user - allocate zeroed virtually contiguous memory for userspace
@@ -632,6 +741,13 @@ void *vmalloc_node(unsigned long size, int node)
 					node, __builtin_return_address(0));
 }
 EXPORT_SYMBOL(vmalloc_node);
+
+void *ub_vmalloc_node(unsigned long size, int node)
+{
+	return __vmalloc_node(size, GFP_KERNEL_UBC | __GFP_HIGHMEM, PAGE_KERNEL,
+					node, __builtin_return_address(0));
+}
+EXPORT_SYMBOL(ub_vmalloc_node);
 
 #ifndef PAGE_KERNEL_EXEC
 # define PAGE_KERNEL_EXEC PAGE_KERNEL
@@ -896,6 +1012,39 @@ void free_vm_area(struct vm_struct *area)
 }
 EXPORT_SYMBOL_GPL(free_vm_area);
 
+void vprintstat(void)
+{
+	struct vm_struct *p, *last_p = NULL;
+	unsigned long addr, size, free_size, max_free_size;
+	int num;
+
+	addr = VMALLOC_START;
+	size = max_free_size = 0;
+	num = 0;
+
+	read_lock(&vmlist_lock);
+	for (p = vmlist; p; p = p->next) {
+		free_size = (unsigned long)p->addr - addr;
+		if (free_size > max_free_size)
+			max_free_size = free_size;
+		addr = (unsigned long)p->addr + p->size;
+		size += p->size;
+		++num;
+		last_p = p;
+	}
+	if (last_p) {
+		free_size = VMALLOC_END -
+			((unsigned long)last_p->addr + last_p->size);
+		if (free_size > max_free_size)
+			max_free_size = free_size;
+	}
+	read_unlock(&vmlist_lock);
+
+	printk("VMALLOC Used: %luKB Total: %luKB Entries: %d\n"
+		"    Max_Free: %luKB Start: %lx End: %lx\n",
+		size/1024, (VMALLOC_END - VMALLOC_START)/1024, num,
+		max_free_size/1024, VMALLOC_START, VMALLOC_END);
+}
 
 #ifdef CONFIG_PROC_FS
 static void *s_start(struct seq_file *m, loff_t *pos)

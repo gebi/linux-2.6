@@ -28,6 +28,10 @@
 
 #include <net/netfilter/nf_conntrack_tuple.h>
 
+#ifdef CONFIG_VE_IPTABLES
+#include <linux/ve.h>
+#endif
+
 /* per conntrack: protocol private data */
 union nf_conntrack_proto {
 	/* insert conntrack proto private data here */
@@ -125,6 +129,10 @@ struct nf_conn
 	struct nf_ct_ext *ext;
 
 	struct rcu_head rcu;
+
+#ifdef CONFIG_VE_IPTABLES
+	struct ve_struct *ct_owner_env;
+#endif
 };
 
 static inline struct nf_conn *
@@ -187,6 +195,11 @@ __nf_conntrack_find(const struct nf_conntrack_tuple *tuple);
 extern void nf_conntrack_hash_insert(struct nf_conn *ct);
 
 extern void nf_conntrack_flush(void);
+
+struct nf_conntrack_helper * nf_ct_helper_find_get( const struct nf_conntrack_tuple *tuple);
+void nf_ct_helper_put(struct nf_conntrack_helper *helper);
+
+struct nf_conntrack_helper * __nf_conntrack_helper_find_byname(const char *name);
 
 extern bool nf_ct_get_tuplepr(const struct sk_buff *skb,
 			      unsigned int nhoff, u_int16_t l3num,
@@ -253,6 +266,7 @@ extern void nf_conntrack_free(struct nf_conn *ct);
 extern struct nf_conn *
 nf_conntrack_alloc(const struct nf_conntrack_tuple *orig,
 		   const struct nf_conntrack_tuple *repl,
+		   struct user_beancounter *,
 		   gfp_t gfp);
 
 /* It's confirmed if it is, or has been in the hash table. */
@@ -276,6 +290,8 @@ extern unsigned int nf_conntrack_htable_size;
 extern int nf_conntrack_checksum;
 extern atomic_t nf_conntrack_count;
 extern int nf_conntrack_max;
+extern int nf_conntrack_disable_ve0;
+extern int ip_conntrack_disable_ve0;
 
 DECLARE_PER_CPU(struct ip_conntrack_stat, nf_conntrack_stat);
 #define NF_CT_STAT_INC(count) (__get_cpu_var(nf_conntrack_stat).count++)

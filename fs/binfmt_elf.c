@@ -432,7 +432,7 @@ static unsigned long load_elf_interp(struct elfhdr *interp_elf_ex,
 	eppnt = elf_phdata;
 	for (i = 0; i < interp_elf_ex->e_phnum; i++, eppnt++) {
 		if (eppnt->p_type == PT_LOAD) {
-			int elf_type = MAP_PRIVATE | MAP_DENYWRITE;
+			int elf_type = MAP_PRIVATE|MAP_DENYWRITE|MAP_EXECPRIO;
 			int elf_prot = 0;
 			unsigned long vaddr = 0;
 			unsigned long k, map_addr;
@@ -814,7 +814,8 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 		if (elf_ppnt->p_flags & PF_X)
 			elf_prot |= PROT_EXEC;
 
-		elf_flags = MAP_PRIVATE | MAP_DENYWRITE | MAP_EXECUTABLE;
+		elf_flags = MAP_PRIVATE | MAP_DENYWRITE |
+				MAP_EXECUTABLE | MAP_EXECPRIO;
 
 		vaddr = elf_ppnt->p_vaddr;
 		if (loc->elf_ex.e_type == ET_EXEC || load_addr_set) {
@@ -949,7 +950,7 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 	set_binfmt(&elf_format);
 
 #ifdef ARCH_HAS_SETUP_ADDITIONAL_PAGES
-	retval = arch_setup_additional_pages(bprm, executable_stack);
+	retval = arch_setup_additional_pages(bprm, executable_stack, 0);
 	if (retval < 0) {
 		send_sig(SIGKILL, current, 0);
 		goto out;

@@ -97,6 +97,7 @@ extern struct nf_conntrack_l4proto nf_conntrack_l4proto_udp6;
 extern struct nf_conntrack_l4proto nf_conntrack_l4proto_generic;
 
 #define MAX_NF_CT_PROTO 256
+extern struct nf_conntrack_l4proto **nf_ct_protos[PF_MAX];
 
 extern struct nf_conntrack_l4proto *
 __nf_ct_l4proto_find(u_int16_t l3proto, u_int8_t l4proto);
@@ -117,16 +118,142 @@ extern int nf_ct_port_nlattr_to_tuple(struct nlattr *tb[],
 				      struct nf_conntrack_tuple *t);
 extern const struct nla_policy nf_ct_port_nla_policy[];
 
+#ifdef CONFIG_SYSCTL
 /* Log invalid packets */
 extern unsigned int nf_ct_log_invalid;
+#endif
+
+#ifdef CONFIG_VE_IPTABLES
+#include <linux/sched.h>
+#define ve_nf_ct4			(get_exec_env()->_nf_conntrack)
+#endif
+
+#if defined(CONFIG_VE_IPTABLES) && defined(CONFIG_SYSCTL)
+
+#define ve_nf_ct_protos			(ve_nf_ct4->_nf_ct_protos)
+#define ve_nf_conntrack_l4proto_icmp	(ve_nf_ct4->_nf_conntrack_l4proto_icmp)
+#define ve_nf_conntrack_l4proto_icmpv6	\
+				(ve_nf_ct4->_nf_conntrack_l4proto_icmpv6)
+#define ve_nf_conntrack_l4proto_tcp4	(ve_nf_ct4->_nf_conntrack_l4proto_tcp4)
+#define ve_nf_conntrack_l4proto_tcp6	(ve_nf_ct4->_nf_conntrack_l4proto_tcp6)
+#define ve_nf_conntrack_l4proto_udp4	(ve_nf_ct4->_nf_conntrack_l4proto_udp4)
+#define ve_nf_conntrack_l4proto_udp6	(ve_nf_ct4->_nf_conntrack_l4proto_udp6)
+#define ve_nf_conntrack_l4proto_generic		\
+				(ve_nf_ct4->_nf_conntrack_l4proto_generic)
+#define ve_nf_ct_log_invalid		(ve_nf_ct4->_nf_ct_log_invalid)
+/* TCP: */
+#define ve_nf_ct_tcp_timeouts		(ve_nf_ct4->_nf_ct_tcp_timeouts)
+#define ve_nf_ct_tcp_timeout_max_retrans	\
+				(ve_nf_ct4->_nf_ct_tcp_timeout_max_retrans)
+#define ve_nf_ct_tcp_max_retrans	(ve_nf_ct4->_nf_ct_tcp_max_retrans)
+#define ve_nf_ct_tcp_loose		(ve_nf_ct4->_nf_ct_tcp_loose)
+#define ve_nf_ct_tcp_be_liberal		(ve_nf_ct4->_nf_ct_tcp_be_liberal)
+#define ve_tcp_sysctl_table_users	(ve_nf_ct4->_tcp_sysctl_table_users)
+#define ve_tcp_sysctl_header		(ve_nf_ct4->_tcp_sysctl_header)
+#define ve_tcp_compat_sysctl_header	(ve_nf_ct4->_tcp_compat_sysctl_header)
+/* UDP: */
+#define ve_nf_ct_udp_timeout		(ve_nf_ct4->_nf_ct_udp_timeout)
+#define ve_nf_ct_udp_timeout_stream	(ve_nf_ct4->_nf_ct_udp_timeout_stream)
+#define ve_udp_sysctl_table_users	(ve_nf_ct4->_udp_sysctl_table_users)
+#define ve_udp_sysctl_header		(ve_nf_ct4->_udp_sysctl_header)
+#define ve_udp_compat_sysctl_header	(ve_nf_ct4->_udp_compat_sysctl_header)
+/* ICMP: */
+#define ve_nf_ct_icmp_timeout		(ve_nf_ct4->_nf_ct_icmp_timeout)
+#define ve_icmp_sysctl_header		(ve_nf_ct4->_icmp_sysctl_header)
+#define ve_icmp_compat_sysctl_header	(ve_nf_ct4->_icmp_compat_sysctl_header)
+/* ICMPV6: */
+#define ve_nf_ct_icmpv6_timeout		(ve_nf_ct4->_nf_ct_icmpv6_timeout)
+#define ve_icmpv6_sysctl_header		(ve_nf_ct4->_icmpv6_sysctl_header)
+/* GENERIC: */
+#define ve_nf_ct_generic_timeout	(ve_nf_ct4->_nf_ct_generic_timeout)
+#define ve_generic_sysctl_header	(ve_nf_ct4->_generic_sysctl_header)
+#define ve_generic_compat_sysctl_header	(ve_nf_ct4->_generic_compat_sysctl_header)
+
+extern void nf_ct_proto_icmp_sysctl_cleanup(void);
+extern int nf_ct_proto_icmp_sysctl_init(void);
+extern void nf_ct_proto_icmpv6_sysctl_cleanup(void);
+extern int nf_ct_proto_icmpv6_sysctl_init(void);
+extern void nf_ct_proto_tcp_sysctl_cleanup(void);
+extern int nf_ct_proto_tcp_sysctl_init(void);
+extern void nf_ct_proto_udp_sysctl_cleanup(void);
+extern int nf_ct_proto_udp_sysctl_init(void);
+
+#else /* !CONFIG_VE_IPTABLES || !CONFIG_SYSCTL: */
+
+#define ve_nf_ct_protos			nf_ct_protos
+#define ve_nf_conntrack_l4proto_icmp	&nf_conntrack_l4proto_icmp
+#define ve_nf_conntrack_l4proto_icmpv6	&nf_conntrack_l4proto_icmpv6
+#define ve_nf_conntrack_l4proto_tcp4	&nf_conntrack_l4proto_tcp4
+#define ve_nf_conntrack_l4proto_tcp6	&nf_conntrack_l4proto_tcp6
+#define ve_nf_conntrack_l4proto_udp4	&nf_conntrack_l4proto_udp4
+#define ve_nf_conntrack_l4proto_udp6	&nf_conntrack_l4proto_udp6
+#define ve_nf_conntrack_l4proto_generic	&nf_conntrack_l4proto_generic
+
+#if defined(CONFIG_SYSCTL)
+
+#define ve_nf_ct_log_invalid		nf_ct_log_invalid
+/* TCP: */
+#define ve_nf_ct_tcp_timeouts		*tcp_timeouts
+#define ve_nf_ct_tcp_timeout_max_retrans	\
+					nf_ct_tcp_timeout_max_retrans
+#define ve_nf_ct_tcp_max_retrans	nf_ct_tcp_max_retrans
+#define ve_nf_ct_tcp_loose		nf_ct_tcp_loose
+#define ve_nf_ct_tcp_be_liberal		nf_ct_tcp_be_liberal
+#define ve_tcp_sysctl_table_users	tcp_sysctl_table_users
+#define ve_tcp_sysctl_header		tcp_sysctl_header
+/* UDP:*/
+#define ve_nf_ct_udp_timeout		nf_ct_udp_timeout
+#define ve_nf_ct_udp_timeout_stream	nf_ct_udp_timeout_stream
+#define ve_udp_sysctl_table_users	udp_sysctl_table_users
+#define ve_udp_sysctl_header		udp_sysctl_header
+/* ICMP: */
+#define ve_nf_ct_icmp_timeout		nf_ct_icmp_timeout
+#define ve_icmp_sysctl_header		icmp_sysctl_header
+/* ICMPV6: */
+#define ve_nf_ct_icmpv6_timeout		nf_ct_icmpv6_timeout
+#define ve_icmpv6_sysctl_header		icmpv6_sysctl_header
+/* GENERIC: */
+#define ve_nf_ct_generic_timeout	nf_ct_generic_timeout
+#define ve_generic_sysctl_header	generic_sysctl_header
+#endif /* CONFIG_SYSCTL */
+
+static inline int nf_ct_proto_icmp_sysctl_init(void)
+{
+	return 0;
+}
+static inline void nf_ct_proto_icmp_sysctl_cleanup(void)
+{
+}
+static inline int nf_ct_proto_tcp_sysctl_init(void)
+{
+	return 0;
+}
+static inline void nf_ct_proto_tcp_sysctl_cleanup(void)
+{
+}
+static inline int nf_ct_proto_udp_sysctl_init(void)
+{
+	return 0;
+}
+static inline void nf_ct_proto_udp_sysctl_cleanup(void)
+{
+}
+static inline int nf_ct_proto_icmpv6_sysctl_init(void)
+{
+	return 0;
+}
+static inline void nf_ct_proto_icmpv6_sysctl_cleanup(void)
+{
+}
+#endif /* CONFIG_VE_IPTABLES && CONFIG_SYSCTL */
 
 #ifdef CONFIG_SYSCTL
 #ifdef DEBUG_INVALID_PACKETS
 #define LOG_INVALID(proto) \
-	(nf_ct_log_invalid == (proto) || nf_ct_log_invalid == IPPROTO_RAW)
+	(ve_nf_ct_log_invalid == (proto) || ve_nf_ct_log_invalid == IPPROTO_RAW)
 #else
 #define LOG_INVALID(proto) \
-	((nf_ct_log_invalid == (proto) || nf_ct_log_invalid == IPPROTO_RAW) \
+	((ve_nf_ct_log_invalid == (proto) || ve_nf_ct_log_invalid == IPPROTO_RAW) \
 	 && net_ratelimit())
 #endif
 #else

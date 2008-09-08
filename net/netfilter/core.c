@@ -60,6 +60,8 @@ int nf_register_hook(struct nf_hook_ops *reg)
 	struct nf_hook_ops *elem;
 	int err;
 
+	BUG_ON(!ve_is_super(get_exec_env()));
+
 	err = mutex_lock_interruptible(&nf_hook_mutex);
 	if (err < 0)
 		return err;
@@ -75,6 +77,8 @@ EXPORT_SYMBOL(nf_register_hook);
 
 void nf_unregister_hook(struct nf_hook_ops *reg)
 {
+	BUG_ON(!ve_is_super(get_exec_env()));
+
 	mutex_lock(&nf_hook_mutex);
 	list_del_rcu(&reg->list);
 	mutex_unlock(&nf_hook_mutex);
@@ -169,8 +173,6 @@ int nf_hook_slow(int pf, unsigned int hook, struct sk_buff *skb,
 	struct net *net;
 
 	net = indev == NULL ? dev_net(outdev) : dev_net(indev);
-	if (net != &init_net)
-		return 1;
 #endif
 
 	/* We may already have this, but read-locks nest anyway */

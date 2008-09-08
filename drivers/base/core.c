@@ -22,6 +22,8 @@
 #include <linux/kallsyms.h>
 #include <linux/semaphore.h>
 #include <linux/mutex.h>
+#include <linux/sched.h>
+#include <linux/ve.h>
 
 #include "base.h"
 #include "power/power.h"
@@ -419,8 +421,12 @@ static ssize_t show_dev(struct device *dev, struct device_attribute *attr,
 static struct device_attribute devt_attr =
 	__ATTR(dev, S_IRUGO, show_dev, NULL);
 
-/* kset to create /sys/devices/  */
 struct kset *devices_kset;
+
+/* kset to create /sys/devices/  */
+#ifdef CONFIG_VE
+#define ve_devices_kset	(get_exec_env()->devices_kset)
+#endif
 
 /**
  * device_create_file - create sysfs attribute file for device.
@@ -531,7 +537,7 @@ static void klist_children_put(struct klist_node *n)
  */
 void device_initialize(struct device *dev)
 {
-	dev->kobj.kset = devices_kset;
+	dev->kobj.kset = ve_devices_kset;
 	kobject_init(&dev->kobj, &device_ktype);
 	klist_init(&dev->klist_children, klist_children_get,
 		   klist_children_put);
@@ -569,7 +575,7 @@ static struct kobject *virtual_device_parent(struct device *dev)
 
 	if (!virtual_dir)
 		virtual_dir = kobject_create_and_add("virtual",
-						     &devices_kset->kobj);
+						     &ve_devices_kset->kobj);
 
 	return virtual_dir;
 }
@@ -1142,8 +1148,11 @@ struct device *device_find_child(struct device *parent, void *data,
 	return child;
 }
 
-int __init devices_init(void)
+int devices_init(void)
 {
+	if (!ve_is_super(get_exec_env()))
+		return 0;
+
 	devices_kset = kset_create_and_add("devices", &device_uevent_ops, NULL);
 	if (!devices_kset)
 		return -ENOMEM;

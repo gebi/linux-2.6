@@ -19,6 +19,8 @@
 #include <linux/icmp.h>
 #include <linux/udp.h>
 #include <linux/jhash.h>
+#include <linux/nfcalls.h>
+#include <bc/kmem.h>
 
 #include <linux/netfilter_ipv4.h>
 #include <net/netfilter/nf_conntrack.h>
@@ -33,22 +35,34 @@
 
 static DEFINE_SPINLOCK(nf_nat_lock);
 
-static struct nf_conntrack_l3proto *l3proto __read_mostly;
 
 /* Calculated at init based on memory size */
 static unsigned int nf_nat_htable_size __read_mostly;
-static int nf_nat_vmalloced;
-
-static struct hlist_head *bysource __read_mostly;
 
 #define MAX_IP_NAT_PROTO 256
+
+#ifdef CONFIG_VE_IPTABLES
+#define ve_nf_nat_protos	(get_exec_env()->_nf_conntrack->_nf_nat_protos)
+#define ve_nf_nat_l3proto	(get_exec_env()->_nf_conntrack->_nf_nat_l3proto)
+#define ve_bysource		(get_exec_env()->_nf_conntrack->_bysource)
+#define ve_nf_nat_vmalloced	(get_exec_env()->_nf_conntrack->_nf_nat_vmalloced)
+#else
+static struct nf_conntrack_l3proto *l3proto __read_mostly;
+static int nf_nat_vmalloced;
+static struct hlist_head *bysource __read_mostly;
+
 static const struct nf_nat_protocol *nf_nat_protos[MAX_IP_NAT_PROTO]
 						__read_mostly;
+#define ve_nf_nat_protos	nf_nat_protos
+#define ve_nf_nat_l3proto	l3proto
+#define ve_bysource		bysource
+#define ve_nf_nat_vmalloced	nf_nat_vmalloced
+#endif
 
 static inline const struct nf_nat_protocol *
 __nf_nat_proto_find(u_int8_t protonum)
 {
-	return rcu_dereference(nf_nat_protos[protonum]);
+	return rcu_dereference(ve_nf_nat_protos[protonum]);
 }
 
 const struct nf_nat_protocol *
@@ -155,7 +169,7 @@ find_appropriate_src(const struct nf_conntrack_tuple *tuple,
 	const struct hlist_node *n;
 
 	rcu_read_lock();
-	hlist_for_each_entry_rcu(nat, n, &bysource[h], bysource) {
+	hlist_for_each_entry_rcu(nat, n, &ve_bysource[h], bysource) {
 		ct = nat->ct;
 		if (same_src(ct, tuple)) {
 			/* Copy source part from reply tuple. */
@@ -278,6 +292,22 @@ out:
 	rcu_read_unlock();
 }
 
+void nf_nat_hash_conntrack(struct nf_conn *ct)
+{
+	struct nf_conn_nat *nat;
+	unsigned int srchash;
+
+	srchash = hash_by_src(&ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple);
+	spin_lock_bh(&nf_nat_lock);
+	/* nf_conntrack_alter_reply might re-allocate exntension aera */
+	nat = nfct_nat(ct);
+	nat->ct = ct;
+	hlist_add_head_rcu(&nat->bysource, &ve_bysource[srchash]);
+	spin_unlock_bh(&nf_nat_lock);
+
+}
+EXPORT_SYMBOL_GPL(nf_nat_hash_conntrack);
+
 unsigned int
 nf_nat_setup_info(struct nf_conn *ct,
 		  const struct nf_nat_range *range,
@@ -326,17 +356,8 @@ nf_nat_setup_info(struct nf_conn *ct,
 	}
 
 	/* Place in source hash if this is the first time. */
-	if (have_to_hash) {
-		unsigned int srchash;
-
-		srchash = hash_by_src(&ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple);
-		spin_lock_bh(&nf_nat_lock);
-		/* nf_conntrack_alter_reply might re-allocate exntension aera */
-		nat = nfct_nat(ct);
-		nat->ct = ct;
-		hlist_add_head_rcu(&nat->bysource, &bysource[srchash]);
-		spin_unlock_bh(&nf_nat_lock);
-	}
+	if (have_to_hash)
+		nf_nat_hash_conntrack(ct);
 
 	/* It's done. */
 	if (maniptype == IP_NAT_MANIP_DST)
@@ -426,7 +447,6 @@ int nf_nat_icmp_reply_translation(struct nf_conn *ct,
 		struct icmphdr icmp;
 		struct iphdr ip;
 	} *inside;
-	const struct nf_conntrack_l4proto *l4proto;
 	struct nf_conntrack_tuple inner, target;
 	int hdrlen = ip_hdrlen(skb);
 	enum ip_conntrack_dir dir = CTINFO2DIR(ctinfo);
@@ -463,16 +483,14 @@ int nf_nat_icmp_reply_translation(struct nf_conn *ct,
 		 "dir %s\n", skb, manip,
 		 dir == IP_CT_DIR_ORIGINAL ? "ORIG" : "REPLY");
 
-	/* rcu_read_lock()ed by nf_hook_slow */
-	l4proto = __nf_ct_l4proto_find(PF_INET, inside->ip.protocol);
-
 	if (!nf_ct_get_tuple(skb,
 			     ip_hdrlen(skb) + sizeof(struct icmphdr),
 			     (ip_hdrlen(skb) +
 			      sizeof(struct icmphdr) + inside->ip.ihl * 4),
 			     (u_int16_t)AF_INET,
 			     inside->ip.protocol,
-			     &inner, l3proto, l4proto))
+			     &inner, ve_nf_nat_l3proto,
+			     __nf_ct_l4proto_find(PF_INET, inside->ip.protocol)))
 		return 0;
 
 	/* Change inner back to look like incoming packet.  We do the
@@ -522,11 +540,11 @@ int nf_nat_protocol_register(const struct nf_nat_protocol *proto)
 	int ret = 0;
 
 	spin_lock_bh(&nf_nat_lock);
-	if (nf_nat_protos[proto->protonum] != &nf_nat_unknown_protocol) {
+	if (ve_nf_nat_protos[proto->protonum] != &nf_nat_unknown_protocol) {
 		ret = -EBUSY;
 		goto out;
 	}
-	rcu_assign_pointer(nf_nat_protos[proto->protonum], proto);
+	rcu_assign_pointer(ve_nf_nat_protos[proto->protonum], proto);
  out:
 	spin_unlock_bh(&nf_nat_lock);
 	return ret;
@@ -537,7 +555,7 @@ EXPORT_SYMBOL(nf_nat_protocol_register);
 void nf_nat_protocol_unregister(const struct nf_nat_protocol *proto)
 {
 	spin_lock_bh(&nf_nat_lock);
-	rcu_assign_pointer(nf_nat_protos[proto->protonum],
+	rcu_assign_pointer(ve_nf_nat_protos[proto->protonum],
 			   &nf_nat_unknown_protocol);
 	spin_unlock_bh(&nf_nat_lock);
 	synchronize_rcu();
@@ -583,47 +601,62 @@ static struct nf_ct_ext_type nat_extend __read_mostly = {
 	.flags		= NF_CT_EXT_F_PREALLOC,
 };
 
-static int __init nf_nat_init(void)
+int nf_nat_init(void)
 {
 	size_t i;
 	int ret;
 
 	need_ipv4_conntrack();
 
-	ret = nf_ct_extend_register(&nat_extend);
-	if (ret < 0) {
-		printk(KERN_ERR "nf_nat_core: Unable to register extension\n");
-		return ret;
+	if (ve_is_super(get_exec_env())) {
+		ret = nf_ct_extend_register(&nat_extend);
+		if (ret < 0) {
+			printk(KERN_ERR "nf_nat_core: Unable to register extension\n");
+			return ret;
+		}
 	}
 
 	/* Leave them the same for the moment. */
 	nf_nat_htable_size = nf_conntrack_htable_size;
 
-	bysource = nf_ct_alloc_hashtable(&nf_nat_htable_size,
-					 &nf_nat_vmalloced);
-	if (!bysource) {
+	ve_bysource = nf_ct_alloc_hashtable(&nf_nat_htable_size,
+					 &ve_nf_nat_vmalloced);
+	if (!ve_bysource) {
 		ret = -ENOMEM;
 		goto cleanup_extend;
 	}
 
+#ifdef CONFIG_VE_IPTABLES
+	ve_nf_nat_protos = kcalloc(MAX_IP_NAT_PROTO, sizeof(void *), GFP_KERNEL);
+	if (!ve_nf_nat_protos) {
+		ret = -ENOMEM;
+		goto cleanup_hash;
+	}
+#endif
 	/* Sew in builtin protocols. */
 	spin_lock_bh(&nf_nat_lock);
 	for (i = 0; i < MAX_IP_NAT_PROTO; i++)
-		rcu_assign_pointer(nf_nat_protos[i], &nf_nat_unknown_protocol);
-	rcu_assign_pointer(nf_nat_protos[IPPROTO_TCP], &nf_nat_protocol_tcp);
-	rcu_assign_pointer(nf_nat_protos[IPPROTO_UDP], &nf_nat_protocol_udp);
-	rcu_assign_pointer(nf_nat_protos[IPPROTO_ICMP], &nf_nat_protocol_icmp);
+		rcu_assign_pointer(ve_nf_nat_protos[i], &nf_nat_unknown_protocol);
+	rcu_assign_pointer(ve_nf_nat_protos[IPPROTO_TCP], &nf_nat_protocol_tcp);
+	rcu_assign_pointer(ve_nf_nat_protos[IPPROTO_UDP], &nf_nat_protocol_udp);
+	rcu_assign_pointer(ve_nf_nat_protos[IPPROTO_ICMP], &nf_nat_protocol_icmp);
 	spin_unlock_bh(&nf_nat_lock);
 
-	/* Initialize fake conntrack so that NAT will skip it */
-	nf_conntrack_untracked.status |= IPS_NAT_DONE_MASK;
+	if (ve_is_super(get_exec_env())) {
+		/* Initialize fake conntrack so that NAT will skip it */
+		nf_conntrack_untracked.status |= IPS_NAT_DONE_MASK;
+	}
 
-	l3proto = nf_ct_l3proto_find_get((u_int16_t)AF_INET);
+	ve_nf_nat_l3proto = nf_ct_l3proto_find_get((u_int16_t)AF_INET);
 
 	BUG_ON(nf_nat_seq_adjust_hook != NULL);
 	rcu_assign_pointer(nf_nat_seq_adjust_hook, nf_nat_seq_adjust);
 	return 0;
 
+#ifdef CONFIG_VE_IPTABLES
+cleanup_hash:
+#endif
+	nf_ct_free_hashtable(ve_bysource, ve_nf_nat_vmalloced, nf_nat_htable_size);
  cleanup_extend:
 	nf_ct_extend_unregister(&nat_extend);
 	return ret;
@@ -641,18 +674,45 @@ static int clean_nat(struct nf_conn *i, void *data)
 	return 0;
 }
 
-static void __exit nf_nat_cleanup(void)
+void nf_nat_cleanup(void)
 {
 	nf_ct_iterate_cleanup(&clean_nat, NULL);
 	synchronize_rcu();
-	nf_ct_free_hashtable(bysource, nf_nat_vmalloced, nf_nat_htable_size);
-	nf_ct_l3proto_put(l3proto);
-	nf_ct_extend_unregister(&nat_extend);
+	nf_ct_free_hashtable(ve_bysource, ve_nf_nat_vmalloced, nf_nat_htable_size);
+	nf_ct_l3proto_put(ve_nf_nat_l3proto);
+#ifdef CONFIG_VE_IPTABLES
+	kfree(ve_nf_nat_protos);
+#endif
+	if (ve_is_super(get_exec_env()))
+		nf_ct_extend_unregister(&nat_extend);
 	rcu_assign_pointer(nf_nat_seq_adjust_hook, NULL);
 	synchronize_net();
 }
 
+static int __init init(void)
+{
+	int rv;
+
+	rv = nf_nat_init();
+	if (rv < 0)
+		return rv;
+
+	KSYMRESOLVE(nf_nat_init);
+	KSYMRESOLVE(nf_nat_cleanup);
+	KSYMMODRESOLVE(nf_nat);
+	return 0;
+}
+
+static void __exit fini(void)
+{
+	KSYMMODUNRESOLVE(nf_nat);
+	KSYMUNRESOLVE(nf_nat_cleanup);
+	KSYMUNRESOLVE(nf_nat_init);
+
+	nf_nat_cleanup();
+}
+
 MODULE_LICENSE("GPL");
 
-module_init(nf_nat_init);
-module_exit(nf_nat_cleanup);
+module_init(init);
+module_exit(fini);

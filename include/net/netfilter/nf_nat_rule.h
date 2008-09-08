@@ -4,7 +4,7 @@
 #include <net/netfilter/nf_nat.h>
 #include <linux/netfilter_ipv4/ip_tables.h>
 
-extern int nf_nat_rule_init(void) __init;
+extern int nf_nat_rule_init(void);
 extern void nf_nat_rule_cleanup(void);
 extern int nf_nat_rule_find(struct sk_buff *skb,
 			    unsigned int hooknum,

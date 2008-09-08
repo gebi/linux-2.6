@@ -314,6 +314,7 @@ static void remove_user_sysfs_dir(struct work_struct *w)
 done:
 	uids_mutex_unlock();
 }
+EXPORT_SYMBOL_GPL(free_uid);
 
 /* IRQs are disabled and uidhash_lock is held upon function entry.
  * IRQ state (as stored in flags) is restored and uidhash_lock released
@@ -383,6 +384,7 @@ void free_uid(struct user_struct *up)
 	else
 		local_irq_restore(flags);
 }
+EXPORT_SYMBOL_GPL(free_uid);
 
 struct user_struct *alloc_uid(struct user_namespace *ns, uid_t uid)
 {
@@ -447,6 +449,7 @@ out_unlock:
 	uids_mutex_unlock();
 	return NULL;
 }
+EXPORT_SYMBOL_GPL(alloc_uid);
 
 void switch_uid(struct user_struct *new_user)
 {
@@ -477,6 +480,7 @@ void switch_uid(struct user_struct *new_user)
 	free_uid(old_user);
 	suid_keys(current);
 }
+EXPORT_SYMBOL_GPL(switch_uid);
 
 #ifdef CONFIG_USER_NS
 void release_uids(struct user_namespace *ns)
@@ -510,7 +514,7 @@ static int __init uid_cache_init(void)
 	int n;
 
 	uid_cachep = kmem_cache_create("uid_cache", sizeof(struct user_struct),
-			0, SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL);
+			0, SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_UBC, NULL);
 
 	for(n = 0; n < UIDHASH_SZ; ++n)
 		INIT_HLIST_HEAD(init_user_ns.uidhash_table + n);

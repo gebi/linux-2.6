@@ -587,6 +587,8 @@ source "fs/Kconfig"
 
 source "arch/s390/Kconfig.debug"
 
+source "kernel/Kconfig.openvz"
+
 source "security/Kconfig"
 
 source "crypto/Kconfig"

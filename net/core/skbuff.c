@@ -65,6 +65,8 @@
 #include <asm/uaccess.h>
 #include <asm/system.h>
 
+#include <bc/net.h>
+
 #include "kmap_skb.h"
 
 static struct kmem_cache *skbuff_head_cache __read_mostly;
@@ -191,6 +193,10 @@ struct sk_buff *__alloc_skb(unsigned int size, gfp_t gfp_mask,
 	if (!skb)
 		goto out;
 
+	if (ub_skb_alloc_bc(skb, gfp_mask & ~__GFP_DMA))
+		goto nobc;
+
+	/* Get the DATA. Size must match skb_add_mtu(). */
 	size = SKB_DATA_ALIGN(size);
 	data = kmalloc_node_track_caller(size + sizeof(struct skb_shared_info),
 			gfp_mask, node);
@@ -209,6 +215,7 @@ struct sk_buff *__alloc_skb(unsigned int size, gfp_t gfp_mask,
 	skb->data = data;
 	skb_reset_tail_pointer(skb);
 	skb->end = skb->tail + size;
+	skb->owner_env = get_exec_env();
 	/* make sure we initialize shinfo sequentially */
 	shinfo = skb_shinfo(skb);
 	atomic_set(&shinfo->dataref, 1);
@@ -231,6 +238,8 @@ struct sk_buff *__alloc_skb(unsigned int size, gfp_t gfp_mask,
 out:
 	return skb;
 nodata:
+	ub_skb_free_bc(skb);
+nobc:
 	kmem_cache_free(cache, skb);
 	skb = NULL;
 	goto out;
@@ -337,6 +346,7 @@ static void kfree_skbmem(struct sk_buff *skb)
 	struct sk_buff *other;
 	atomic_t *fclone_ref;
 
+	ub_skb_free_bc(skb);
 	switch (skb->fclone) {
 	case SKB_FCLONE_UNAVAILABLE:
 		kmem_cache_free(skbuff_head_cache, skb);
@@ -370,6 +380,7 @@ static void skb_release_all(struct sk_buff *skb)
 #ifdef CONFIG_XFRM
 	secpath_put(skb->sp);
 #endif
+	ub_skb_uncharge(skb);
 	if (skb->destructor) {
 		WARN_ON(in_irq());
 		skb->destructor(skb);
@@ -461,6 +472,11 @@ static void __copy_skb_header(struct sk_buff *new, const struct sk_buff *old)
 #endif
 	new->vlan_tci		= old->vlan_tci;
 
+#ifdef CONFIG_VE
+	new->accounted = old->accounted;
+	new->redirected = old->redirected;
+#endif
+	skb_copy_brmark(new, old);
 	skb_copy_secmark(new, old);
 }
 
@@ -478,6 +494,10 @@ static struct sk_buff *__skb_clone(struct sk_buff *n, struct sk_buff *skb)
 	n->hdr_len = skb->nohdr ? skb_headroom(skb) : skb->hdr_len;
 	n->cloned = 1;
 	n->nohdr = 0;
+	C(owner_env);
+#if defined(CONFIG_BRIDGE) || defined(CONFIG_BRIDGE_MODULE)
+	C(brmark);
+#endif
 	n->destructor = NULL;
 	C(iif);
 	C(tail);
@@ -489,6 +509,11 @@ static struct sk_buff *__skb_clone(struct sk_buff *n, struct sk_buff *skb)
 	C(do_not_encrypt);
 #endif
 	atomic_set(&n->users, 1);
+
+#ifdef CONFIG_VE
+	C(accounted);
+	C(redirected);
+#endif
 
 	atomic_inc(&(skb_shinfo(skb)->dataref));
 	skb->cloned = 1;
@@ -545,6 +570,10 @@ struct sk_buff *skb_clone(struct sk_buff *skb, gfp_t gfp_mask)
 		n->fclone = SKB_FCLONE_UNAVAILABLE;
 	}
 
+	if (ub_skb_alloc_bc(n, gfp_mask)) {
+		kmem_cache_free(skbuff_head_cache, n);
+		return NULL;
+	}
 	return __skb_clone(n, skb);
 }
 

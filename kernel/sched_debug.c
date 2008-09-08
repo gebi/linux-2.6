@@ -101,12 +101,12 @@ static void print_rq(struct seq_file *m, struct rq *rq, int rq_cpu)
 
 	read_lock_irqsave(&tasklist_lock, flags);
 
-	do_each_thread(g, p) {
+	do_each_thread_all(g, p) {
 		if (!p->se.on_rq || task_cpu(p) != rq_cpu)
 			continue;
 
 		print_task(m, rq, p);
-	} while_each_thread(g, p);
+	} while_each_thread_all(g, p);
 
 	read_unlock_irqrestore(&tasklist_lock, flags);
 }

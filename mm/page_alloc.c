@@ -51,6 +51,9 @@
 #include <asm/div64.h>
 #include "internal.h"
 
+#include <bc/kmem.h>
+#include <bc/io_acct.h>
+
 /*
  * Array of node states.
  */
@@ -102,6 +105,7 @@ int sysctl_lowmem_reserve_ratio[MAX_NR_ZONES-1] = {
 	 32,
 };
 
+EXPORT_SYMBOL(nr_swap_pages);
 EXPORT_SYMBOL(totalram_pages);
 
 static char * const zone_names[MAX_NR_ZONES] = {
@@ -457,8 +461,11 @@ static inline int free_pages_check(struct page *page)
 		(page_count(page) != 0)  |
 		(page->flags & PAGE_FLAGS_CHECK_AT_FREE)))
 		bad_page(page);
-	if (PageDirty(page))
+	if (PageDirty(page)) {
+		ub_io_release_context(page, 0);
 		__ClearPageDirty(page);
+	} else
+		ub_io_release_debug(page);
 	/*
 	 * For now, we report if PG_reserved was found set, but do not
 	 * clear it, and do not free the page.  But we shall soon need
@@ -524,6 +531,7 @@ static void __free_pages_ok(struct page *page, unsigned int order)
 	arch_free_page(page, order);
 	kernel_map_pages(page, 1 << order, 0);
 
+	ub_page_uncharge(page, order);
 	local_irq_save(flags);
 	__count_vm_events(PGFREE, 1 << order);
 	free_one_page(page_zone(page), page, order);
@@ -981,6 +989,7 @@ static void free_hot_cold_page(struct page *page, int cold)
 	kernel_map_pages(page, 1, 0);
 
 	pcp = &zone_pcp(zone, get_cpu())->pcp;
+	ub_page_uncharge(page, 0);
 	local_irq_save(flags);
 	__count_vm_event(PGFREE);
 	if (cold)
@@ -1428,6 +1437,31 @@ try_next_zone:
 	return page;
 }
 
+extern unsigned long cycles_per_jiffy;
+static void __alloc_collect_stats(gfp_t gfp_mask, unsigned int order,
+		struct page *page, cycles_t time)
+{
+#ifdef CONFIG_VE
+	int ind;
+	unsigned long flags;
+
+	time = (jiffies - time) * cycles_per_jiffy;
+	if (!(gfp_mask & __GFP_WAIT))
+		ind = 0;
+	else if (!(gfp_mask & __GFP_HIGHMEM))
+		ind = (order > 0 ? 2 : 1);
+	else
+		ind = (order > 0 ? 4 : 3);
+	spin_lock_irqsave(&kstat_glb_lock, flags);
+	KSTAT_LAT_ADD(&kstat_glob.alloc_lat[ind], time);
+	if (!page)
+		kstat_glob.alloc_fails[ind]++;
+	spin_unlock_irqrestore(&kstat_glb_lock, flags);
+#endif
+}
+
+int alloc_fail_warn;
+
 /*
  * This is the 'heart' of the zoned buddy allocator.
  */
@@ -1446,6 +1480,7 @@ __alloc_pages_internal(gfp_t gfp_mask, unsigned int order,
 	int alloc_flags;
 	unsigned long did_some_progress;
 	unsigned long pages_reclaimed = 0;
+	cycles_t start;
 
 	might_sleep_if(wait);
 
@@ -1463,6 +1498,7 @@ restart:
 		return NULL;
 	}
 
+	start = jiffies;
 	page = get_page_from_freelist(gfp_mask|__GFP_HARDWALL, nodemask, order,
 			zonelist, high_zoneidx, ALLOC_WMARK_LOW|ALLOC_CPUSET);
 	if (page)
@@ -1619,19 +1655,32 @@ nofail_alloc:
 			do_retry = 1;
 	}
 	if (do_retry) {
+		if (total_swap_pages > 0 && nr_swap_pages == 0) {
+			out_of_memory(zonelist, gfp_mask, order);
+			goto restart;
+		}
 		congestion_wait(WRITE, HZ/50);
 		goto rebalance;
 	}
 
 nopage:
-	if (!(gfp_mask & __GFP_NOWARN) && printk_ratelimit()) {
+	__alloc_collect_stats(gfp_mask, order, NULL, start);
+	if (alloc_fail_warn && !(gfp_mask & __GFP_NOWARN) && 
+			printk_ratelimit()) {
 		printk(KERN_WARNING "%s: page allocation failure."
 			" order:%d, mode:0x%x\n",
 			p->comm, order, gfp_mask);
 		dump_stack();
 		show_mem();
 	}
+	return NULL;
+
 got_pg:
+	__alloc_collect_stats(gfp_mask, order, page, start);
+	if (ub_page_charge(page, order, gfp_mask)) {
+		__free_pages(page, order);
+		page = NULL;
+	}
 	return page;
 }
 EXPORT_SYMBOL(__alloc_pages_internal);

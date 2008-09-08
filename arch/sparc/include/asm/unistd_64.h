@@ -340,8 +340,12 @@
 #define __NR_dup3		320
 #define __NR_pipe2		321
 #define __NR_inotify_init1	322
+#define __NR_getluid		510
+#define __NR_setluid		511
+#define __NR_setublimit		512
+#define __NR_ubstat		513
 
-#define NR_SYSCALLS		323
+#define NR_SYSCALLS		514
 
 #ifdef __KERNEL__
 #define __ARCH_WANT_IPC_PARSE_VERSION

@@ -119,6 +119,7 @@ extern int do_sys_poll(struct pollfd __user * ufds, unsigned int nfds,
 		       s64 *timeout);
 extern int core_sys_select(int n, fd_set __user *inp, fd_set __user *outp,
 			   fd_set __user *exp, s64 *timeout);
+long do_restart_poll(struct restart_block *restart_block);
 
 #endif /* KERNEL */
 

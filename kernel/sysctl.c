@@ -81,6 +81,7 @@ extern int sysctl_drop_caches;
 extern int percpu_pagelist_fraction;
 extern int compat_log;
 extern int maps_protect;
+extern int ve_area_access_check; /* fs/namei.c */
 extern int latencytop_enabled;
 extern int sysctl_nr_open_min, sysctl_nr_open_max;
 #ifdef CONFIG_RCU_TORTURE_TEST
@@ -111,6 +112,13 @@ static int min_percpu_pagelist_fract = 8;
 
 static int ngroups_max = NGROUPS_MAX;
 
+int ve_allow_kthreads = 1;
+EXPORT_SYMBOL(ve_allow_kthreads);
+
+#ifdef CONFIG_MAGIC_SYSRQ
+extern int sysrq_key_scancode;
+#endif
+
 #ifdef CONFIG_MODULES
 extern char modprobe_path[];
 #endif
@@ -124,6 +132,8 @@ extern int stop_a_enabled;
 extern int scons_pwroff;
 #endif
 
+extern int alloc_fail_warn;
+
 #ifdef __hppa__
 extern int pwrsw_enabled;
 extern int unaligned_enabled;
@@ -136,6 +146,7 @@ extern int sysctl_ieee_emulation_warnings;
 extern int sysctl_userprocess_debug;
 extern int spin_retry;
 #endif
+int decode_call_traces = 1;
 
 #ifdef CONFIG_BSD_PROCESS_ACCT
 extern int acct_parm[];
@@ -143,6 +154,10 @@ extern int acct_parm[];
 
 #ifdef CONFIG_IA64
 extern int no_unaligned_warning;
+#endif
+#ifdef CONFIG_VE
+int glob_ve_meminfo = 0;
+EXPORT_SYMBOL(glob_ve_meminfo);
 #endif
 
 #ifdef CONFIG_RT_MUTEXES
@@ -164,9 +179,59 @@ static struct ctl_table_header root_table_header = {
 	.root = &sysctl_table_root,
 	.set = &sysctl_table_root.default_set,
 };
+
+#ifdef CONFIG_VE
+static LIST_HEAD(empty_list);
+
+static struct list_head *sysctl_default_lookup(struct ctl_table_root *r,
+		struct nsproxy *namespaces)
+{
+	if (ve_is_super(get_exec_env()))
+		return &r->header_list;
+
+	BUG_ON(!list_empty(&empty_list));
+	return &empty_list;
+}
+
+/*
+ * default root:
+ * all new tables go to one by default
+ * visible rw in ve0 only
+ */
+static struct ctl_table_root sysctl_default_root = {
+	.header_list	= LIST_HEAD_INIT(sysctl_default_root.header_list),
+	.lookup		= sysctl_default_lookup,
+};
+
+/*
+ * virtual root:
+ * visible rw everywhere (glob 1)
+ */
+static struct ctl_table_root sysctl_virt_root = {
+	.header_list	= LIST_HEAD_INIT(sysctl_virt_root.header_list),
+};
+
+static int sysctl_root_perms(struct ctl_table_root *root,
+			struct nsproxy *namespaces, struct ctl_table *table)
+{
+	if (ve_is_super(get_exec_env()))
+		return table->mode;
+	else
+		return table->mode & ~0222;
+}
+#else
+#define sysctl_default_root	sysctl_table_root
+#define sysctl_root_perms	NULL
+#endif
+
+/*
+ * classical root:
+ * visible ro in ve and rw in ve0 (glob 0 && root_table_header)
+ */
 static struct ctl_table_root sysctl_table_root = {
 	.root_list = LIST_HEAD_INIT(sysctl_table_root.root_list),
 	.default_set.list = LIST_HEAD_INIT(root_table_header.ctl_entry),
+	.permissions = sysctl_root_perms,
 };
 
 static struct ctl_table kern_table[];
@@ -441,6 +506,20 @@ static struct ctl_table kern_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 #endif
+	{
+		.procname	= "silence-level",
+		.data		= &console_silence_loglevel,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "alloc_fail_warn",
+		.data		= &alloc_fail_warn,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
 #ifdef __hppa__
 	{
 		.ctl_name	= KERN_HPPA_PWRSW,
@@ -605,6 +684,24 @@ static struct ctl_table kern_table[] = {
 		.extra1		= &pid_max_min,
 		.extra2		= &pid_max_max,
 	},
+#ifdef CONFIG_VE
+	{
+		.procname	= "ve_meminfo",
+		.data		= &glob_ve_meminfo,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+#endif
+#ifdef CONFIG_MAGIC_SYSRQ
+	{
+		.procname	= "sysrq-key",
+		.data		= &sysrq_key_scancode,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+#endif
 	{
 		.ctl_name	= KERN_PANIC_ON_OOPS,
 		.procname	= "panic_on_oops",
@@ -1175,6 +1272,21 @@ static struct ctl_table vm_table[] = {
 		.extra2		= &one,
 	},
 #endif
+	{
+		.procname	= "vsyscall",
+		.data		= &sysctl_at_vsyscall,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "odirect_enable",
+		.data		= &odirect_enable,
+		.maxlen		= sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec,
+	},
 /*
  * NOTE: do not add new entries to this table unless you have read
  * Documentation/sysctl/ctl_unnumbered.txt
@@ -1337,6 +1449,13 @@ static struct ctl_table fs_table[] = {
 };
 
 static struct ctl_table debug_table[] = {
+	{
+		.procname	= "decode_call_traces",
+		.data		= &decode_call_traces,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
 #if defined(CONFIG_X86) || defined(CONFIG_PPC)
 	{
 		.ctl_name	= CTL_UNNUMBERED,
@@ -1668,6 +1787,10 @@ static void sysctl_set_parent(struct ctl_table *parent, struct ctl_table *table)
 
 static __init int sysctl_init(void)
 {
+#ifdef CONFIG_VE
+	register_sysctl_root(&sysctl_default_root);
+	register_sysctl_root(&sysctl_virt_root);
+#endif
 	sysctl_set_parent(NULL, root_table);
 #ifdef CONFIG_SYSCTL_SYSCALL_CHECK
 	{
@@ -1889,8 +2012,16 @@ struct ctl_table_header *__register_sysctl_paths(
 struct ctl_table_header *register_sysctl_paths(const struct ctl_path *path,
 						struct ctl_table *table)
 {
-	return __register_sysctl_paths(&sysctl_table_root, current->nsproxy,
+	return __register_sysctl_paths(&sysctl_default_root, current->nsproxy,
 					path, table);
+}
+
+struct ctl_table_header *register_sysctl_glob_paths(const struct ctl_path *path,
+		struct ctl_table *table, int virtual_handler)
+{
+	return __register_sysctl_paths(virtual_handler ? 
+			&sysctl_virt_root : &sysctl_table_root,
+			current->nsproxy, path, table);
 }
 
 /**
@@ -1907,6 +2038,14 @@ struct ctl_table_header *register_sysctl_table(struct ctl_table *table)
 	static const struct ctl_path null_path[] = { {} };
 
 	return register_sysctl_paths(null_path, table);
+}
+
+struct ctl_table_header *register_sysctl_glob_table(struct ctl_table *table,
+		int virtual_handler)
+{
+	static const struct ctl_path null_path[] = { {} };
+
+	return register_sysctl_glob_paths(null_path, table, virtual_handler);
 }
 
 /**
@@ -1966,6 +2105,18 @@ struct ctl_table_header *register_sysctl_table(struct ctl_table * table)
 
 struct ctl_table_header *register_sysctl_paths(const struct ctl_path *path,
 						    struct ctl_table *table)
+{
+	return NULL;
+}
+
+struct ctl_table_header *register_sysctl_glob_table(struct ctl_table *table,
+		int vh)
+{
+	return NULL;
+}
+
+struct ctl_table_header *register_sysctl_glob_paths(const struct ctl_path *path,
+						struct ctl_table *table, int vh)
 {
 	return NULL;
 }
@@ -2999,6 +3150,57 @@ static int deprecated_sysctl_warning(struct __sysctl_args *args)
 	return 0;
 }
 
+#ifdef CONFIG_PID_NS
+#include <linux/pid_namespace.h>
+
+static int proc_pid_ns_hide_child(struct ctl_table *table, int write,
+		struct file *filp, void __user *buffer,
+		size_t *lenp, loff_t *ppos)
+{
+	int tmp, res;
+
+	tmp = (current->nsproxy->pid_ns->flags & PID_NS_HIDE_CHILD) ? 1 : 0;
+
+	res = __do_proc_dointvec(&tmp, table, write, filp, buffer,
+			       lenp, ppos, NULL, NULL);
+	if (res || !write)
+		return res;
+
+	if (tmp)
+		current->nsproxy->pid_ns->flags |= PID_NS_HIDE_CHILD;
+	else
+		current->nsproxy->pid_ns->flags &= ~PID_NS_HIDE_CHILD;
+	return 0;
+}
+
+static struct ctl_table pid_ns_kern_table[] = {
+	{
+		.procname	= "pid_ns_hide_child",
+		.maxlen		= sizeof(int),
+		.mode		= 0600,
+		.proc_handler	= proc_pid_ns_hide_child,
+	},
+	{}
+};
+
+static struct ctl_table pid_ns_root_table[] = {
+	{
+		.ctl_name	= CTL_KERN,
+		.procname	= "kernel",
+		.mode		= 0555,
+		.child		= pid_ns_kern_table,
+	},
+	{}
+};
+
+static __init int pid_ns_sysctl_init(void)
+{
+	register_sysctl_table(pid_ns_root_table);
+	return 0;
+}
+postcore_initcall(pid_ns_sysctl_init);
+#endif /* CONFIG_PID_NS */
+
 /*
  * No sense putting this after each symbol definition, twice,
  * exception granted :-)
@@ -3012,7 +3214,9 @@ EXPORT_SYMBOL(proc_dostring);
 EXPORT_SYMBOL(proc_doulongvec_minmax);
 EXPORT_SYMBOL(proc_doulongvec_ms_jiffies_minmax);
 EXPORT_SYMBOL(register_sysctl_table);
+EXPORT_SYMBOL(register_sysctl_glob_table);
 EXPORT_SYMBOL(register_sysctl_paths);
+EXPORT_SYMBOL(register_sysctl_glob_paths);
 EXPORT_SYMBOL(sysctl_intvec);
 EXPORT_SYMBOL(sysctl_jiffies);
 EXPORT_SYMBOL(sysctl_ms_jiffies);

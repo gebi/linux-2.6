@@ -19,6 +19,8 @@
 #include <linux/slab.h>
 #include <linux/genhd.h>
 #include <linux/mutex.h>
+#include <linux/sched.h>
+#include <linux/ve.h>
 #include "base.h"
 
 #define to_class_attr(_attr) container_of(_attr, struct class_attribute, attr)
@@ -72,8 +74,14 @@ static struct kobj_type class_ktype = {
 };
 
 /* Hotplug events for classes go to the class class_subsys */
-static struct kset *class_kset;
+struct kset *class_kset;
+EXPORT_SYMBOL_GPL(class_kset);
 
+#ifndef CONFIG_VE
+#define visible_class_kset class_kset
+#else
+#define visible_class_kset (get_exec_env()->class_kset)
+#endif
 
 int class_create_file(struct class *cls, const struct class_attribute *attr)
 {
@@ -162,9 +170,9 @@ int __class_register(struct class *cls, struct lock_class_key *key)
 #if defined(CONFIG_SYSFS_DEPRECATED) && defined(CONFIG_BLOCK)
 	/* let the block class directory show up in the root of sysfs */
 	if (cls != &block_class)
-		cp->class_subsys.kobj.kset = class_kset;
+		cp->class_subsys.kobj.kset = visible_class_kset;
 #else
-	cp->class_subsys.kobj.kset = class_kset;
+	cp->class_subsys.kobj.kset = visible_class_kset;
 #endif
 	cp->class_subsys.kobj.ktype = &class_ktype;
 	cp->class = cls;
@@ -418,13 +426,20 @@ void class_interface_unregister(struct class_interface *class_intf)
 	class_put(parent);
 }
 
-int __init classes_init(void)
+int classes_init(void)
 {
-	class_kset = kset_create_and_add("class", NULL, NULL);
-	if (!class_kset)
+	visible_class_kset = kset_create_and_add("class", NULL, NULL);
+	if (!visible_class_kset)
 		return -ENOMEM;
 	return 0;
 }
+EXPORT_SYMBOL_GPL(classes_init);
+
+void classes_fini(void)
+{
+	kset_unregister(visible_class_kset);
+}
+EXPORT_SYMBOL_GPL(classes_fini);
 
 EXPORT_SYMBOL_GPL(class_create_file);
 EXPORT_SYMBOL_GPL(class_remove_file);

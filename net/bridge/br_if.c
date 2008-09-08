@@ -12,6 +12,7 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/nsproxy.h>
 #include <linux/netdevice.h>
 #include <linux/ethtool.h>
 #include <linux/if_arp.h>
@@ -158,6 +159,11 @@ static void del_br(struct net_bridge *br)
 {
 	struct net_bridge_port *p, *n;
 
+	if (br->master_dev) {
+		dev_put(br->master_dev);
+		br->master_dev = NULL;
+	}
+
 	list_for_each_entry_safe(p, n, &br->port_list, list) {
 		del_nbp(p);
 	}
@@ -300,7 +306,7 @@ int br_del_bridge(const char *name)
 	int ret = 0;
 
 	rtnl_lock();
-	dev = __dev_get_by_name(&init_net, name);
+	dev = __dev_get_by_name(current->nsproxy->net_ns, name);
 	if (dev == NULL)
 		ret =  -ENXIO; 	/* Could not find device */
 
@@ -405,6 +411,10 @@ int br_add_if(struct net_bridge *br, struct net_device *dev)
 	if ((dev->flags & IFF_UP) && netif_carrier_ok(dev) &&
 	    (br->dev->flags & IFF_UP))
 		br_stp_enable_port(p);
+	if (!(dev->features & NETIF_F_VIRTUAL)) {
+		dev_hold(dev);
+		br->master_dev = dev;
+	}
 	spin_unlock_bh(&br->lock);
 
 	br_ifinfo_notify(RTM_NEWLINK, p);
@@ -440,6 +450,16 @@ int br_del_if(struct net_bridge *br, struct net_device *dev)
 	spin_lock_bh(&br->lock);
 	br_stp_recalculate_bridge_id(br);
 	br_features_recompute(br);
+	if (br->master_dev == dev) {
+		br->master_dev = NULL;
+		dev_put(dev);
+		list_for_each_entry(p, &br->port_list, list)
+			if (!(p->dev->features & NETIF_F_VIRTUAL)) {
+				dev_hold(p->dev);
+				br->master_dev = p->dev;
+				break;
+			}
+	}
 	spin_unlock_bh(&br->lock);
 
 	return 0;
@@ -451,7 +471,7 @@ void __exit br_cleanup_bridges(void)
 
 	rtnl_lock();
 restart:
-	for_each_netdev(&init_net, dev) {
+	for_each_netdev(current->nsproxy->net_ns, dev) {
 		if (dev->priv_flags & IFF_EBRIDGE) {
 			del_br(dev->priv);
 			goto restart;

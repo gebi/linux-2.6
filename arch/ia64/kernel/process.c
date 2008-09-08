@@ -28,6 +28,7 @@
 #include <linux/delay.h>
 #include <linux/kdebug.h>
 #include <linux/utsname.h>
+#include <linux/sysctl.h>
 
 #include <asm/cpu.h>
 #include <asm/delay.h>
@@ -391,6 +392,9 @@ ia64_load_extra (struct task_struct *task)
 #endif
 }
 
+extern char ia64_ret_from_resume;
+EXPORT_SYMBOL(ia64_ret_from_resume);
+
 /*
  * Copy the state of an ia-64 thread.
  *
@@ -464,7 +468,6 @@ copy_thread (int nr, unsigned long clone_flags,
 			child_ptregs->r12 = user_stack_base + user_stack_size - 16;
 			child_ptregs->ar_bspstore = user_stack_base;
 			child_ptregs->ar_rnat = 0;
-			child_ptregs->loadrs = 0;
 		}
 	} else {
 		/*
@@ -676,15 +679,24 @@ out:
 	return error;
 }
 
+extern void start_kernel_thread (void);
+EXPORT_SYMBOL(start_kernel_thread);
+
 pid_t
 kernel_thread (int (*fn)(void *), void *arg, unsigned long flags)
 {
-	extern void start_kernel_thread (void);
 	unsigned long *helper_fptr = (unsigned long *) &start_kernel_thread;
 	struct {
 		struct switch_stack sw;
 		struct pt_regs pt;
 	} regs;
+
+	/* Don't allow kernel_thread() inside VE */
+	if (!ve_allow_kthreads && !ve_is_super(get_exec_env())) {
+		printk("kernel_thread call inside container\n");
+		dump_stack();
+		return -EPERM;
+	}
 
 	memset(&regs, 0, sizeof(regs));
 	regs.pt.cr_iip = helper_fptr[0];	/* set entry point (IP) */

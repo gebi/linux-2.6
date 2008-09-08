@@ -10,6 +10,7 @@
  */
 
 #include <linux/types.h>
+#include <linux/sched.h>
 #include <linux/timer.h>
 #include <linux/module.h>
 #include <linux/netfilter.h>
@@ -94,7 +95,7 @@ static int icmpv6_packet(struct nf_conn *ct,
 	} else {
 		atomic_inc(&ct->proto.icmp.count);
 		nf_conntrack_event_cache(IPCT_PROTOINFO_VOLATILE, skb);
-		nf_ct_refresh_acct(ct, ctinfo, skb, nf_ct_icmpv6_timeout);
+		nf_ct_refresh_acct(ct, ctinfo, skb, ve_nf_ct_icmpv6_timeout);
 	}
 
 	return NF_ACCEPT;
@@ -149,7 +150,7 @@ icmpv6_error_message(struct sk_buff *skb,
 	/* Ordinarily, we'd expect the inverted tupleproto, but it's
 	   been preserved inside the ICMP. */
 	if (!nf_ct_invert_tuple(&intuple, &origtuple,
-				&nf_conntrack_l3proto_ipv6, inproto)) {
+				ve_nf_conntrack_l3proto_ipv6, inproto)) {
 		pr_debug("icmpv6_error: Can't invert tuple\n");
 		return -NF_ACCEPT;
 	}
@@ -281,3 +282,48 @@ struct nf_conntrack_l4proto nf_conntrack_l4proto_icmpv6 __read_mostly =
 	.ctl_table		= icmpv6_sysctl_table,
 #endif
 };
+
+#if defined(CONFIG_VE_IPTABLES) && defined(CONFIG_SYSCTL)
+int nf_ct_proto_icmpv6_sysctl_init(void)
+{
+	struct nf_conntrack_l4proto *icmp6;
+
+	if (ve_is_super(get_exec_env())) {
+		icmp6 = &nf_conntrack_l4proto_icmpv6;
+		goto out;
+	}
+
+	icmp6 = kmemdup(&nf_conntrack_l4proto_icmpv6,
+			sizeof(struct nf_conntrack_l4proto), GFP_KERNEL);
+	if (!icmp6)
+		goto no_mem_ct;
+
+	icmp6->ctl_table_header = &ve_icmpv6_sysctl_header;
+	icmp6->ctl_table = kmemdup(icmpv6_sysctl_table,
+			sizeof(icmpv6_sysctl_table), GFP_KERNEL);
+	if (!icmp6->ctl_table)
+		goto no_mem_sys;
+
+	icmp6->ctl_table[0].data = &ve_nf_ct_icmpv6_timeout;
+out:
+	ve_nf_ct_icmpv6_timeout = nf_ct_icmpv6_timeout;
+
+	ve_nf_conntrack_l4proto_icmpv6 = icmp6;
+	return 0;
+
+no_mem_sys:
+	kfree(icmp6);
+no_mem_ct:
+	return -ENOMEM;
+}
+EXPORT_SYMBOL(nf_ct_proto_icmpv6_sysctl_init);
+
+void nf_ct_proto_icmpv6_sysctl_cleanup(void)
+{
+	if (!ve_is_super(get_exec_env())) {
+		kfree(ve_nf_conntrack_l4proto_icmpv6->ctl_table);
+		kfree(ve_nf_conntrack_l4proto_icmpv6);
+	}
+}
+EXPORT_SYMBOL(nf_ct_proto_icmpv6_sysctl_cleanup);
+#endif /* CONFIG_VE_IPTABLES && CONFIG_SYSCTL */

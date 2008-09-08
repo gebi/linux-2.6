@@ -28,7 +28,7 @@
 #include <net/netfilter/nf_conntrack_l4proto.h>
 #include <net/netfilter/nf_conntrack_core.h>
 
-static struct nf_conntrack_l4proto **nf_ct_protos[PF_MAX] __read_mostly;
+struct nf_conntrack_l4proto **nf_ct_protos[PF_MAX] __read_mostly;
 struct nf_conntrack_l3proto *nf_ct_l3protos[AF_MAX] __read_mostly;
 EXPORT_SYMBOL_GPL(nf_ct_l3protos);
 
@@ -40,7 +40,8 @@ nf_ct_register_sysctl(struct ctl_table_header **header, struct ctl_path *path,
 		      struct ctl_table *table, unsigned int *users)
 {
 	if (*header == NULL) {
-		*header = register_sysctl_paths(path, table);
+		*header = register_net_sysctl_table(get_exec_env()->ve_netns,
+						    path, table);
 		if (*header == NULL)
 			return -ENOMEM;
 	}
@@ -56,7 +57,7 @@ nf_ct_unregister_sysctl(struct ctl_table_header **header,
 	if (users != NULL && --*users > 0)
 		return;
 
-	unregister_sysctl_table(*header);
+	unregister_net_sysctl_table(*header);
 	*header = NULL;
 }
 #endif
@@ -64,10 +65,10 @@ nf_ct_unregister_sysctl(struct ctl_table_header **header,
 struct nf_conntrack_l4proto *
 __nf_ct_l4proto_find(u_int16_t l3proto, u_int8_t l4proto)
 {
-	if (unlikely(l3proto >= AF_MAX || nf_ct_protos[l3proto] == NULL))
-		return &nf_conntrack_l4proto_generic;
+	if (unlikely(l3proto >= AF_MAX || ve_nf_ct_protos[l3proto] == NULL))
+		return ve_nf_conntrack_l4proto_generic;
 
-	return rcu_dereference(nf_ct_protos[l3proto][l4proto]);
+	return rcu_dereference(ve_nf_ct_protos[l3proto][l4proto]);
 }
 EXPORT_SYMBOL_GPL(__nf_ct_l4proto_find);
 
@@ -81,7 +82,7 @@ nf_ct_l4proto_find_get(u_int16_t l3proto, u_int8_t l4proto)
 	rcu_read_lock();
 	p = __nf_ct_l4proto_find(l3proto, l4proto);
 	if (!try_module_get(p->me))
-		p = &nf_conntrack_l4proto_generic;
+		p = ve_nf_conntrack_l4proto_generic;
 	rcu_read_unlock();
 
 	return p;
@@ -188,7 +189,8 @@ int nf_conntrack_l3proto_register(struct nf_conntrack_l3proto *proto)
 		return -EBUSY;
 
 	mutex_lock(&nf_ct_proto_mutex);
-	if (nf_ct_l3protos[proto->l3proto] != &nf_conntrack_l3proto_generic) {
+	if (ve_nf_ct_l3protos[proto->l3proto] != 
+				&nf_conntrack_l3proto_generic) {
 		ret = -EBUSY;
 		goto out_unlock;
 	}
@@ -197,7 +199,7 @@ int nf_conntrack_l3proto_register(struct nf_conntrack_l3proto *proto)
 	if (ret < 0)
 		goto out_unlock;
 
-	rcu_assign_pointer(nf_ct_l3protos[proto->l3proto], proto);
+	rcu_assign_pointer(ve_nf_ct_l3protos[proto->l3proto], proto);
 
 out_unlock:
 	mutex_unlock(&nf_ct_proto_mutex);
@@ -210,8 +212,8 @@ void nf_conntrack_l3proto_unregister(struct nf_conntrack_l3proto *proto)
 	BUG_ON(proto->l3proto >= AF_MAX);
 
 	mutex_lock(&nf_ct_proto_mutex);
-	BUG_ON(nf_ct_l3protos[proto->l3proto] != proto);
-	rcu_assign_pointer(nf_ct_l3protos[proto->l3proto],
+	BUG_ON(ve_nf_ct_l3protos[proto->l3proto] != proto);
+	rcu_assign_pointer(ve_nf_ct_l3protos[proto->l3proto],
 			   &nf_conntrack_l3proto_generic);
 	nf_ct_l3proto_unregister_sysctl(proto);
 	mutex_unlock(&nf_ct_proto_mutex);
@@ -279,7 +281,7 @@ int nf_conntrack_l4proto_register(struct nf_conntrack_l4proto *l4proto)
 		return -EBUSY;
 
 	mutex_lock(&nf_ct_proto_mutex);
-	if (!nf_ct_protos[l4proto->l3proto]) {
+	if (!ve_nf_ct_protos[l4proto->l3proto]) {
 		/* l3proto may be loaded latter. */
 		struct nf_conntrack_l4proto **proto_array;
 		int i;
@@ -293,10 +295,10 @@ int nf_conntrack_l4proto_register(struct nf_conntrack_l4proto *l4proto)
 		}
 
 		for (i = 0; i < MAX_NF_CT_PROTO; i++)
-			proto_array[i] = &nf_conntrack_l4proto_generic;
-		nf_ct_protos[l4proto->l3proto] = proto_array;
-	} else if (nf_ct_protos[l4proto->l3proto][l4proto->l4proto] !=
-					&nf_conntrack_l4proto_generic) {
+			proto_array[i] = ve_nf_conntrack_l4proto_generic;
+		ve_nf_ct_protos[l4proto->l3proto] = proto_array;
+	} else if (ve_nf_ct_protos[l4proto->l3proto][l4proto->l4proto] !=
+					   ve_nf_conntrack_l4proto_generic) {
 		ret = -EBUSY;
 		goto out_unlock;
 	}
@@ -305,7 +307,7 @@ int nf_conntrack_l4proto_register(struct nf_conntrack_l4proto *l4proto)
 	if (ret < 0)
 		goto out_unlock;
 
-	rcu_assign_pointer(nf_ct_protos[l4proto->l3proto][l4proto->l4proto],
+	rcu_assign_pointer(ve_nf_ct_protos[l4proto->l3proto][l4proto->l4proto],
 			   l4proto);
 
 out_unlock:
@@ -319,9 +321,9 @@ void nf_conntrack_l4proto_unregister(struct nf_conntrack_l4proto *l4proto)
 	BUG_ON(l4proto->l3proto >= PF_MAX);
 
 	mutex_lock(&nf_ct_proto_mutex);
-	BUG_ON(nf_ct_protos[l4proto->l3proto][l4proto->l4proto] != l4proto);
-	rcu_assign_pointer(nf_ct_protos[l4proto->l3proto][l4proto->l4proto],
-			   &nf_conntrack_l4proto_generic);
+	BUG_ON(ve_nf_ct_protos[l4proto->l3proto][l4proto->l4proto] != l4proto);
+	rcu_assign_pointer(ve_nf_ct_protos[l4proto->l3proto][l4proto->l4proto],
+			   ve_nf_conntrack_l4proto_generic);
 	nf_ct_l4proto_unregister_sysctl(l4proto);
 	mutex_unlock(&nf_ct_proto_mutex);
 
@@ -337,12 +339,12 @@ int nf_conntrack_proto_init(void)
 	unsigned int i;
 	int err;
 
-	err = nf_ct_l4proto_register_sysctl(&nf_conntrack_l4proto_generic);
+	err = nf_ct_l4proto_register_sysctl(ve_nf_conntrack_l4proto_generic);
 	if (err < 0)
 		return err;
 
 	for (i = 0; i < AF_MAX; i++)
-		rcu_assign_pointer(nf_ct_l3protos[i],
+		rcu_assign_pointer(ve_nf_ct_l3protos[i],
 				   &nf_conntrack_l3proto_generic);
 	return 0;
 }
@@ -351,9 +353,9 @@ void nf_conntrack_proto_fini(void)
 {
 	unsigned int i;
 
-	nf_ct_l4proto_unregister_sysctl(&nf_conntrack_l4proto_generic);
+	nf_ct_l4proto_unregister_sysctl(ve_nf_conntrack_l4proto_generic);
 
 	/* free l3proto protocol tables */
 	for (i = 0; i < PF_MAX; i++)
-		kfree(nf_ct_protos[i]);
+		kfree(ve_nf_ct_protos[i]);
 }

@@ -7,6 +7,7 @@
  */
 
 #include <linux/types.h>
+#include <linux/sched.h>
 #include <linux/timer.h>
 #include <linux/module.h>
 #include <linux/in.h>
@@ -666,7 +667,7 @@ static bool tcp_in_window(const struct nf_conn *ct,
 	} else {
 		res = false;
 		if (sender->flags & IP_CT_TCP_FLAG_BE_LIBERAL ||
-		    nf_ct_tcp_be_liberal)
+		    ve_nf_ct_tcp_be_liberal)
 			res = true;
 		if (!res && LOG_INVALID(IPPROTO_TCP))
 			nf_log_packet(pf, 0, skb, NULL, NULL, NULL,
@@ -957,15 +958,15 @@ static int tcp_packet(struct nf_conn *ct,
 	    && new_state == TCP_CONNTRACK_FIN_WAIT)
 		ct->proto.tcp.seen[dir].flags |= IP_CT_TCP_FLAG_CLOSE_INIT;
 
-	if (ct->proto.tcp.retrans >= nf_ct_tcp_max_retrans &&
-	    tcp_timeouts[new_state] > nf_ct_tcp_timeout_max_retrans)
-		timeout = nf_ct_tcp_timeout_max_retrans;
+	if (ct->proto.tcp.retrans >= ve_nf_ct_tcp_max_retrans &&
+	    tcp_timeouts[new_state] > ve_nf_ct_tcp_timeout_max_retrans)
+		timeout = ve_nf_ct_tcp_timeout_max_retrans;
 	else if ((ct->proto.tcp.seen[0].flags | ct->proto.tcp.seen[1].flags) &
 		 IP_CT_TCP_FLAG_DATA_UNACKNOWLEDGED &&
-		 tcp_timeouts[new_state] > nf_ct_tcp_timeout_unacknowledged)
-		timeout = nf_ct_tcp_timeout_unacknowledged;
+		 tcp_timeouts[new_state] > ve_nf_ct_tcp_timeout_unacknowledged)
+		timeout = ve_nf_ct_tcp_timeout_unacknowledged;
 	else
-		timeout = tcp_timeouts[new_state];
+		timeout = ve_tcp_timeouts[new_state];
 	write_unlock_bh(&tcp_lock);
 
 	nf_conntrack_event_cache(IPCT_PROTOINFO_VOLATILE, skb);
@@ -1033,7 +1034,7 @@ static bool tcp_new(struct nf_conn *ct, const struct sk_buff *skb,
 
 		tcp_options(skb, dataoff, th, &ct->proto.tcp.seen[0]);
 		ct->proto.tcp.seen[1].flags = 0;
-	} else if (nf_ct_tcp_loose == 0) {
+	} else if (ve_nf_ct_tcp_loose == 0) {
 		/* Don't try to pick up connections. */
 		return false;
 	} else {
@@ -1435,3 +1436,115 @@ struct nf_conntrack_l4proto nf_conntrack_l4proto_tcp6 __read_mostly =
 #endif
 };
 EXPORT_SYMBOL_GPL(nf_conntrack_l4proto_tcp6);
+
+#if defined(CONFIG_VE_IPTABLES) && defined(CONFIG_SYSCTL)
+int nf_ct_proto_tcp_sysctl_init(void)
+{
+	struct nf_conntrack_l4proto *tcp4, *tcp6;
+
+	if (ve_is_super(get_exec_env())) {
+		tcp4 = &nf_conntrack_l4proto_tcp4;
+		tcp6 = &nf_conntrack_l4proto_tcp6;
+		goto out;
+	}
+
+	tcp4 = kmemdup(&nf_conntrack_l4proto_tcp4,
+			sizeof(struct nf_conntrack_l4proto), GFP_KERNEL);
+	if (tcp4 == NULL)
+		goto no_mem_ct4;
+
+	tcp4->ctl_table_users = &ve_tcp_sysctl_table_users;
+	tcp4->ctl_table_header = &ve_tcp_sysctl_header;
+	tcp4->ctl_table = kmemdup(tcp_sysctl_table,
+			sizeof(tcp_sysctl_table), GFP_KERNEL);
+	if (tcp4->ctl_table == NULL)
+		goto no_mem_sys;
+
+	tcp4->ctl_table[0].data = &ve_nf_ct_tcp_timeouts[1];
+	tcp4->ctl_table[1].data = &ve_nf_ct_tcp_timeouts[2];
+	tcp4->ctl_table[2].data = &ve_nf_ct_tcp_timeouts[3];
+	tcp4->ctl_table[3].data = &ve_nf_ct_tcp_timeouts[4];
+	tcp4->ctl_table[4].data = &ve_nf_ct_tcp_timeouts[5];
+	tcp4->ctl_table[5].data = &ve_nf_ct_tcp_timeouts[6];
+	tcp4->ctl_table[6].data = &ve_nf_ct_tcp_timeouts[7];
+	tcp4->ctl_table[7].data = &ve_nf_ct_tcp_timeouts[8];
+	tcp4->ctl_table[8].data = &ve_nf_ct_tcp_timeout_max_retrans;
+	tcp4->ctl_table[9].data = &ve_nf_ct_tcp_loose;
+	tcp4->ctl_table[10].data = &ve_nf_ct_tcp_be_liberal;
+	tcp4->ctl_table[11].data = &ve_nf_ct_tcp_max_retrans;
+
+#ifdef CONFIG_NF_CONNTRACK_PROC_COMPAT
+	tcp4->ctl_compat_table_header = ve_tcp_compat_sysctl_header;
+	tcp4->ctl_compat_table = kmemdup(tcp_compat_sysctl_table,
+			sizeof(tcp_compat_sysctl_table), GFP_KERNEL);
+	if (tcp4->ctl_compat_table == NULL)
+		goto no_mem_compat;
+
+	tcp4->ctl_compat_table[0].data = &ve_nf_ct_tcp_timeouts[1];
+	tcp4->ctl_compat_table[1].data = &ve_nf_ct_tcp_timeouts[2];
+	tcp4->ctl_compat_table[2].data = &ve_nf_ct_tcp_timeouts[3];
+	tcp4->ctl_compat_table[3].data = &ve_nf_ct_tcp_timeouts[4];
+	tcp4->ctl_compat_table[4].data = &ve_nf_ct_tcp_timeouts[5];
+	tcp4->ctl_compat_table[5].data = &ve_nf_ct_tcp_timeouts[6];
+	tcp4->ctl_compat_table[6].data = &ve_nf_ct_tcp_timeouts[7];
+	tcp4->ctl_compat_table[7].data = &ve_nf_ct_tcp_timeouts[8];
+	tcp4->ctl_compat_table[8].data = &ve_nf_ct_tcp_timeout_max_retrans;
+	tcp4->ctl_compat_table[9].data = &ve_nf_ct_tcp_loose;
+	tcp4->ctl_compat_table[10].data = &ve_nf_ct_tcp_be_liberal;
+	tcp4->ctl_compat_table[11].data = &ve_nf_ct_tcp_max_retrans;
+#endif
+
+	tcp6 = kmemdup(&nf_conntrack_l4proto_tcp6,
+			sizeof(struct nf_conntrack_l4proto), GFP_KERNEL);
+	if (!tcp6)
+		goto no_mem_ct6;
+
+	tcp6->ctl_table_users = &ve_tcp_sysctl_table_users;
+	tcp6->ctl_table_header = &ve_tcp_sysctl_header;
+	tcp6->ctl_table = tcp4->ctl_table;
+out:
+	ve_nf_ct_tcp_timeouts[1] = tcp_timeouts[TCP_CONNTRACK_SYN_SENT];
+	ve_nf_ct_tcp_timeouts[2] = tcp_timeouts[TCP_CONNTRACK_SYN_RECV];
+	ve_nf_ct_tcp_timeouts[3] = tcp_timeouts[TCP_CONNTRACK_ESTABLISHED];
+	ve_nf_ct_tcp_timeouts[4] = tcp_timeouts[TCP_CONNTRACK_FIN_WAIT];
+	ve_nf_ct_tcp_timeouts[5] = tcp_timeouts[TCP_CONNTRACK_CLOSE_WAIT];
+	ve_nf_ct_tcp_timeouts[6] = tcp_timeouts[TCP_CONNTRACK_LAST_ACK];
+	ve_nf_ct_tcp_timeouts[7] = tcp_timeouts[TCP_CONNTRACK_TIME_WAIT];
+	ve_nf_ct_tcp_timeouts[8] = tcp_timeouts[TCP_CONNTRACK_CLOSE];
+	ve_nf_ct_tcp_timeout_max_retrans = nf_ct_tcp_timeout_max_retrans;
+	ve_nf_ct_tcp_loose = nf_ct_tcp_loose;
+	ve_nf_ct_tcp_be_liberal = nf_ct_tcp_be_liberal;
+	ve_nf_ct_tcp_max_retrans = nf_ct_tcp_max_retrans;
+
+	ve_nf_conntrack_l4proto_tcp4 = tcp4;
+	ve_nf_conntrack_l4proto_tcp6 = tcp6;
+	return 0;
+
+no_mem_ct6:
+#ifdef CONFIG_NF_CONNTRACK_PROC_COMPAT
+	kfree(tcp4->ctl_compat_table);
+no_mem_compat:
+#endif
+	kfree(tcp4->ctl_table);
+no_mem_sys:
+	kfree(tcp4);
+no_mem_ct4:
+	return -ENOMEM;
+}
+EXPORT_SYMBOL(nf_ct_proto_tcp_sysctl_init);
+
+void nf_ct_proto_tcp_sysctl_cleanup(void)
+{
+	if (!ve_is_super(get_exec_env())) {
+#ifdef CONFIG_NF_CONNTRACK_PROC_COMPAT
+		kfree(ve_nf_conntrack_l4proto_tcp4->ctl_compat_table);
+#endif
+		kfree(ve_nf_conntrack_l4proto_tcp4->ctl_table);
+		kfree(ve_nf_conntrack_l4proto_tcp4);
+
+		kfree(ve_nf_conntrack_l4proto_tcp6);
+	}
+}
+EXPORT_SYMBOL(nf_ct_proto_tcp_sysctl_cleanup);
+#endif /* CONFIG_VE_IPTABLES && CONFIG_SYSCTL */
+

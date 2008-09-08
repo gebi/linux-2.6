@@ -51,6 +51,9 @@
 #include <linux/memcontrol.h>
 #include <linux/mmu_notifier.h>
 
+#include <bc/beancounter.h>
+#include <bc/vmpages.h>
+
 #include <asm/tlbflush.h>
 
 struct kmem_cache *anon_vma_cachep;
@@ -94,6 +97,7 @@ int anon_vma_prepare(struct vm_area_struct *vma)
 	}
 	return 0;
 }
+EXPORT_SYMBOL_GPL(anon_vma_prepare);
 
 void __anon_vma_merge(struct vm_area_struct *vma, struct vm_area_struct *next)
 {
@@ -119,6 +123,7 @@ void anon_vma_link(struct vm_area_struct *vma)
 		spin_unlock(&anon_vma->lock);
 	}
 }
+EXPORT_SYMBOL_GPL(anon_vma_link);
 
 void anon_vma_unlink(struct vm_area_struct *vma)
 {
@@ -150,14 +155,14 @@ static void anon_vma_ctor(void *data)
 void __init anon_vma_init(void)
 {
 	anon_vma_cachep = kmem_cache_create("anon_vma", sizeof(struct anon_vma),
-			0, SLAB_DESTROY_BY_RCU|SLAB_PANIC, anon_vma_ctor);
+			0, SLAB_DESTROY_BY_RCU|SLAB_PANIC|SLAB_UBC, anon_vma_ctor);
 }
 
 /*
  * Getting a lock on a stable anon_vma from a page off the LRU is
  * tricky: page_lock_anon_vma rely on RCU to guard against the races.
  */
-static struct anon_vma *page_lock_anon_vma(struct page *page)
+struct anon_vma *page_lock_anon_vma(struct page *page)
 {
 	struct anon_vma *anon_vma;
 	unsigned long anon_mapping;
@@ -176,12 +181,14 @@ out:
 	rcu_read_unlock();
 	return NULL;
 }
+EXPORT_SYMBOL_GPL(page_lock_anon_vma);
 
-static void page_unlock_anon_vma(struct anon_vma *anon_vma)
+void page_unlock_anon_vma(struct anon_vma *anon_vma)
 {
 	spin_unlock(&anon_vma->lock);
 	rcu_read_unlock();
 }
+EXPORT_SYMBOL_GPL(page_unlock_anon_vma);
 
 /*
  * At what user virtual address is page expected in @vma?
@@ -676,6 +683,12 @@ void page_remove_rmap(struct page *page, struct vm_area_struct *vma)
 		}
 
 		mem_cgroup_uncharge_page(page);
+		/*
+		 * Well, when a page is unmapped, we cannot keep PG_checkpointed
+		 * flag, it is not accessible via process VM and we have no way
+		 * to reset its state
+		 */
+		ClearPageCheckpointed(page);
 		__dec_zone_page_state(page,
 			PageAnon(page) ? NR_ANON_PAGES : NR_FILE_MAPPED);
 		/*
@@ -776,6 +789,9 @@ static int try_to_unmap_one(struct page *page, struct vm_area_struct *vma,
 
 
 	page_remove_rmap(page, vma);
+	ub_unused_privvm_inc(mm, vma);
+	ub_percpu_inc(mm->mm_ub, unmap);
+	pb_remove_ref(page, mm);
 	page_cache_release(page);
 
 out_unmap:
@@ -866,6 +882,9 @@ static void try_to_unmap_cluster(unsigned long cursor,
 			set_page_dirty(page);
 
 		page_remove_rmap(page, vma);
+		ub_percpu_inc(mm->mm_ub, unmap);
+		pb_remove_ref(page, mm);
+		ub_unused_privvm_inc(mm, vma);
 		page_cache_release(page);
 		dec_mm_counter(mm, file_rss);
 		(*mapcount)--;

@@ -23,6 +23,9 @@ struct shmem_inode_info {
 	struct posix_acl	*i_acl;
 	struct posix_acl	*i_default_acl;
 #endif
+#ifdef CONFIG_BEANCOUNTERS
+	struct user_beancounter	*shmi_ub;
+#endif
 };
 
 struct shmem_sb_info {
@@ -61,5 +64,8 @@ static inline void shmem_acl_destroy_inode(struct inode *inode)
 {
 }
 #endif  /* CONFIG_TMPFS_POSIX_ACL */
+
+int shmem_insertpage(struct inode * inode, unsigned long index,
+		     swp_entry_t swap);
 
 #endif

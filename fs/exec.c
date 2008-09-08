@@ -26,6 +26,7 @@
 #include <linux/file.h>
 #include <linux/fdtable.h>
 #include <linux/mm.h>
+#include <linux/virtinfo.h>
 #include <linux/stat.h>
 #include <linux/fcntl.h>
 #include <linux/smp_lock.h>
@@ -55,6 +56,8 @@
 #include <asm/mmu_context.h>
 #include <asm/tlb.h>
 
+#include <bc/vmpages.h>
+
 #ifdef CONFIG_KMOD
 #include <linux/kmod.h>
 #endif
@@ -69,6 +72,8 @@ char core_pattern[CORENAME_MAX_SIZE] = "core";
 int suid_dumpable = 0;
 
 /* The maximal length of core_pattern is also specified in sysctl.c */
+
+int sysctl_at_vsyscall;
 
 static LIST_HEAD(formats);
 static DEFINE_RWLOCK(binfmt_lock);
@@ -239,9 +244,13 @@ static int __bprm_mm_init(struct linux_binprm *bprm)
 	struct vm_area_struct *vma = NULL;
 	struct mm_struct *mm = bprm->mm;
 
-	bprm->vma = vma = kmem_cache_zalloc(vm_area_cachep, GFP_KERNEL);
+	if (ub_memory_charge(mm, PAGE_SIZE, VM_STACK_FLAGS | mm->def_flags,
+				NULL, UB_SOFT))
+		goto fail_charge;
+
+	bprm->vma = vma = kmem_cache_zalloc(vm_area_cachep, GFP_KERNEL_UBC);
 	if (!vma)
-		goto err;
+		goto fail_alloc;
 
 	down_write(&mm->mmap_sem);
 	vma->vm_mm = mm;
@@ -275,7 +284,9 @@ err:
 		bprm->vma = NULL;
 		kmem_cache_free(vm_area_cachep, vma);
 	}
-
+fail_alloc:
+	ub_memory_uncharge(mm, PAGE_SIZE, VM_STACK_FLAGS | mm->def_flags, NULL);
+fail_charge:
 	return err;
 }
 
@@ -723,10 +734,11 @@ int kernel_read(struct file *file, unsigned long offset,
 
 EXPORT_SYMBOL(kernel_read);
 
-static int exec_mmap(struct mm_struct *mm)
+static int exec_mmap(struct linux_binprm *bprm)
 {
 	struct task_struct *tsk;
-	struct mm_struct * old_mm, *active_mm;
+	struct mm_struct *old_mm, *active_mm, *mm;
+	int ret;
 
 	/* Notify parent that we're no longer interested in the old VM */
 	tsk = current;
@@ -746,6 +758,10 @@ static int exec_mmap(struct mm_struct *mm)
 			return -EINTR;
 		}
 	}
+
+	ret = 0;
+	mm = bprm->mm;
+	mm->vps_dumpable = 1;
 	task_lock(tsk);
 	active_mm = tsk->active_mm;
 	tsk->mm = mm;
@@ -754,14 +770,24 @@ static int exec_mmap(struct mm_struct *mm)
 	task_unlock(tsk);
 	mm_update_next_owner(old_mm);
 	arch_pick_mmap_layout(mm);
+	bprm->mm = NULL;		/* We're using it now */
+
+#ifdef CONFIG_VZ_GENCALLS
+	if (virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_EXECMMAP,
+				bprm) & NOTIFY_FAIL) {
+		/* similar to binfmt_elf */
+		send_sig(SIGKILL, current, 0);
+		ret = -ENOMEM;
+	}
+#endif
 	if (old_mm) {
 		up_read(&old_mm->mmap_sem);
 		BUG_ON(active_mm != old_mm);
 		mmput(old_mm);
-		return 0;
+		return ret;
 	}
 	mmdrop(active_mm);
-	return 0;
+	return ret;
 }
 
 /*
@@ -859,6 +885,10 @@ static int de_thread(struct task_struct *tsk)
 		transfer_pid(leader, tsk, PIDTYPE_PGID);
 		transfer_pid(leader, tsk, PIDTYPE_SID);
 		list_replace_rcu(&leader->tasks, &tsk->tasks);
+#ifdef CONFIG_VE
+		list_replace_rcu(&leader->ve_task_info.vetask_list,
+				&tsk->ve_task_info.vetask_list);
+#endif
 
 		tsk->group_leader = tsk;
 		leader->group_leader = tsk;
@@ -976,11 +1006,9 @@ int flush_old_exec(struct linux_binprm * bprm)
 	/*
 	 * Release all of the old mmap stuff
 	 */
-	retval = exec_mmap(bprm->mm);
+	retval = exec_mmap(bprm);
 	if (retval)
 		goto out;
-
-	bprm->mm = NULL;		/* We're using it now */
 
 	/* This is the point of no return */
 	current->sas_ss_sp = current->sas_ss_size = 0;
@@ -1283,6 +1311,10 @@ int do_execve(char * filename,
 	struct files_struct *displaced;
 	int retval;
 
+	retval = virtinfo_gencall(VIRTINFO_DOEXECVE, NULL);
+	if (retval)
+		return retval;
+
 	retval = unshare_files(&displaced);
 	if (retval)
 		goto out_ret;
@@ -1581,7 +1613,7 @@ static inline int zap_threads(struct task_struct *tsk, struct mm_struct *mm,
 	 *	next_thread().
 	 */
 	rcu_read_lock();
-	for_each_process(g) {
+	for_each_process_ve(g) {
 		if (g == tsk->group_leader)
 			continue;
 		if (g->flags & PF_KTHREAD)
@@ -1732,7 +1764,7 @@ int do_coredump(long signr, int exit_code, struct pt_regs * regs)
 	/*
 	 * If another thread got here first, or we are not dumpable, bail out.
 	 */
-	if (mm->core_state || !get_dumpable(mm)) {
+	if (mm->core_state || !get_dumpable(mm) || mm->vps_dumpable != 1) {
 		up_write(&mm->mmap_sem);
 		goto fail;
 	}

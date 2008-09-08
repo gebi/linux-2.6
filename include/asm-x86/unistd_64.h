@@ -653,6 +653,26 @@ __SYSCALL(__NR_dup3, sys_dup3)
 __SYSCALL(__NR_pipe2, sys_pipe2)
 #define __NR_inotify_init1			294
 __SYSCALL(__NR_inotify_init1, sys_inotify_init1)
+#define __NR_fairsched_vcpus			499
+__SYSCALL(__NR_fairsched_vcpus, sys_fairsched_vcpus)
+#define __NR_getluid				500
+__SYSCALL(__NR_getluid, sys_getluid)
+#define __NR_setluid				501
+__SYSCALL(__NR_setluid, sys_setluid)
+#define __NR_setublimit				502
+__SYSCALL(__NR_setublimit, sys_setublimit)
+#define __NR_ubstat				503
+__SYSCALL(__NR_ubstat, sys_ubstat)
+#define __NR_fairsched_mknod			504 /* FairScheduler syscalls */
+__SYSCALL(__NR_fairsched_mknod, sys_fairsched_mknod)
+#define __NR_fairsched_rmnod			505
+__SYSCALL(__NR_fairsched_rmnod, sys_fairsched_rmnod)
+#define __NR_fairsched_chwt			506
+__SYSCALL(__NR_fairsched_chwt, sys_fairsched_chwt)
+#define __NR_fairsched_mvpr			507
+__SYSCALL(__NR_fairsched_mvpr, sys_fairsched_mvpr)
+#define __NR_fairsched_rate			508
+__SYSCALL(__NR_fairsched_rate, sys_fairsched_rate)
 
 
 #ifndef __NO_STUBS
@@ -678,6 +698,7 @@ __SYSCALL(__NR_inotify_init1, sys_inotify_init1)
 #define __ARCH_WANT_SYS_RT_SIGSUSPEND
 #define __ARCH_WANT_SYS_TIME
 #define __ARCH_WANT_COMPAT_SYS_TIME
+#define __ARCH_WANT_SYS_RT_SIGSUSPEND
 #endif	/* __NO_STUBS */
 
 #ifdef __KERNEL__

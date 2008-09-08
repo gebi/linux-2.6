@@ -80,7 +80,7 @@ mark_tg_check_v0(const char *tablename, const void *entry,
 	const struct xt_mark_target_info *markinfo = targinfo;
 
 	if (markinfo->mark > 0xffffffff) {
-		printk(KERN_WARNING "MARK: Only supports 32bit wide mark\n");
+		ve_printk(VE_LOG, KERN_WARNING "MARK: Only supports 32bit wide mark\n");
 		return false;
 	}
 	return true;
@@ -96,12 +96,12 @@ mark_tg_check_v1(const char *tablename, const void *entry,
 	if (markinfo->mode != XT_MARK_SET
 	    && markinfo->mode != XT_MARK_AND
 	    && markinfo->mode != XT_MARK_OR) {
-		printk(KERN_WARNING "MARK: unknown mode %u\n",
+		ve_printk(VE_LOG, KERN_WARNING "MARK: unknown mode %u\n",
 		       markinfo->mode);
 		return false;
 	}
 	if (markinfo->mark > 0xffffffff) {
-		printk(KERN_WARNING "MARK: Only supports 32bit wide mark\n");
+		ve_printk(VE_LOG, KERN_WARNING "MARK: Only supports 32bit wide mark\n");
 		return false;
 	}
 	return true;

@@ -73,7 +73,7 @@ dscp_tg_check(const char *tablename, const void *e_void,
 	const u_int8_t dscp = ((struct xt_DSCP_info *)targinfo)->dscp;
 
 	if (dscp > XT_DSCP_MAX) {
-		printk(KERN_WARNING "DSCP: dscp %x out of range\n", dscp);
+		ve_printk(VE_LOG, KERN_WARNING "DSCP: dscp %x out of range\n", dscp);
 		return false;
 	}
 	return true;

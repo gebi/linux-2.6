@@ -31,7 +31,9 @@
 #include <linux/smp.h>
 #include <linux/security.h>
 #include <linux/bootmem.h>
+#include <linux/vzratelimit.h>
 #include <linux/syscalls.h>
+#include <linux/veprintk.h>
 
 #include <asm/uaccess.h>
 
@@ -92,7 +94,7 @@ static int console_locked, console_suspended;
  * It is also used in interesting ways to provide interlocking in
  * release_console_sem().
  */
-static DEFINE_SPINLOCK(logbuf_lock);
+DEFINE_SPINLOCK(logbuf_lock);
 
 #define LOG_BUF_MASK (log_buf_len-1)
 #define LOG_BUF(idx) (log_buf[(idx) & LOG_BUF_MASK])
@@ -128,6 +130,7 @@ EXPORT_SYMBOL(console_set_on_cmdline);
 
 /* Flag: console code may call schedule() */
 static int console_may_schedule;
+int console_silence_loglevel;
 
 #ifdef CONFIG_PRINTK
 
@@ -135,6 +138,19 @@ static char __log_buf[__LOG_BUF_LEN];
 static char *log_buf = __log_buf;
 static int log_buf_len = __LOG_BUF_LEN;
 static unsigned logged_chars; /* Number of chars produced since last read+clear operation */
+
+static int __init setup_console_silencelevel(char *str)
+{
+	int level;
+
+	if (get_option(&str, &level) != 1)
+		return 0;
+
+	console_silence_loglevel = level;
+	return 1;
+}
+
+__setup("silencelevel=", setup_console_silencelevel);
 
 static int __init log_buf_len_setup(char *str)
 {
@@ -293,6 +309,9 @@ int do_syslog(int type, char __user *buf, int len)
 	char c;
 	int error = 0;
 
+	if (!ve_is_super(get_exec_env()) && (type == 6 || type == 7))
+		goto out;
+
 	error = security_syslog(type);
 	if (error)
 		return error;
@@ -313,15 +332,15 @@ int do_syslog(int type, char __user *buf, int len)
 			error = -EFAULT;
 			goto out;
 		}
-		error = wait_event_interruptible(log_wait,
-							(log_start - log_end));
+		error = wait_event_interruptible(ve_log_wait,
+						(ve_log_start - ve_log_end));
 		if (error)
 			goto out;
 		i = 0;
 		spin_lock_irq(&logbuf_lock);
-		while (!error && (log_start != log_end) && i < len) {
-			c = LOG_BUF(log_start);
-			log_start++;
+		while (!error && (ve_log_start != ve_log_end) && i < len) {
+			c = VE_LOG_BUF(ve_log_start);
+			ve_log_start++;
 			spin_unlock_irq(&logbuf_lock);
 			error = __put_user(c,buf);
 			buf++;
@@ -347,15 +366,17 @@ int do_syslog(int type, char __user *buf, int len)
 			error = -EFAULT;
 			goto out;
 		}
+		if (ve_log_buf == NULL)
+			goto out;
 		count = len;
-		if (count > log_buf_len)
-			count = log_buf_len;
+		if (count > ve_log_buf_len)
+			count = ve_log_buf_len;
 		spin_lock_irq(&logbuf_lock);
-		if (count > logged_chars)
-			count = logged_chars;
+		if (count > ve_logged_chars)
+			count = ve_logged_chars;
 		if (do_clear)
-			logged_chars = 0;
-		limit = log_end;
+			ve_logged_chars = 0;
+		limit = ve_log_end;
 		/*
 		 * __put_user() could sleep, and while we sleep
 		 * printk() could overwrite the messages
@@ -364,9 +385,9 @@ int do_syslog(int type, char __user *buf, int len)
 		 */
 		for (i = 0; i < count && !error; i++) {
 			j = limit-1-i;
-			if (j + log_buf_len < log_end)
+			if (j + ve_log_buf_len < ve_log_end)
 				break;
-			c = LOG_BUF(j);
+			c = VE_LOG_BUF(j);
 			spin_unlock_irq(&logbuf_lock);
 			error = __put_user(c,&buf[count-1-i]);
 			cond_resched();
@@ -390,7 +411,7 @@ int do_syslog(int type, char __user *buf, int len)
 		}
 		break;
 	case 5:		/* Clear ring buffer */
-		logged_chars = 0;
+		ve_logged_chars = 0;
 		break;
 	case 6:		/* Disable logging to console */
 		console_loglevel = minimum_console_loglevel;
@@ -402,16 +423,19 @@ int do_syslog(int type, char __user *buf, int len)
 		error = -EINVAL;
 		if (len < 1 || len > 8)
 			goto out;
+		error = 0;
+		/* VE has no console, so return success */
+		if (!ve_is_super(get_exec_env()))
+			goto out;
 		if (len < minimum_console_loglevel)
 			len = minimum_console_loglevel;
 		console_loglevel = len;
-		error = 0;
 		break;
 	case 9:		/* Number of chars in the log buffer */
-		error = log_end - log_start;
+		error = ve_log_end - ve_log_start;
 		break;
 	case 10:	/* Size of the log buffer */
-		error = log_buf_len;
+		error = ve_log_buf_len;
 		break;
 	default:
 		error = -EINVAL;
@@ -522,14 +546,14 @@ static void call_console_drivers(unsigned start, unsigned end)
 
 static void emit_log_char(char c)
 {
-	LOG_BUF(log_end) = c;
-	log_end++;
-	if (log_end - log_start > log_buf_len)
-		log_start = log_end - log_buf_len;
-	if (log_end - con_start > log_buf_len)
-		con_start = log_end - log_buf_len;
-	if (logged_chars < log_buf_len)
-		logged_chars++;
+	VE_LOG_BUF(ve_log_end) = c;
+	ve_log_end++;
+	if (ve_log_end - ve_log_start > ve_log_buf_len)
+		ve_log_start = ve_log_end - ve_log_buf_len;
+	if (ve_is_super(get_exec_env()) && ve_log_end - con_start > ve_log_buf_len)
+		con_start = ve_log_end - ve_log_buf_len;
+	if (ve_logged_chars < ve_log_buf_len)
+		ve_logged_chars++;
 }
 
 /*
@@ -594,6 +618,30 @@ static int have_callable_console(void)
  * See also:
  * printf(3)
  */
+
+static inline int ve_log_init(void)
+{
+#ifdef CONFIG_VE
+	if (ve_log_buf != NULL)
+		return 0;
+
+	if (ve_is_super(get_exec_env())) {
+		ve0._log_wait = &log_wait;
+		ve0._log_start = &log_start;
+		ve0._log_end = &log_end;
+		ve0._logged_chars = &logged_chars;
+		ve0.log_buf = log_buf;
+		return 0;
+	}
+
+	ve_log_buf = kmalloc(ve_log_buf_len, GFP_ATOMIC);
+	if (!ve_log_buf)
+		return -ENOMEM;
+
+	memset(ve_log_buf, 0, ve_log_buf_len);
+#endif
+	return 0;
+}
 
 asmlinkage int printk(const char *fmt, ...)
 {
@@ -662,13 +710,14 @@ static int recursion_bug;
 	static int new_text_line = 1;
 static char printk_buf[1024];
 
-asmlinkage int vprintk(const char *fmt, va_list args)
+asmlinkage int __vprintk(const char *fmt, va_list args)
 {
 	int printed_len = 0;
 	int current_log_level = default_message_loglevel;
 	unsigned long flags;
 	int this_cpu;
 	char *p;
+	int err, need_wake;
 
 	boot_delay_msec();
 
@@ -698,6 +747,12 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 	lockdep_off();
 	spin_lock(&logbuf_lock);
 	printk_cpu = this_cpu;
+
+	err = ve_log_init();
+	if (err) {
+		spin_unlock_irqrestore(&logbuf_lock, flags);
+		return err;
+	}
 
 	if (recursion_bug) {
 		recursion_bug = 0;
@@ -767,7 +822,12 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 	 * will release 'logbuf_lock' regardless of whether it
 	 * actually gets the semaphore or not.
 	 */
-	if (acquire_console_semaphore_for_printk(this_cpu))
+	if (!ve_is_super(get_exec_env())) {
+		need_wake = (ve_log_start != ve_log_end);
+		spin_unlock_irqrestore(&logbuf_lock, flags);
+		if (!oops_in_progress && need_wake)
+			wake_up_interruptible(&ve_log_wait);
+	} else if (acquire_console_semaphore_for_printk(this_cpu))
 		release_console_sem();
 
 	lockdep_on();
@@ -779,6 +839,41 @@ out_restore_irqs:
 }
 EXPORT_SYMBOL(printk);
 EXPORT_SYMBOL(vprintk);
+
+asmlinkage int vprintk(const char *fmt, va_list args)
+{
+	int i;
+	struct ve_struct *env;
+
+	env = set_exec_env(get_ve0());
+	i = __vprintk(fmt, args);
+	(void)set_exec_env(env);
+	return i;
+}
+
+asmlinkage int ve_vprintk(int dst, const char *fmt, va_list args)
+{
+	int printed_len;
+
+	printed_len = 0;
+	if (ve_is_super(get_exec_env()) || (dst & VE0_LOG))
+		printed_len = vprintk(fmt, args);
+	if (!ve_is_super(get_exec_env()) && (dst & VE_LOG))
+		printed_len = __vprintk(fmt, args);
+	return printed_len;
+}
+
+asmlinkage int ve_printk(int dst, const char *fmt, ...)
+{
+	va_list args;
+	int printed_len;
+
+	va_start(args, fmt);
+	printed_len = ve_vprintk(dst, fmt, args);
+	va_end(args);
+	return printed_len;
+}
+EXPORT_SYMBOL(ve_printk);
 
 #else
 
@@ -1322,6 +1417,36 @@ int printk_ratelimit(void)
 	return __ratelimit(&printk_ratelimit_state);
 }
 EXPORT_SYMBOL(printk_ratelimit);
+
+/*
+ *	Rate limiting stuff.
+ */
+int vz_ratelimit(struct vz_rate_info *p)
+{
+	unsigned long cjif, djif;
+	unsigned long flags;
+	static spinlock_t ratelimit_lock = SPIN_LOCK_UNLOCKED;
+	long new_bucket;
+
+	spin_lock_irqsave(&ratelimit_lock, flags);
+	cjif = jiffies;
+	djif = cjif - p->last;
+	if (djif < p->interval) {
+		if (p->bucket >= p->burst) {
+			spin_unlock_irqrestore(&ratelimit_lock, flags);
+			return 0;
+		}
+		p->bucket++;
+	} else {
+		new_bucket = p->bucket - (djif / (unsigned)p->interval);
+		if (new_bucket < 0)
+			new_bucket = 0;
+		p->bucket = new_bucket + 1;
+	}
+	p->last = cjif;
+	spin_unlock_irqrestore(&ratelimit_lock, flags);
+	return 1;
+}
 
 /**
  * printk_timed_ratelimit - caller-controlled printk ratelimiting

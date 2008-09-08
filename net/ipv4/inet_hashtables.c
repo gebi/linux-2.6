@@ -30,7 +30,8 @@
 struct inet_bind_bucket *inet_bind_bucket_create(struct kmem_cache *cachep,
 						 struct net *net,
 						 struct inet_bind_hashbucket *head,
-						 const unsigned short snum)
+						 const unsigned short snum,
+						 struct ve_struct *ve)
 {
 	struct inet_bind_bucket *tb = kmem_cache_alloc(cachep, GFP_ATOMIC);
 
@@ -39,6 +40,7 @@ struct inet_bind_bucket *inet_bind_bucket_create(struct kmem_cache *cachep,
 		tb->port      = snum;
 		tb->fastreuse = 0;
 		INIT_HLIST_HEAD(&tb->owners);
+		tb->owner_env = ve;
 		hlist_add_head(&tb->node, &head->chain);
 	}
 	return tb;

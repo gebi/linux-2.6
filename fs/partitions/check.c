@@ -131,6 +131,7 @@ char *disk_name(struct gendisk *hd, int part, char *buf)
 
 	return buf;
 }
+EXPORT_SYMBOL(disk_name);
 
 const char *bdevname(struct block_device *bdev, char *buf)
 {

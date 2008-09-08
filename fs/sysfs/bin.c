@@ -177,6 +177,9 @@ static int open(struct inode * inode, struct file * file)
 	struct bin_buffer *bb = NULL;
 	int error;
 
+	if (!ve_sysfs_alowed())
+		return 0;
+
 	/* binary file operations requires both @sd and its parent */
 	if (!sysfs_get_active_two(attr_sd))
 		return -ENODEV;
@@ -238,6 +241,9 @@ const struct file_operations bin_fops = {
 
 int sysfs_create_bin_file(struct kobject * kobj, struct bin_attribute * attr)
 {
+	if (!ve_sysfs_alowed())
+		return 0;
+
 	BUG_ON(!kobj || !kobj->sd || !attr);
 
 	return sysfs_add_file(kobj->sd, &attr->attr, SYSFS_KOBJ_BIN_ATTR);
@@ -252,6 +258,8 @@ int sysfs_create_bin_file(struct kobject * kobj, struct bin_attribute * attr)
 
 void sysfs_remove_bin_file(struct kobject * kobj, struct bin_attribute * attr)
 {
+	if (!ve_sysfs_alowed())
+		return;
 	sysfs_hash_and_remove(kobj->sd, attr->attr.name);
 }
 

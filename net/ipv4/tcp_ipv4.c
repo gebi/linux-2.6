@@ -71,6 +71,8 @@
 #include <net/xfrm.h>
 #include <net/netdma.h>
 
+#include <bc/tcp.h>
+
 #include <linux/inet.h>
 #include <linux/ipv6.h>
 #include <linux/stddef.h>
@@ -678,7 +680,8 @@ static void tcp_v4_timewait_ack(struct sock *sk, struct sk_buff *skb)
 	struct tcp_timewait_sock *tcptw = tcp_twsk(sk);
 
 	tcp_v4_send_ack(skb, tcptw->tw_snd_nxt, tcptw->tw_rcv_nxt,
-			tcptw->tw_rcv_wnd >> tw->tw_rcv_wscale,
+			tcptw->tw_rcv_wnd >>
+				(tw->tw_rcv_wscale & TW_WSCALE_MASK),
 			tcptw->tw_ts_recent,
 			tw->tw_bound_dev_if,
 			tcp_twsk_md5_key(tcptw)
@@ -1155,6 +1158,7 @@ struct request_sock_ops tcp_request_sock_ops __read_mostly = {
 	.destructor	=	tcp_v4_reqsk_destructor,
 	.send_reset	=	tcp_v4_send_reset,
 };
+EXPORT_SYMBOL_GPL(tcp_request_sock_ops);
 
 #ifdef CONFIG_TCP_MD5SIG
 static struct tcp_request_sock_ops tcp_request_sock_ipv4_ops = {
@@ -1460,6 +1464,10 @@ static __sum16 tcp_v4_checksum_init(struct sk_buff *skb)
 int tcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb)
 {
 	struct sock *rsk;
+	struct user_beancounter *ub;
+
+	ub = set_exec_ub(sock_bc(sk)->ub);
+
 #ifdef CONFIG_TCP_MD5SIG
 	/*
 	 * We really want to reject the packet as early as possible
@@ -1478,7 +1486,7 @@ int tcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb)
 			goto reset;
 		}
 		TCP_CHECK_TIMER(sk);
-		return 0;
+		goto restore_context;
 	}
 
 	if (skb->len < tcp_hdrlen(skb) || tcp_checksum_complete(skb))
@@ -1494,7 +1502,7 @@ int tcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb)
 				rsk = nsk;
 				goto reset;
 			}
-			return 0;
+			goto restore_context;
 		}
 	}
 
@@ -1504,6 +1512,9 @@ int tcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb)
 		goto reset;
 	}
 	TCP_CHECK_TIMER(sk);
+
+restore_context:
+	(void)set_exec_ub(ub);
 	return 0;
 
 reset:
@@ -1515,7 +1526,7 @@ discard:
 	 * might be destroyed here. This current version compiles correctly,
 	 * but you have been warned.
 	 */
-	return 0;
+	goto restore_context;
 
 csum_err:
 	TCP_INC_STATS_BH(sock_net(sk), TCP_MIB_INERRS);
@@ -1778,6 +1789,8 @@ static int tcp_v4_init_sock(struct sock *sk)
 	tp->snd_cwnd_clamp = ~0;
 	tp->mss_cache = 536;
 
+	tp->advmss = 65535; /* max value */
+
 	tp->reordering = sysctl_tcp_reordering;
 	icsk->icsk_ca_ops = &tcp_init_congestion_ops;
 
@@ -1839,6 +1852,8 @@ void tcp_v4_destroy_sock(struct sock *sk)
 	 * If sendmsg cached page exists, toss it.
 	 */
 	if (sk->sk_sndmsg_page) {
+		/* queue is empty, uncharge */
+		ub_sock_tcp_detachpage(sk);
 		__free_page(sk->sk_sndmsg_page);
 		sk->sk_sndmsg_page = NULL;
 	}
@@ -2388,6 +2403,87 @@ void __init tcp_v4_init(void)
 	if (register_pernet_device(&tcp_sk_ops))
 		panic("Failed to create the TCP control socket.\n");
 }
+
+#ifdef CONFIG_VE
+static void tcp_kill_ve_onesk(struct sock *sk)
+{
+	struct tcp_sock *tp = tcp_sk(sk);
+
+	/* Check the assumed state of the socket. */
+	if (!sock_flag(sk, SOCK_DEAD)) {
+		static int printed;
+invalid:
+		if (!printed)
+			printk(KERN_DEBUG "Killing sk: dead %d, state %d, "
+				"wrseq %u unseq %u, wrqu %d.\n",
+				sock_flag(sk, SOCK_DEAD), sk->sk_state,
+				tp->write_seq, tp->snd_una,
+				!skb_queue_empty(&sk->sk_write_queue));
+		printed = 1;
+		return;
+	}
+
+	tcp_send_active_reset(sk, GFP_ATOMIC);
+	switch (sk->sk_state) {
+		case TCP_FIN_WAIT1:
+		case TCP_CLOSING:
+			/* In these 2 states the peer may want us to retransmit
+			 * some data and/or FIN.  Entering "resetting mode"
+			 * instead.
+			 */
+			tcp_time_wait(sk, TCP_CLOSE, 0);
+			break;
+		case TCP_FIN_WAIT2:
+			/* By some reason the socket may stay in this state
+			 * without turning into a TW bucket.  Fix it.
+			 */
+			tcp_time_wait(sk, TCP_FIN_WAIT2, 0);
+			break;
+		case TCP_LAST_ACK:
+			/* Just jump into CLOSED state. */
+			tcp_done(sk);
+			break;
+		default:
+			/* The socket must be already close()d. */
+			goto invalid;
+	}
+}
+
+void tcp_v4_kill_ve_sockets(struct ve_struct *envid)
+{
+	struct inet_ehash_bucket *head;
+	int i;
+
+	/* alive */
+	local_bh_disable();
+	head = tcp_hashinfo.ehash;
+	for (i = 0; i < tcp_hashinfo.ehash_size; i++) {
+		struct sock *sk;
+		struct hlist_node *node;
+		rwlock_t *lock = inet_ehash_lockp(&tcp_hashinfo, i);
+more_work:
+		write_lock(lock);
+		sk_for_each(sk, node, &head[i].chain) {
+			if (ve_accessible_strict(sk->owner_env, envid)) {
+				sock_hold(sk);
+				write_unlock(lock);
+
+				bh_lock_sock(sk);
+				/* sk might have disappeared from the hash before
+				 * we got the lock */
+				if (sk->sk_state != TCP_CLOSE)
+					tcp_kill_ve_onesk(sk);
+				bh_unlock_sock(sk);
+				sock_put(sk);
+				goto more_work;
+			}
+		}
+		write_unlock(lock);
+	}
+	local_bh_enable();
+}
+EXPORT_SYMBOL(tcp_v4_kill_ve_sockets);
+#endif
 
 EXPORT_SYMBOL(ipv4_specific);
 EXPORT_SYMBOL(tcp_hashinfo);

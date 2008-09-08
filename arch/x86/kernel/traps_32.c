@@ -203,6 +203,8 @@ print_trace_warning_symbol(void *data, char *msg, unsigned long symbol)
 {
 	printk(data);
 	print_symbol(msg, symbol);
+	if (decode_call_traces)
+		print_symbol("%s\n", symbol);
 	printk("\n");
 }
 
@@ -240,7 +242,10 @@ show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
 		unsigned long *stack, unsigned long bp, char *log_lvl)
 {
 	dump_trace(task, regs, stack, bp, &print_trace_ops, log_lvl);
-	printk("%s =======================\n", log_lvl);
+	if (decode_call_traces)
+		printk("%s =======================\n", log_lvl);
+	else
+		printk("%s =<ctx>=", log_lvl);
 }
 
 void show_trace(struct task_struct *task, struct pt_regs *regs,
@@ -271,9 +276,14 @@ show_stack_log_lvl(struct task_struct *task, struct pt_regs *regs,
 			printk("\n%s       ", log_lvl);
 		printk("%08lx ", *stack++);
 	}
-	printk("\n%sCall Trace:\n", log_lvl);
+	if (decode_call_traces)
+		printk("\n%s Call Trace:\n", log_lvl);
+	else
+		printk("\n%s Call Trace: ", log_lvl);
 
 	show_trace_log_lvl(task, regs, sp, bp, log_lvl);
+	if (!decode_call_traces)
+		printk("\n");
 }
 
 void show_stack(struct task_struct *task, unsigned long *sp)
@@ -302,6 +312,8 @@ void dump_stack(void)
 		init_utsname()->version);
 
 	show_trace(current, NULL, &stack, bp);
+	if (!decode_call_traces)
+		printk("\n");
 }
 
 EXPORT_SYMBOL(dump_stack);
@@ -313,8 +325,9 @@ void show_registers(struct pt_regs *regs)
 	print_modules();
 	__show_registers(regs, 0);
 
-	printk(KERN_EMERG "Process %.*s (pid: %d, ti=%p task=%p task.ti=%p)",
+	printk(KERN_EMERG "Process %.*s (pid: %d, veid: %d, ti=%p task=%p task.ti=%p)",
 		TASK_COMM_LEN, current->comm, task_pid_nr(current),
+		VEID(current->ve_task_info.owner_env),
 		current_thread_info(), current, task_thread_info(current));
 	/*
 	 * When in-kernel, we also print out the stack and code at the
@@ -739,6 +752,21 @@ unknown_nmi_error(unsigned char reason, struct pt_regs *regs)
 	printk(KERN_EMERG "Dazed and confused, but trying to continue\n");
 }
 
+/*
+ * Voyager doesn't implement these
+ */
+void __attribute__((weak)) smp_show_regs(struct pt_regs *regs, void *info)
+{
+}
+
+#ifdef CONFIG_SMP
+int __attribute__((weak))
+smp_nmi_call_function(smp_nmi_function func, void *info, int wait)
+{
+	return 0;
+}
+#endif
+
 static DEFINE_SPINLOCK(nmi_print_lock);
 
 void notrace __kprobes die_nmi(char *str, struct pt_regs *regs, int do_panic)
@@ -756,6 +784,10 @@ void notrace __kprobes die_nmi(char *str, struct pt_regs *regs, int do_panic)
 	printk(" on CPU%d, ip %08lx, registers:\n",
 		smp_processor_id(), regs->ip);
 	show_registers(regs);
+	smp_nmi_call_function(smp_show_regs, NULL, 1);
+	bust_spinlocks(1);
+	if (!decode_call_traces)
+		show_registers(regs);
 	if (do_panic)
 		panic("Non maskable interrupt");
 	console_silent();
@@ -773,6 +805,13 @@ void notrace __kprobes die_nmi(char *str, struct pt_regs *regs, int do_panic)
 
 	do_exit(SIGSEGV);
 }
+
+static int dummy_nmi_callback(struct pt_regs *regs, int cpu)
+{
+	return 0;
+}
+
+static nmi_callback_t nmi_ipi_callback = dummy_nmi_callback;
 
 static notrace __kprobes void default_do_nmi(struct pt_regs *regs)
 {
@@ -829,10 +868,22 @@ notrace __kprobes void do_nmi(struct pt_regs *regs, long error_code)
 
 	++nmi_count(cpu);
 
-	if (!ignore_nmis)
-		default_do_nmi(regs);
+	if (!ignore_nmis) {
+		if (!nmi_ipi_callback(regs, cpu))
+			default_do_nmi(regs);
+	}
 
 	nmi_exit();
+}
+
+void set_nmi_ipi_callback(nmi_callback_t callback)
+{
+	nmi_ipi_callback = callback;
+}
+
+void unset_nmi_ipi_callback(void)
+{
+	nmi_ipi_callback = dummy_nmi_callback;
 }
 
 void stop_nmi(void)

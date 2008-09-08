@@ -250,6 +250,15 @@ extern struct class * __must_check __class_create(struct module *owner,
 						  struct lock_class_key *key);
 extern void class_destroy(struct class *cls);
 
+extern struct class net_class;
+extern struct kset *class_kset;
+
+int classes_init(void);
+void classes_fini(void);
+
+int devices_init(void);
+void devices_fini(void);
+
 /* This is a #define to keep the compiler from merging different
  * instances of the __key variable */
 #define class_create(owner, name)		\

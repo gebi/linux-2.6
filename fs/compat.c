@@ -26,6 +26,7 @@
 #include <linux/file.h>
 #include <linux/fdtable.h>
 #include <linux/vfs.h>
+#include <linux/virtinfo.h>
 #include <linux/ioctl.h>
 #include <linux/init.h>
 #include <linux/smb.h>
@@ -72,6 +73,18 @@ int compat_printk(const char *fmt, ...)
 }
 
 #include "read_write.h"
+
+int ve_compat_printk(int dst, const char *fmt, ...)
+{
+	va_list ap;
+	int ret;
+	if (!compat_log)
+		return 0;
+	va_start(ap, fmt);
+	ret = ve_vprintk(dst, fmt, ap);
+	va_end(ap);
+	return ret;
+}
 
 /*
  * Not all architectures have sys_utime, so implement this in terms
@@ -244,6 +257,8 @@ asmlinkage long compat_sys_statfs(const char __user *pathname, struct compat_sta
 		struct kstatfs tmp;
 		error = vfs_statfs(path.dentry, &tmp);
 		if (!error)
+			error = faudit_statfs(path.mnt->mnt_sb, &tmp);
+		if (!error)
 			error = put_compat_statfs(buf, &tmp);
 		path_put(&path);
 	}
@@ -261,6 +276,8 @@ asmlinkage long compat_sys_fstatfs(unsigned int fd, struct compat_statfs __user 
 	if (!file)
 		goto out;
 	error = vfs_statfs(file->f_path.dentry, &tmp);
+	if (!error)
+		error = faudit_statfs(file->f_vfsmnt->mnt_sb, &tmp);
 	if (!error)
 		error = put_compat_statfs(buf, &tmp);
 	fput(file);
@@ -312,6 +329,8 @@ asmlinkage long compat_sys_statfs64(const char __user *pathname, compat_size_t s
 		struct kstatfs tmp;
 		error = vfs_statfs(path.dentry, &tmp);
 		if (!error)
+			error = faudit_statfs(path.mnt->mnt_sb, &tmp);
+		if (!error)
 			error = put_compat_statfs64(buf, &tmp);
 		path_put(&path);
 	}
@@ -332,6 +351,8 @@ asmlinkage long compat_sys_fstatfs64(unsigned int fd, compat_size_t sz, struct c
 	if (!file)
 		goto out;
 	error = vfs_statfs(file->f_path.dentry, &tmp);
+	if (!error)
+		error = faudit_statfs(file->f_vfsmnt->mnt_sb, &tmp);
 	if (!error)
 		error = put_compat_statfs64(buf, &tmp);
 	fput(file);
@@ -1354,6 +1375,10 @@ int compat_do_execve(char * filename,
 	struct linux_binprm *bprm;
 	struct file *file;
 	int retval;
+
+	retval = virtinfo_gencall(VIRTINFO_DOEXECVE, NULL);
+	if (retval)
+		return retval;
 
 	retval = -ENOMEM;
 	bprm = kzalloc(sizeof(*bprm), GFP_KERNEL);

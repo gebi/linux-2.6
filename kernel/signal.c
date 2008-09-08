@@ -32,13 +32,32 @@
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
 #include <asm/siginfo.h>
+#include <bc/misc.h>
 #include "audit.h"	/* audit_signal_info() */
 
 /*
  * SLAB caches for signal bits.
  */
 
-static struct kmem_cache *sigqueue_cachep;
+struct kmem_cache *sigqueue_cachep;
+EXPORT_SYMBOL(sigqueue_cachep);
+
+static int sig_ve_ignored(int sig, struct siginfo *info, struct task_struct *t)
+{
+	struct ve_struct *ve;
+
+	/* always allow signals from the kernel */
+	if (info == SEND_SIG_FORCED ||
+		       (!is_si_special(info) && SI_FROMKERNEL(info)))
+		return 0;
+
+	ve = current->ve_task_info.owner_env;
+	if (ve->ve_ns->pid_ns->child_reaper != t)
+		return 0;
+	if (ve_is_super(get_exec_env()))
+		return 0;
+	return !sig_user_defined(t, sig) || sig_kernel_only(sig);
+}
 
 static void __user *sig_handler(struct task_struct *t, int sig)
 {
@@ -106,7 +125,7 @@ static inline int has_pending_signals(sigset_t *signal, sigset_t *blocked)
 
 #define PENDING(p,b) has_pending_signals(&(p)->signal, (b))
 
-static int recalc_sigpending_tsk(struct task_struct *t)
+int recalc_sigpending_tsk(struct task_struct *t)
 {
 	if (t->signal->group_stop_count > 0 ||
 	    PENDING(&t->pending, &t->blocked) ||
@@ -131,6 +150,7 @@ void recalc_sigpending_and_wake(struct task_struct *t)
 	if (recalc_sigpending_tsk(t))
 		signal_wake_up(t, 0);
 }
+EXPORT_SYMBOL_GPL(recalc_sigpending_tsk);
 
 void recalc_sigpending(void)
 {
@@ -191,8 +211,13 @@ static struct sigqueue *__sigqueue_alloc(struct task_struct *t, gfp_t flags,
 	atomic_inc(&user->sigpending);
 	if (override_rlimit ||
 	    atomic_read(&user->sigpending) <=
-			t->signal->rlim[RLIMIT_SIGPENDING].rlim_cur)
+			t->signal->rlim[RLIMIT_SIGPENDING].rlim_cur) {
 		q = kmem_cache_alloc(sigqueue_cachep, flags);
+		if (q && ub_siginfo_charge(q, get_task_ub(t))) {
+			kmem_cache_free(sigqueue_cachep, q);
+			q = NULL;
+		}
+	}
 	if (unlikely(q == NULL)) {
 		atomic_dec(&user->sigpending);
 	} else {
@@ -209,6 +234,7 @@ static void __sigqueue_free(struct sigqueue *q)
 		return;
 	atomic_dec(&q->user->sigpending);
 	free_uid(q->user);
+	ub_siginfo_uncharge(q);
 	kmem_cache_free(sigqueue_cachep, q);
 }
 
@@ -384,7 +410,18 @@ still_pending:
 static int __dequeue_signal(struct sigpending *pending, sigset_t *mask,
 			siginfo_t *info)
 {
-	int sig = next_signal(pending, mask);
+	int sig = 0;
+
+	/* SIGKILL must have priority, otherwise it is quite easy
+	 * to create an unkillable process, sending sig < SIGKILL
+	 * to self */
+	if (unlikely(sigismember(&pending->signal, SIGKILL))) {
+		if (!sigismember(mask, SIGKILL))
+			sig = SIGKILL;
+	}
+
+	if (likely(!sig))
+		sig = next_signal(pending, mask);
 
 	if (sig) {
 		if (current->notifier) {
@@ -507,6 +544,7 @@ void signal_wake_up(struct task_struct *t, int resume)
 	if (!wake_up_state(t, mask))
 		kick_process(t);
 }
+EXPORT_SYMBOL_GPL(signal_wake_up);
 
 /*
  * Remove signals in mask from the pending set and queue.
@@ -625,7 +663,7 @@ static int prepare_signal(int sig, struct task_struct *p)
 		t = p;
 		do {
 			rm_from_queue(sigmask(SIGCONT), &t->pending);
-		} while_each_thread(p, t);
+		} while_each_thread_all(p, t);
 	} else if (sig == SIGCONT) {
 		unsigned int why;
 		/*
@@ -657,7 +695,7 @@ static int prepare_signal(int sig, struct task_struct *p)
 				state |= TASK_INTERRUPTIBLE;
 			}
 			wake_up_state(t, state);
-		} while_each_thread(p, t);
+		} while_each_thread_all(p, t);
 
 		/*
 		 * Notify the parent with CLD_CONTINUED if we were stopped.
@@ -779,7 +817,7 @@ static void complete_signal(int sig, struct task_struct *p, int group)
 			do {
 				sigaddset(&t->pending.signal, SIGKILL);
 				signal_wake_up(t, 1);
-			} while_each_thread(p, t);
+			} while_each_thread_all(p, t);
 			return;
 		}
 	}
@@ -1015,7 +1053,8 @@ int group_send_sig_info(int sig, struct siginfo *info, struct task_struct *p)
 	if (!ret && sig) {
 		ret = -ESRCH;
 		if (lock_task_sighand(p, &flags)) {
-			ret = __group_send_sig_info(sig, info, p);
+			ret = sig_ve_ignored(sig, info, p) ? 0 :
+				__group_send_sig_info(sig, info, p);
 			unlock_task_sighand(p, &flags);
 		}
 	}
@@ -1140,7 +1179,7 @@ static int kill_something_info(int sig, struct siginfo *info, pid_t pid)
 		int retval = 0, count = 0;
 		struct task_struct * p;
 
-		for_each_process(p) {
+		for_each_process_ve(p) {
 			if (p->pid > 1 && !same_thread_group(p, current)) {
 				int err = group_send_sig_info(sig, info, p);
 				++count;
@@ -1347,6 +1386,14 @@ int do_notify_parent(struct task_struct *tsk, int sig)
 
 	BUG_ON(!tsk->ptrace &&
 	       (tsk->group_leader != tsk || !thread_group_empty(tsk)));
+
+#ifdef CONFIG_VE
+	/* Allow to send only SIGCHLD from VE */
+	if (sig != SIGCHLD &&
+			tsk->ve_task_info.owner_env != 
+			tsk->parent->ve_task_info.owner_env)
+		sig = SIGCHLD;
+#endif
 
 	info.si_signo = sig;
 	info.si_errno = 0;
@@ -1617,7 +1664,9 @@ finish_stop(int stop_count)
 	}
 
 	do {
+		set_stop_state(current);
 		schedule();
+		clear_stop_state(current);
 	} while (try_to_freeze());
 	/*
 	 * Now we don't run again until continued.
@@ -1669,6 +1718,7 @@ static int do_signal_stop(int signr)
 		sig->group_stop_count = stop_count;
 	}
 
+	clear_pn_state(current);
 	if (stop_count == 0)
 		sig->flags = SIGNAL_STOP_STOPPED;
 	current->exit_code = sig->group_exit_code;
@@ -1732,8 +1782,6 @@ relock:
 	 * Now that we woke up, it's crucial if we're supposed to be
 	 * frozen that we freeze now before running anything substantial.
 	 */
-	try_to_freeze();
-
 	spin_lock_irq(&sighand->siglock);
 	/*
 	 * Every stopped thread goes here after wakeup. Check to see if
@@ -2239,7 +2287,8 @@ static int do_tkill(pid_t tgid, pid_t pid, int sig)
 		 * signal is private anyway.
 		 */
 		if (!error && sig && lock_task_sighand(p, &flags)) {
-			error = specific_send_sig_info(sig, &info, p);
+			if (!sig_ve_ignored(sig, &info, p))
+				error = specific_send_sig_info(sig, &info, p);
 			unlock_task_sighand(p, &flags);
 		}
 	}
@@ -2595,5 +2644,5 @@ __attribute__((weak)) const char *arch_vma_name(struct vm_area_struct *vma)
 
 void __init signals_init(void)
 {
-	sigqueue_cachep = KMEM_CACHE(sigqueue, SLAB_PANIC);
+	sigqueue_cachep = KMEM_CACHE(sigqueue, SLAB_PANIC|SLAB_UBC);
 }

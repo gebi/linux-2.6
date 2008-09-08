@@ -1198,8 +1198,6 @@ handle_fault:
  */
 #define FLAGS_SHARED  1
 
-static long futex_wait_restart(struct restart_block *restart);
-
 static int futex_wait(u32 __user *uaddr, struct rw_semaphore *fshared,
 		      u32 val, ktime_t *abs_time, u32 bitset)
 {
@@ -1365,7 +1363,7 @@ static int futex_wait(u32 __user *uaddr, struct rw_semaphore *fshared,
 }
 
 
-static long futex_wait_restart(struct restart_block *restart)
+long futex_wait_restart(struct restart_block *restart)
 {
 	u32 __user *uaddr = (u32 __user *)restart->futex.uaddr;
 	struct rw_semaphore *fshared = NULL;
@@ -1378,6 +1376,7 @@ static long futex_wait_restart(struct restart_block *restart)
 	return (long)futex_wait(uaddr, fshared, restart->futex.val, &t,
 				restart->futex.bitset);
 }
+EXPORT_SYMBOL_GPL(futex_wait_restart);
 
 
 /*

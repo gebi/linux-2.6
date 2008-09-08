@@ -19,6 +19,8 @@
 #include <linux/mm.h>
 #include <linux/err.h>
 #include <linux/sched.h>
+#include <linux/slab.h>
+#include <linux/virtinfo.h>
 #include <linux/swap.h>
 #include <linux/timex.h>
 #include <linux/jiffies.h>
@@ -27,6 +29,9 @@
 #include <linux/notifier.h>
 #include <linux/memcontrol.h>
 #include <linux/security.h>
+
+#include <bc/beancounter.h>
+#include <bc/oom_kill.h>
 
 int sysctl_panic_on_oom;
 int sysctl_oom_kill_allocating_task;
@@ -200,16 +205,16 @@ static inline enum oom_constraint constrained_alloc(struct zonelist *zonelist,
  *
  * (not docbooked, we don't want this one cluttering up the manual)
  */
-static struct task_struct *select_bad_process(unsigned long *ppoints,
+struct task_struct *select_bad_process(struct user_beancounter *ub,
 						struct mem_cgroup *mem)
 {
 	struct task_struct *g, *p;
 	struct task_struct *chosen = NULL;
 	struct timespec uptime;
-	*ppoints = 0;
+	unsigned long chosen_points = 0;
 
 	do_posix_clock_monotonic_gettime(&uptime);
-	do_each_thread(g, p) {
+	do_each_thread_all(g, p) {
 		unsigned long points;
 
 		/*
@@ -222,6 +227,8 @@ static struct task_struct *select_bad_process(unsigned long *ppoints,
 		if (is_global_init(p))
 			continue;
 		if (mem && !task_in_mem_cgroup(p, mem))
+			continue;
+		if (ub_oom_task_skip(ub, p))
 			continue;
 
 		/*
@@ -251,18 +258,18 @@ static struct task_struct *select_bad_process(unsigned long *ppoints,
 				return ERR_PTR(-1UL);
 
 			chosen = p;
-			*ppoints = ULONG_MAX;
+			chosen_points = ULONG_MAX;
 		}
 
 		if (p->oomkilladj == OOM_DISABLE)
 			continue;
 
 		points = badness(p, uptime.tv_sec);
-		if (points > *ppoints || !chosen) {
+		if (points > chosen_points || !chosen) {
 			chosen = p;
-			*ppoints = points;
+			chosen_points = points;
 		}
-	} while_each_thread(g, p);
+	} while_each_thread_all(g, p);
 
 	return chosen;
 }
@@ -286,7 +293,7 @@ static void dump_tasks(const struct mem_cgroup *mem)
 
 	printk(KERN_INFO "[ pid ]   uid  tgid total_vm      rss cpu oom_adj "
 	       "name\n");
-	do_each_thread(g, p) {
+	do_each_thread_all(g, p) {
 		/*
 		 * total_vm and rss sizes do not exist for tasks with a
 		 * detached mm so there's no need to report them.
@@ -302,7 +309,7 @@ static void dump_tasks(const struct mem_cgroup *mem)
 		       get_mm_rss(p->mm), (int)task_cpu(p), p->oomkilladj,
 		       p->comm);
 		task_unlock(p);
-	} while_each_thread(g, p);
+	} while_each_thread_all(g, p);
 }
 
 /*
@@ -337,13 +344,16 @@ static void __oom_kill_task(struct task_struct *p, int verbose)
 	set_tsk_thread_flag(p, TIF_MEMDIE);
 
 	force_sig(SIGKILL, p);
+	ub_oom_task_killed(p);
 }
 
 static int oom_kill_task(struct task_struct *p)
 {
 	struct mm_struct *mm;
+	struct user_beancounter *ub;
 	struct task_struct *g, *q;
 
+	task_lock(p);
 	mm = p->mm;
 
 	/* WARNING: mm may not be dereferenced since we did not obtain its
@@ -355,16 +365,21 @@ static int oom_kill_task(struct task_struct *p)
 	 * However, this is of no concern to us.
 	 */
 
-	if (mm == NULL)
+	if (mm == NULL) {
+		task_unlock(p);
 		return 1;
+	}
+
+	ub = get_beancounter(mm_ub(mm));
+	task_unlock(p);
 
 	/*
 	 * Don't kill the process if any threads are set to OOM_DISABLE
 	 */
-	do_each_thread(g, q) {
+	do_each_thread_all(g, q) {
 		if (q->mm == mm && q->oomkilladj == OOM_DISABLE)
 			return 1;
-	} while_each_thread(g, q);
+	} while_each_thread_all(g, q);
 
 	__oom_kill_task(p, 1);
 
@@ -373,17 +388,18 @@ static int oom_kill_task(struct task_struct *p)
 	 * but are in a different thread group. Don't let them have access
 	 * to memory reserves though, otherwise we might deplete all memory.
 	 */
-	do_each_thread(g, q) {
+	do_each_thread_all(g, q) {
 		if (q->mm == mm && !same_thread_group(q, p))
 			force_sig(SIGKILL, q);
-	} while_each_thread(g, q);
+	} while_each_thread_all(g, q);
 
+	ub_oom_mm_killed(ub);
+	put_beancounter(ub);
 	return 0;
 }
 
-static int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
-			    unsigned long points, struct mem_cgroup *mem,
-			    const char *message)
+int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
+			    struct mem_cgroup *mem, const char *message)
 {
 	struct task_struct *c;
 
@@ -406,8 +422,8 @@ static int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 		return 0;
 	}
 
-	printk(KERN_ERR "%s: kill process %d (%s) score %li or a child\n",
-					message, task_pid_nr(p), p->comm, points);
+	printk(KERN_ERR "%s: kill process %d (%s) or a child\n",
+					message, task_pid_nr(p), p->comm);
 
 	/* Try to kill a child first */
 	list_for_each_entry(c, &p->children, sibling) {
@@ -522,9 +538,9 @@ void clear_zonelist_oom(struct zonelist *zonelist, gfp_t gfp_mask)
 void out_of_memory(struct zonelist *zonelist, gfp_t gfp_mask, int order)
 {
 	struct task_struct *p;
-	unsigned long points = 0;
 	unsigned long freed = 0;
 	enum oom_constraint constraint;
+	struct user_beancounter *ub;
 
 	blocking_notifier_call_chain(&oom_notify_list, 0, &freed);
 	if (freed > 0)
@@ -534,16 +550,34 @@ void out_of_memory(struct zonelist *zonelist, gfp_t gfp_mask, int order)
 	if (sysctl_panic_on_oom == 2)
 		panic("out of memory. Compulsory panic_on_oom is selected.\n");
 
+	if (virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_OUTOFMEM, NULL)
+			& (NOTIFY_OK | NOTIFY_FAIL))
+		return;
+
+	ub = NULL;
+	if (ub_oom_lock())
+		goto out_oom_lock;
+
+	read_lock(&tasklist_lock);
+
+	if (printk_ratelimit()) {
+		printk(KERN_WARNING "%s invoked oom-killer: "
+			"gfp_mask=0x%x, order=%d, oomkilladj=%d\n",
+			current->comm, gfp_mask, order, current->oomkilladj);
+		dump_stack();
+		show_mem();
+		show_slab_info();
+	}
+
 	/*
 	 * Check if there were limitations on the allocation (only relevant for
 	 * NUMA) that may require different handling.
 	 */
 	constraint = constrained_alloc(zonelist, gfp_mask);
-	read_lock(&tasklist_lock);
 
 	switch (constraint) {
 	case CONSTRAINT_MEMORY_POLICY:
-		oom_kill_process(current, gfp_mask, order, points, NULL,
+		oom_kill_process(current, gfp_mask, order, NULL,
 				"No available memory (MPOL_BIND)");
 		break;
 
@@ -553,27 +587,33 @@ void out_of_memory(struct zonelist *zonelist, gfp_t gfp_mask, int order)
 		/* Fall-through */
 	case CONSTRAINT_CPUSET:
 		if (sysctl_oom_kill_allocating_task) {
-			oom_kill_process(current, gfp_mask, order, points, NULL,
+			oom_kill_process(current, gfp_mask, order, NULL,
 					"Out of memory (oom_kill_allocating_task)");
 			break;
 		}
 retry:
+		put_beancounter(ub);
+
 		/*
 		 * Rambo mode: Shoot down a process and hope it solves whatever
 		 * issues we may have.
 		 */
-		p = select_bad_process(&points, NULL);
+		ub = ub_oom_select_worst();
+		p = select_bad_process(ub, NULL);
 
 		if (PTR_ERR(p) == -1UL)
 			goto out;
 
 		/* Found nothing?!?! Either we hang forever, or we panic. */
 		if (!p) {
+			if (ub != NULL)
+				goto retry;
 			read_unlock(&tasklist_lock);
+			ub_oom_unlock();
 			panic("Out of memory and no killable processes...\n");
 		}
 
-		if (oom_kill_process(p, gfp_mask, order, points, NULL,
+		if (oom_kill_process(p, gfp_mask, order, NULL,
 				     "Out of memory"))
 			goto retry;
 
@@ -582,7 +622,10 @@ retry:
 
 out:
 	read_unlock(&tasklist_lock);
+	ub_oom_unlock();
+	put_beancounter(ub);
 
+out_oom_lock:
 	/*
 	 * Give "p" a good chance of killing itself before we
 	 * retry to allocate memory unless "p" is current

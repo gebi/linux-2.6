@@ -7,6 +7,7 @@
  */
 
 #include <linux/types.h>
+#include <linux/sched.h>
 #include <linux/timer.h>
 #include <linux/netfilter.h>
 #include <linux/in.h>
@@ -20,7 +21,7 @@
 #include <net/netfilter/nf_conntrack_core.h>
 #include <net/netfilter/nf_log.h>
 
-static unsigned long nf_ct_icmp_timeout __read_mostly = 30*HZ;
+unsigned long nf_ct_icmp_timeout __read_mostly = 30*HZ;
 
 static bool icmp_pkt_to_tuple(const struct sk_buff *skb, unsigned int dataoff,
 			      struct nf_conntrack_tuple *tuple)
@@ -92,7 +93,7 @@ static int icmp_packet(struct nf_conn *ct,
 	} else {
 		atomic_inc(&ct->proto.icmp.count);
 		nf_conntrack_event_cache(IPCT_PROTOINFO_VOLATILE, skb);
-		nf_ct_refresh_acct(ct, ctinfo, skb, nf_ct_icmp_timeout);
+		nf_ct_refresh_acct(ct, ctinfo, skb, ve_nf_ct_icmp_timeout);
 	}
 
 	return NF_ACCEPT;
@@ -148,7 +149,7 @@ icmp_error_message(struct sk_buff *skb,
 	/* Ordinarily, we'd expect the inverted tupleproto, but it's
 	   been preserved inside the ICMP. */
 	if (!nf_ct_invert_tuple(&innertuple, &origtuple,
-				&nf_conntrack_l3proto_ipv4, innerproto)) {
+				ve_nf_conntrack_l3proto_ipv4, innerproto)) {
 		pr_debug("icmp_error_message: no match\n");
 		return -NF_ACCEPT;
 	}
@@ -320,3 +321,64 @@ struct nf_conntrack_l4proto nf_conntrack_l4proto_icmp __read_mostly =
 #endif
 #endif
 };
+
+#if defined(CONFIG_VE_IPTABLES) && defined(CONFIG_SYSCTL)
+int nf_ct_proto_icmp_sysctl_init(void)
+{
+	struct nf_conntrack_l4proto *icmp;
+
+	if (ve_is_super(get_exec_env())) {
+		icmp = &nf_conntrack_l4proto_icmp;
+		goto out;
+	}
+
+	icmp = kmemdup(&nf_conntrack_l4proto_icmp,
+			sizeof(struct nf_conntrack_l4proto), GFP_KERNEL);
+	if (!icmp)
+		goto no_mem_ct;
+
+	icmp->ctl_table_header = &ve_icmp_sysctl_header;
+	icmp->ctl_table = kmemdup(icmp_sysctl_table,
+			sizeof(icmp_sysctl_table), GFP_KERNEL);
+	if (icmp->ctl_table == NULL)
+		goto no_mem_sys;
+	icmp->ctl_table[0].data = &ve_nf_ct_icmp_timeout;
+
+#ifdef CONFIG_NF_CONNTRACK_PROC_COMPAT
+	icmp->ctl_compat_table_header = ve_icmp_compat_sysctl_header;
+	icmp->ctl_compat_table = kmemdup(icmp_compat_sysctl_table,
+					 sizeof(icmp_compat_sysctl_table),
+					 GFP_KERNEL);
+	if (icmp->ctl_compat_table == NULL)
+		goto no_mem_compat;
+	icmp->ctl_compat_table[0].data = &ve_nf_ct_icmp_timeout;
+#endif
+out:
+	ve_nf_ct_icmp_timeout = nf_ct_icmp_timeout;
+
+	ve_nf_conntrack_l4proto_icmp = icmp;
+	return 0;
+
+#ifdef CONFIG_NF_CONNTRACK_PROC_COMPAT
+no_mem_compat:
+	kfree(icmp->ctl_table);
+#endif
+no_mem_sys:
+	kfree(icmp);
+no_mem_ct:
+	return -ENOMEM;
+}
+EXPORT_SYMBOL(nf_ct_proto_icmp_sysctl_init);
+
+void nf_ct_proto_icmp_sysctl_cleanup(void)
+{
+	if (!ve_is_super(get_exec_env())) {
+#ifdef CONFIG_NF_CONNTRACK_PROC_COMPAT
+		kfree(ve_nf_conntrack_l4proto_icmp->ctl_compat_table);
+#endif
+		kfree(ve_nf_conntrack_l4proto_icmp->ctl_table);
+		kfree(ve_nf_conntrack_l4proto_icmp);
+	}
+}
+EXPORT_SYMBOL(nf_ct_proto_icmp_sysctl_cleanup);
+#endif /* CONFIG_VE_IPTABLES && CONFIG_SYSCTL */

@@ -19,7 +19,8 @@
  * This lock protects task->cap_* for all tasks including current.
  * Locking rule: acquire this prior to tasklist_lock.
  */
-static DEFINE_SPINLOCK(task_capability_lock);
+DEFINE_SPINLOCK(task_capability_lock);
+EXPORT_SYMBOL(task_capability_lock);
 
 /*
  * Leveraged for setting/resetting capabilities
@@ -167,7 +168,7 @@ static inline int cap_set_pg(int pgrp_nr, kernel_cap_t *effective,
 	pgrp = find_vpid(pgrp_nr);
 	do_each_pid_task(pgrp, PIDTYPE_PGID, g) {
 		target = g;
-		while_each_thread(g, target) {
+		while_each_thread_ve(g, target) {
 			if (!security_capset_check(target, effective,
 						   inheritable, permitted)) {
 				security_capset_set(target, effective,
@@ -201,7 +202,7 @@ static inline int cap_set_all(kernel_cap_t *effective,
 	spin_lock(&task_capability_lock);
 	read_lock(&tasklist_lock);
 
-	do_each_thread(g, target) {
+	do_each_thread_ve(g, target) {
 		if (target == current
 		    || is_container_init(target->group_leader))
 			continue;
@@ -211,7 +212,7 @@ static inline int cap_set_all(kernel_cap_t *effective,
 			continue;
 		ret = 0;
 		security_capset_set(target, effective, inheritable, permitted);
-	} while_each_thread(g, target);
+	} while_each_thread_ve(g, target);
 
 	read_unlock(&tasklist_lock);
 	spin_unlock(&task_capability_lock);

@@ -73,6 +73,7 @@ struct inotify_event {
 
 #include <linux/dcache.h>
 #include <linux/fs.h>
+#include <linux/idr.h>
 
 /*
  * struct inotify_watch - represents a watch request on a specific inode
@@ -90,6 +91,7 @@ struct inotify_watch {
 	struct list_head	i_list;	/* entry in inode's list */
 	atomic_t		count;	/* reference count */
 	struct inotify_handle	*ih;	/* associated inotify handle */
+	struct path		path;
 	struct inode		*inode;	/* associated inode */
 	__s32			wd;	/* watch descriptor */
 	__u32			mask;	/* event mask for this watch */
@@ -126,6 +128,8 @@ extern __s32 inotify_find_update_watch(struct inotify_handle *, struct inode *,
 				       u32);
 extern __s32 inotify_add_watch(struct inotify_handle *, struct inotify_watch *,
 			       struct inode *, __u32);
+extern __s32 inotify_add_watch_dget(struct inotify_handle *, struct inotify_watch *,
+			       struct path *, __u32);
 extern __s32 inotify_clone_watch(struct inotify_watch *, struct inotify_watch *);
 extern void inotify_evict_watch(struct inotify_watch *);
 extern int inotify_rm_watch(struct inotify_handle *, struct inotify_watch *);
@@ -134,6 +138,66 @@ extern void inotify_remove_watch_locked(struct inotify_handle *,
 					struct inotify_watch *);
 extern void get_inotify_watch(struct inotify_watch *);
 extern void put_inotify_watch(struct inotify_watch *);
+
+/*
+ * struct inotify_handle - represents an inotify instance
+ *
+ * This structure is protected by the mutex 'mutex'.
+ */
+struct inotify_handle {
+	struct idr		idr;		/* idr mapping wd -> watch */
+	struct mutex		mutex;		/* protects this bad boy */
+	struct list_head	watches;	/* list of watches */
+	atomic_t		count;		/* reference count */
+	u32			last_wd;	/* the last wd allocated */
+	const struct inotify_operations *in_ops; /* inotify caller operations */
+};
+
+
+/*
+ * struct inotify_device - represents an inotify instance
+ *
+ * This structure is protected by the mutex 'mutex'.
+ */
+struct inotify_device {
+	wait_queue_head_t 	wq;		/* wait queue for i/o */
+	struct mutex		ev_mutex;	/* protects event queue */
+	struct mutex		up_mutex;	/* synchronizes watch updates */
+	struct list_head 	events;		/* list of queued events */
+	atomic_t		count;		/* reference count */
+	struct user_struct	*user;		/* user who opened this dev */
+	struct inotify_handle	*ih;		/* inotify handle */
+	struct fasync_struct    *fa;            /* async notification */
+	unsigned int		queue_size;	/* size of the queue (bytes) */
+	unsigned int		event_count;	/* number of pending events */
+	unsigned int		max_events;	/* maximum number of events */
+};
+
+/*
+ * struct inotify_kernel_event - An inotify event, originating from a watch and
+ * queued for user-space.  A list of these is attached to each instance of the
+ * device.  In read(), this list is walked and all events that can fit in the
+ * buffer are returned.
+ *
+ * Protected by dev->ev_mutex of the device in which we are queued.
+ */
+struct inotify_kernel_event {
+	struct inotify_event	event;	/* the user-space event */
+	struct list_head        list;	/* entry in inotify_device's list */
+	char			*name;	/* filename, if any */
+};
+
+/*
+ * struct inotify_user_watch - our version of an inotify_watch, we add
+ * a reference to the associated inotify_device.
+ */
+struct inotify_user_watch {
+	struct inotify_device	*dev;	/* associated device */
+	struct inotify_watch	wdata;	/* inotify watch data */
+};
+
+int inotify_create_watch(struct inotify_device *dev, struct path *p, u32 mask);
+
 
 #else
 
@@ -200,6 +264,13 @@ static inline __s32 inotify_find_update_watch(struct inotify_handle *ih,
 static inline __s32 inotify_add_watch(struct inotify_handle *ih,
 				      struct inotify_watch *watch,
 				      struct inode *inode, __u32 mask)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline __s32 inotify_add_watch_dget(struct inotify_handle *h,
+					   struct inotify_watch *w,
+					   struct path *p, __u32 mask)
 {
 	return -EOPNOTSUPP;
 }

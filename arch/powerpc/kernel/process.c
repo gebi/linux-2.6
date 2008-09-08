@@ -50,6 +50,8 @@
 #include <linux/kprobes.h>
 #include <linux/kdebug.h>
 
+#include <linux/utsrelease.h>
+
 extern unsigned long _get_SP(void);
 
 #ifndef CONFIG_SMP
@@ -501,8 +503,9 @@ void show_regs(struct pt_regs * regs)
 
 	printk("NIP: "REG" LR: "REG" CTR: "REG"\n",
 	       regs->nip, regs->link, regs->ctr);
-	printk("REGS: %p TRAP: %04lx   %s  (%s)\n",
-	       regs, regs->trap, print_tainted(), init_utsname()->release);
+	printk("REGS: %p TRAP: %04lx   %s  (%s %s)\n",
+	       regs, regs->trap, print_tainted(), init_utsname()->release,
+	       VZVERSION);
 	printk("MSR: "REG" ", regs->msr);
 	printbits(regs->msr, msr_bits);
 	printk("  CR: %08lx  XER: %08lx\n", regs->ccr, regs->xer);
@@ -1056,6 +1059,20 @@ void dump_stack(void)
 	show_stack(current, NULL);
 }
 EXPORT_SYMBOL(dump_stack);
+
+long kernel_thread(int (*fn)(void *), void *arg, unsigned long flags)
+{
+	extern long ppc_kernel_thread(int (*fn)(void *), void *arg,
+			unsigned long flags);
+
+	if (!ve_is_super(get_exec_env())) {
+		printk("kernel_thread call inside container\n");
+		dump_stack();
+		return -EPERM;
+	}
+
+	return ppc_kernel_thread(fn, arg, flags);
+}
 
 #ifdef CONFIG_PPC64
 void ppc64_runlatch_on(void)

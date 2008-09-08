@@ -342,9 +342,14 @@
 #define __NR_pipe2		317
 #define __NR_inotify_init1	318
 
+#define __NR_getluid            410
+#define __NR_setluid            411
+#define __NR_setublimit         412
+#define __NR_ubstat             413
+
 #ifdef __KERNEL__
 
-#define __NR_syscalls		319
+#define __NR_syscalls		414
 
 #define __NR__exit __NR_exit
 #define NR_syscalls	__NR_syscalls

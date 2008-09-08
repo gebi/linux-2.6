@@ -19,6 +19,7 @@
 
 struct kobject;
 struct module;
+struct sysfs_open_dirent;
 
 /* FIXME
  * The *owner field is no longer used, but leave around
@@ -78,6 +79,66 @@ struct sysfs_ops {
 	ssize_t	(*store)(struct kobject *,struct attribute *,const char *, size_t);
 };
 
+/* type-specific structures for sysfs_dirent->s_* union members */
+struct sysfs_elem_dir {
+	struct kobject		*kobj;
+	/* children list starts here and goes through sd->s_sibling */
+	struct sysfs_dirent	*children;
+};
+
+struct sysfs_elem_symlink {
+	struct sysfs_dirent	*target_sd;
+};
+
+struct sysfs_elem_attr {
+	struct attribute	*attr;
+	struct sysfs_open_dirent *open;
+};
+
+struct sysfs_elem_bin_attr {
+	struct bin_attribute	*bin_attr;
+};
+
+/*
+ * sysfs_dirent - the building block of sysfs hierarchy.  Each and
+ * every sysfs node is represented by single sysfs_dirent.
+ *
+ * As long as s_count reference is held, the sysfs_dirent itself is
+ * accessible.  Dereferencing s_elem or any other outer entity
+ * requires s_active reference.
+ */
+struct sysfs_dirent {
+	atomic_t		s_count;
+	atomic_t		s_active;
+	struct sysfs_dirent	*s_parent;
+	struct sysfs_dirent	*s_sibling;
+	const char		*s_name;
+
+	union {
+		struct sysfs_elem_dir		s_dir;
+		struct sysfs_elem_symlink	s_symlink;
+		struct sysfs_elem_attr		s_attr;
+		struct sysfs_elem_bin_attr	s_bin_attr;
+	};
+
+	unsigned int		s_flags;
+	ino_t			s_ino;
+	umode_t			s_mode;
+	struct iattr		*s_iattr;
+};
+
+#define SD_DEACTIVATED_BIAS		INT_MIN
+
+#define SYSFS_TYPE_MASK			0x00ff
+#define SYSFS_DIR			0x0001
+#define SYSFS_KOBJ_ATTR			0x0002
+#define SYSFS_KOBJ_BIN_ATTR		0x0004
+#define SYSFS_KOBJ_LINK			0x0008
+#define SYSFS_COPY_NAME			(SYSFS_DIR | SYSFS_KOBJ_LINK)
+
+#define SYSFS_FLAG_MASK			~SYSFS_TYPE_MASK
+#define SYSFS_FLAG_REMOVED		0x0200
+
 #ifdef CONFIG_SYSFS
 
 int sysfs_schedule_callback(struct kobject *kobj, void (*func)(void *),
@@ -120,6 +181,8 @@ void sysfs_remove_file_from_group(struct kobject *kobj,
 void sysfs_notify(struct kobject *kobj, char *dir, char *attr);
 
 extern int __must_check sysfs_init(void);
+
+extern struct file_system_type sysfs_fs_type;
 
 #else /* CONFIG_SYSFS */
 

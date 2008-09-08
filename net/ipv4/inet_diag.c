@@ -706,6 +706,7 @@ static int inet_diag_dump(struct sk_buff *skb, struct netlink_callback *cb)
 	struct inet_diag_req *r = NLMSG_DATA(cb->nlh);
 	const struct inet_diag_handler *handler;
 	struct inet_hashinfo *hashinfo;
+	struct ve_struct *ve = get_exec_env();
 
 	handler = inet_diag_lock_handler(cb->nlh->nlmsg_type);
 	if (IS_ERR(handler))
@@ -729,6 +730,8 @@ static int inet_diag_dump(struct sk_buff *skb, struct netlink_callback *cb)
 			sk_for_each(sk, node, &hashinfo->listening_hash[i]) {
 				struct inet_sock *inet = inet_sk(sk);
 
+				if (!ve_accessible(sk->owner_env, ve))
+					continue;
 				if (num < s_num) {
 					num++;
 					continue;
@@ -790,6 +793,8 @@ skip_listen_ht:
 		sk_for_each(sk, node, &head->chain) {
 			struct inet_sock *inet = inet_sk(sk);
 
+			if (!ve_accessible(sk->owner_env, ve))
+				continue;
 			if (num < s_num)
 				goto next_normal;
 			if (!(r->idiag_states & (1 << sk->sk_state)))
@@ -814,6 +819,8 @@ next_normal:
 			inet_twsk_for_each(tw, node,
 				    &head->twchain) {
 
+				if (!ve_accessible_veid(tw->tw_owner_env, VEID(ve)))
+					continue;
 				if (num < s_num)
 					goto next_dying;
 				if (r->id.idiag_sport != tw->tw_sport &&

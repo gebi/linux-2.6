@@ -31,6 +31,7 @@
 #include <linux/eventpoll.h>
 #include <linux/mount.h>
 #include <linux/bitops.h>
+#include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/anon_inodes.h>
 #include <asm/uaccess.h>
@@ -102,11 +103,6 @@
 
 #define EP_UNACTIVE_PTR ((void *) -1L)
 
-struct epoll_filefd {
-	struct file *file;
-	int fd;
-};
-
 /*
  * Node that is linked into the "wake_task_list" member of the "struct poll_safewake".
  * It is used to keep track on all tasks that are currently inside the wake_up() code
@@ -127,79 +123,6 @@ struct wake_task_node {
 struct poll_safewake {
 	struct list_head wake_task_list;
 	spinlock_t lock;
-};
-
-/*
- * Each file descriptor added to the eventpoll interface will
- * have an entry of this type linked to the "rbr" RB tree.
- */
-struct epitem {
-	/* RB tree node used to link this structure to the eventpoll RB tree */
-	struct rb_node rbn;
-
-	/* List header used to link this structure to the eventpoll ready list */
-	struct list_head rdllink;
-
-	/*
-	 * Works together "struct eventpoll"->ovflist in keeping the
-	 * single linked chain of items.
-	 */
-	struct epitem *next;
-
-	/* The file descriptor information this item refers to */
-	struct epoll_filefd ffd;
-
-	/* Number of active wait queue attached to poll operations */
-	int nwait;
-
-	/* List containing poll wait queues */
-	struct list_head pwqlist;
-
-	/* The "container" of this item */
-	struct eventpoll *ep;
-
-	/* List header used to link this item to the "struct file" items list */
-	struct list_head fllink;
-
-	/* The structure that describe the interested events and the source fd */
-	struct epoll_event event;
-};
-
-/*
- * This structure is stored inside the "private_data" member of the file
- * structure and rapresent the main data sructure for the eventpoll
- * interface.
- */
-struct eventpoll {
-	/* Protect the this structure access */
-	spinlock_t lock;
-
-	/*
-	 * This mutex is used to ensure that files are not removed
-	 * while epoll is using them. This is held during the event
-	 * collection loop, the file cleanup path, the epoll file exit
-	 * code and the ctl operations.
-	 */
-	struct mutex mtx;
-
-	/* Wait queue used by sys_epoll_wait() */
-	wait_queue_head_t wq;
-
-	/* Wait queue used by file->poll() */
-	wait_queue_head_t poll_wait;
-
-	/* List of ready file descriptors */
-	struct list_head rdllist;
-
-	/* RB tree root used to store monitored fd structs */
-	struct rb_root rbr;
-
-	/*
-	 * This is a single linked list that chains all the "struct epitem" that
-	 * happened while transfering ready events to userspace w/out
-	 * holding ->lock.
-	 */
-	struct epitem *ovflist;
 };
 
 /* Wait structure used by the poll hooks */
@@ -229,7 +152,8 @@ struct ep_pqueue {
 /*
  * This mutex is used to serialize ep_free() and eventpoll_release_file().
  */
-static struct mutex epmutex;
+struct mutex epmutex;
+EXPORT_SYMBOL_GPL(epmutex);
 
 /* Safe wake up implementation */
 static struct poll_safewake psw;
@@ -482,10 +406,11 @@ static unsigned int ep_eventpoll_poll(struct file *file, poll_table *wait)
 }
 
 /* File callbacks that implement the eventpoll file behaviour */
-static const struct file_operations eventpoll_fops = {
+const struct file_operations eventpoll_fops = {
 	.release	= ep_eventpoll_release,
 	.poll		= ep_eventpoll_poll
 };
+EXPORT_SYMBOL(eventpoll_fops);
 
 /* Fast test to see if the file is an evenpoll file */
 static inline int is_file_epoll(struct file *f)
@@ -557,7 +482,7 @@ static int ep_alloc(struct eventpoll **pep)
  * are protected by the "mtx" mutex, and ep_find() must be called with
  * "mtx" held.
  */
-static struct epitem *ep_find(struct eventpoll *ep, struct file *file, int fd)
+struct epitem *ep_find(struct eventpoll *ep, struct file *file, int fd)
 {
 	int kcmp;
 	struct rb_node *rbp;
@@ -583,6 +508,7 @@ static struct epitem *ep_find(struct eventpoll *ep, struct file *file, int fd)
 
 	return epir;
 }
+EXPORT_SYMBOL_GPL(ep_find);
 
 /*
  * This is the callback that is passed to the wait queue wakeup
@@ -695,7 +621,7 @@ static void ep_rbtree_insert(struct eventpoll *ep, struct epitem *epi)
 /*
  * Must be called with "mtx" held.
  */
-static int ep_insert(struct eventpoll *ep, struct epoll_event *event,
+int ep_insert(struct eventpoll *ep, struct epoll_event *event,
 		     struct file *tfile, int fd)
 {
 	int error, revents, pwake = 0;
@@ -792,6 +718,7 @@ error_unregister:
 error_return:
 	return error;
 }
+EXPORT_SYMBOL(ep_insert);
 
 /*
  * Modify the interest event mask by dropping an event if the new mask
@@ -1089,6 +1016,7 @@ asmlinkage long sys_epoll_create(int size)
 
 	return sys_epoll_create1(0);
 }
+EXPORT_SYMBOL(sys_epoll_create);
 
 /*
  * The following function implements the controller interface for

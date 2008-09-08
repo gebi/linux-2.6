@@ -27,6 +27,7 @@
 #include <linux/spinlock.h>
 #include <linux/interrupt.h>
 #include <linux/notifier.h>
+#include <net/sock.h>
 
 #include <linux/netfilter.h>
 #include <net/netlink.h>
@@ -45,6 +46,8 @@
 
 #include <linux/netfilter/nfnetlink.h>
 #include <linux/netfilter/nfnetlink_conntrack.h>
+#include <bc/beancounter.h>
+#include <bc/sock.h>
 
 MODULE_LICENSE("GPL");
 
@@ -549,7 +552,8 @@ ctnetlink_dump_table(struct sk_buff *skb, struct netlink_callback *cb)
 	last = (struct nf_conn *)cb->args[1];
 	for (; cb->args[0] < nf_conntrack_htable_size; cb->args[0]++) {
 restart:
-		hlist_for_each_entry_rcu(h, n, &nf_conntrack_hash[cb->args[0]],
+		hlist_for_each_entry_rcu(h, n,
+					 &ve_nf_conntrack_hash[cb->args[0]],
 					 hnode) {
 			if (NF_CT_DIRECTION(h) != IP_CT_DIR_ORIGINAL)
 				continue;
@@ -1118,14 +1122,15 @@ static int
 ctnetlink_create_conntrack(struct nlattr *cda[],
 			   struct nf_conntrack_tuple *otuple,
 			   struct nf_conntrack_tuple *rtuple,
-			   struct nf_conn *master_ct)
+			   struct nf_conn *master_ct,
+			   struct user_beancounter *ub)
 {
 	struct nf_conn *ct;
 	int err = -EINVAL;
 	struct nf_conn_help *help;
 	struct nf_conntrack_helper *helper;
 
-	ct = nf_conntrack_alloc(otuple, rtuple, GFP_KERNEL);
+	ct = nf_conntrack_alloc(otuple, rtuple, ub, GFP_KERNEL);
 	if (ct == NULL || IS_ERR(ct))
 		return -ENOMEM;
 
@@ -1241,11 +1246,19 @@ ctnetlink_new_conntrack(struct sock *ctnl, struct sk_buff *skb,
 
 		spin_unlock_bh(&nf_conntrack_lock);
 		err = -ENOENT;
-		if (nlh->nlmsg_flags & NLM_F_CREATE)
+		if (nlh->nlmsg_flags & NLM_F_CREATE) {
+			struct user_beancounter *ub = NULL;
+
+#ifdef CONFIG_BEANCOUNTERS
+			if (skb->sk)
+				ub = sock_bc(skb->sk)->ub;
+#endif
 			err = ctnetlink_create_conntrack(cda,
 							 &otuple,
 							 &rtuple,
-							 master_ct);
+							 master_ct,
+							 ub);
+		}
 		if (err < 0 && master_ct)
 			nf_ct_put(master_ct);
 
@@ -1467,7 +1480,7 @@ ctnetlink_exp_dump_table(struct sk_buff *skb, struct netlink_callback *cb)
 	last = (struct nf_conntrack_expect *)cb->args[1];
 	for (; cb->args[0] < nf_ct_expect_hsize; cb->args[0]++) {
 restart:
-		hlist_for_each_entry(exp, n, &nf_ct_expect_hash[cb->args[0]],
+		hlist_for_each_entry(exp, n, &ve_nf_ct_expect_hash[cb->args[0]],
 				     hnode) {
 			if (l3proto && exp->tuple.src.l3num != l3proto)
 				continue;
@@ -1613,7 +1626,7 @@ ctnetlink_del_expect(struct sock *ctnl, struct sk_buff *skb,
 		}
 		for (i = 0; i < nf_ct_expect_hsize; i++) {
 			hlist_for_each_entry_safe(exp, n, next,
-						  &nf_ct_expect_hash[i],
+						  &ve_nf_ct_expect_hash[i],
 						  hnode) {
 				m_help = nfct_help(exp->master);
 				if (m_help->helper == h
@@ -1629,7 +1642,7 @@ ctnetlink_del_expect(struct sock *ctnl, struct sk_buff *skb,
 		spin_lock_bh(&nf_conntrack_lock);
 		for (i = 0; i < nf_ct_expect_hsize; i++) {
 			hlist_for_each_entry_safe(exp, n, next,
-						  &nf_ct_expect_hash[i],
+						  &ve_nf_ct_expect_hash[i],
 						  hnode) {
 				if (del_timer(&exp->timeout)) {
 					nf_ct_unlink_expect(exp);

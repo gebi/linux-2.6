@@ -278,6 +278,11 @@ enum netdev_state_t
 	__LINK_STATE_DORMANT,
 };
 
+struct netdev_bc {
+	struct user_beancounter *exec_ub, *owner_ub;
+};
+
+#define netdev_bc(dev)		(&(dev)->dev_bc)
 
 /*
  * This structure holds at boot time configured netdevice settings. They
@@ -528,6 +533,10 @@ struct net_device
 #define NETIF_F_GSO_ROBUST	(SKB_GSO_DODGY << NETIF_F_GSO_SHIFT)
 #define NETIF_F_TSO_ECN		(SKB_GSO_TCP_ECN << NETIF_F_GSO_SHIFT)
 #define NETIF_F_TSO6		(SKB_GSO_TCPV6 << NETIF_F_GSO_SHIFT)
+/* device is venet device */
+#define NETIF_F_VENET		(1 << (NETIF_F_GSO_SHIFT - 1))
+/* can be registered inside VE */
+#define NETIF_F_VIRTUAL		(1 << (NETIF_F_GSO_SHIFT - 2))
 
 	/* List of features with software fallbacks. */
 #define NETIF_F_GSO_SOFTWARE	(NETIF_F_TSO | NETIF_F_TSO_ECN | NETIF_F_TSO6)
@@ -735,6 +744,9 @@ struct net_device
 	/* GARP */
 	struct garp_port	*garp_port;
 
+	struct ve_struct	*owner_env; /* Owner VE of the interface */
+	struct netdev_bc	dev_bc;
+
 	/* class/net/name entry */
 	struct device		dev;
 	/* space for optional statistics and wireless sysfs groups */
@@ -751,6 +763,20 @@ struct net_device
 	unsigned int		gso_max_size;
 };
 #define to_net_dev(d) container_of(d, struct net_device, dev)
+
+#define NETDEV_HASHBITS	8
+#define NETDEV_HASHENTRIES (1 << NETDEV_HASHBITS)
+
+static inline struct hlist_head *dev_name_hash(struct net *net, const char *name)
+{
+	unsigned hash = full_name_hash(name, strnlen(name, IFNAMSIZ));
+	return &net->dev_name_head[hash & ((1 << NETDEV_HASHBITS) - 1)];
+}
+
+static inline struct hlist_head *dev_index_hash(struct net *net, int ifindex)
+{
+	return &net->dev_index_head[ifindex & ((1 << NETDEV_HASHBITS) - 1)];
+}
 
 #define	NETDEV_ALIGN		32
 #define	NETDEV_ALIGN_CONST	(NETDEV_ALIGN - 1)
@@ -1224,6 +1250,9 @@ extern int		dev_ethtool(struct net *net, struct ifreq *);
 extern unsigned		dev_get_flags(const struct net_device *);
 extern int		dev_change_flags(struct net_device *, unsigned);
 extern int		dev_change_name(struct net_device *, char *);
+int __dev_change_net_namespace(struct net_device *, struct net *, const char *,
+			struct ve_struct *src_ve, struct ve_struct *dst_ve,
+			struct user_beancounter *exec_ub);
 extern int		dev_change_net_namespace(struct net_device *,
 						 struct net *, const char *);
 extern int		dev_set_mtu(struct net_device *, int);
@@ -1672,6 +1701,18 @@ extern char *netdev_drivername(struct net_device *dev, char *buffer, int len);
 extern void linkwatch_run_queue(void);
 
 extern int netdev_compute_features(unsigned long all, unsigned long one);
+
+#if defined(CONFIG_VE) && defined(CONFIG_NET)
+static inline int ve_is_dev_movable(struct net_device *dev)
+{
+	return !(dev->features & (NETIF_F_VIRTUAL | NETIF_F_NETNS_LOCAL));
+}
+#else
+static inline int ve_is_dev_movable(struct net_device *dev)
+{
+	return 0;
+}
+#endif
 
 static inline int net_gso_ok(int features, int gso_type)
 {

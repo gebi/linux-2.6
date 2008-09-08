@@ -26,8 +26,10 @@
 #include <linux/smp.h>
 #include <linux/slab.h>
 #include <linux/user.h>
+#include <linux/sysctl.h>
 #include <linux/interrupt.h>
 #include <linux/utsname.h>
+#include <linux/utsrelease.h>
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/ptrace.h>
@@ -51,8 +53,6 @@
 #include <asm/proto.h>
 #include <asm/ia32.h>
 #include <asm/idle.h>
-
-asmlinkage extern void ret_from_fork(void);
 
 unsigned long kernel_thread_flags = CLONE_VM | CLONE_UNTRACED;
 
@@ -160,13 +160,14 @@ void __show_regs(struct pt_regs * regs)
 
 	printk("\n");
 	print_modules();
-	printk("Pid: %d, comm: %.20s %s %s %.*s\n",
+	printk("Pid: %d, comm: %.20s %s %s %.*s %s\n",
 		current->pid, current->comm, print_tainted(),
 		init_utsname()->release,
 		(int)strcspn(init_utsname()->version, " "),
-		init_utsname()->version);
+		init_utsname()->version, VZVERSION);
 	printk("RIP: %04lx:[<%016lx>] ", regs->cs & 0xffff, regs->ip);
-	printk_address(regs->ip, 1);
+	if (decode_call_traces)
+		printk_address(regs->ip, 1);
 	printk("RSP: %04lx:%016lx  EFLAGS: %08lx\n", regs->ss, regs->sp,
 		regs->flags);
 	printk("RAX: %016lx RBX: %016lx RCX: %016lx\n",
@@ -214,8 +215,25 @@ void show_regs(struct pt_regs *regs)
 {
 	printk("CPU %d:", smp_processor_id());
 	__show_regs(regs);
-	show_trace(NULL, regs, (void *)(regs + 1), regs->bp);
+	show_trace(NULL, regs, &regs->sp, regs->bp);
+	if (!decode_call_traces)
+		printk(" EIP: [<%08lx>]\n", regs->ip);
 }
+
+void smp_show_regs(struct pt_regs *regs, void *data)
+{
+	static DEFINE_SPINLOCK(show_regs_lock);
+
+	if (regs == NULL)
+		return;
+
+	spin_lock(&show_regs_lock);
+	bust_spinlocks(1);
+	printk("----------- IPI show regs -----------\n");
+	show_regs(regs);
+	bust_spinlocks(0);
+	spin_unlock(&show_regs_lock);
+ }
 
 /*
  * Free current thread data structures etc..
@@ -854,4 +872,21 @@ unsigned long arch_randomize_brk(struct mm_struct *mm)
 {
 	unsigned long range_end = mm->brk + 0x02000000;
 	return randomize_range(mm->brk, range_end, 0) ? : mm->brk;
+}
+
+long do_fork_kthread(unsigned long clone_flags,
+	      unsigned long stack_start,
+	      struct pt_regs *regs,
+	      unsigned long stack_size,
+	      int __user *parent_tidptr,
+	      int __user *child_tidptr)
+{
+	if (ve_allow_kthreads || ve_is_super(get_exec_env()))
+		return do_fork(clone_flags, stack_start, regs, stack_size,
+				parent_tidptr, child_tidptr);
+
+	/* Don't allow kernel_thread() inside VE */
+	printk("kernel_thread call inside container\n");
+	dump_stack();
+	return -EPERM;
 }

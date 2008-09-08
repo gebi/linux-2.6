@@ -78,6 +78,10 @@ int request_module(const char *fmt, ...)
 #define MAX_KMOD_CONCURRENT 50	/* Completely arbitrary value - KAO */
 	static int kmod_loop_msg;
 
+	/* Don't allow request_module() inside VE. */
+	if (!ve_is_super(get_exec_env()))
+		return -EPERM;
+
 	va_start(args, fmt);
 	ret = vsnprintf(module_name, MODULE_NAME_LEN, fmt, args);
 	va_end(args);
@@ -451,6 +455,9 @@ int call_usermodehelper_exec(struct subprocess_info *sub_info,
 {
 	DECLARE_COMPLETION_ONSTACK(done);
 	int retval = 0;
+
+	if (!ve_is_super(get_exec_env()))
+		return -EPERM;
 
 	helper_lock();
 	if (sub_info->path[0] == '\0')

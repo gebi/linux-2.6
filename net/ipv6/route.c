@@ -1889,10 +1889,12 @@ struct rt6_info *addrconf_dst_alloc(struct inet6_dev *idev,
 		rt->rt6i_flags |= RTF_ANYCAST;
 	else
 		rt->rt6i_flags |= RTF_LOCAL;
-	rt->rt6i_nexthop = ndisc_get_neigh(rt->rt6i_dev, &rt->rt6i_gateway);
-	if (rt->rt6i_nexthop == NULL) {
-		dst_free(&rt->u.dst);
-		return ERR_PTR(-ENOMEM);
+	rt->rt6i_nexthop = __neigh_lookup_errno(&nd_tbl, &rt->rt6i_gateway, rt->rt6i_dev);
+	if (IS_ERR(rt->rt6i_nexthop)) {
+		void *err = rt->rt6i_nexthop;
+		rt->rt6i_nexthop = NULL;
+		dst_free((struct dst_entry *) rt);
+		return err;
 	}
 
 	ipv6_addr_copy(&rt->rt6i_dst.addr, addr);

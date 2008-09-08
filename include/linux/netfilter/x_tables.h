@@ -302,6 +302,7 @@ struct xt_table_info
 {
 	/* Size per table */
 	unsigned int size;
+	unsigned int alloc_size;
 	/* Number of entries: FIXME. --RR */
 	unsigned int number;
 	/* Initial number of entries. Needed for module usage count */

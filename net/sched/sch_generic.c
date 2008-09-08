@@ -121,11 +121,13 @@ static inline int qdisc_restart(struct Qdisc *q)
 	struct net_device *dev;
 	spinlock_t *root_lock;
 	struct sk_buff *skb;
+	struct ve_struct *old_ve;
 
 	/* Dequeue packet */
 	if (unlikely((skb = dequeue_skb(q)) == NULL))
 		return 0;
 
+	old_ve = set_exec_env(skb->owner_env);
 	root_lock = qdisc_lock(q);
 
 	/* And release qdisc */
@@ -166,6 +168,8 @@ static inline int qdisc_restart(struct Qdisc *q)
 	if (ret && (netif_tx_queue_stopped(txq) ||
 		    netif_tx_queue_frozen(txq)))
 		ret = 0;
+
+	(void)set_exec_env(old_ve);
 
 	return ret;
 }

@@ -23,6 +23,7 @@
 #include <linux/parser.h>
 #include <linux/fsnotify.h>
 #include <linux/seq_file.h>
+#include <linux/ve.h>
 
 #define DEVPTS_SUPER_MAGIC 0x1cd1
 
@@ -30,18 +31,26 @@
 
 extern int pty_limit;			/* Config limit on Unix98 ptys */
 static DEFINE_IDA(allocated_ptys);
+#ifdef CONFIG_VE
+#define __ve_allocated_ptys(ve) (*((ve)->allocated_ptys))
+#define ve_allocated_ptys	__ve_allocated_ptys(get_exec_env())
+#else
+#define __ve_allocated_ptys(ve) allocated_ptys
+#define ve_allocated_ptys	allocated_ptys
+#endif
 static DEFINE_MUTEX(allocated_ptys_lock);
 
+struct devpts_config devpts_config = {.mode = 0600};
+
+#ifndef CONFIG_VE
 static struct vfsmount *devpts_mnt;
 static struct dentry *devpts_root;
-
-static struct {
-	int setuid;
-	int setgid;
-	uid_t   uid;
-	gid_t   gid;
-	umode_t mode;
-} config = {.mode = DEVPTS_DEFAULT_MODE};
+#define config	devpts_config
+#else
+#define devpts_mnt	(get_exec_env()->devpts_mnt)
+#define devpts_root	(get_exec_env()->devpts_root)
+#define config		(*(get_exec_env()->devpts_config))
+#endif
 
 enum {
 	Opt_uid, Opt_gid, Opt_mode,
@@ -93,7 +102,8 @@ static int devpts_remount(struct super_block *sb, int *flags, char *data)
 			config.mode = option & S_IALLUGO;
 			break;
 		default:
-			printk(KERN_ERR "devpts: called with bogus options\n");
+			ve_printk(VE_LOG, KERN_ERR
+					"devpts: called with bogus options\n");
 			return -EINVAL;
 		}
 	}
@@ -157,12 +167,14 @@ static int devpts_get_sb(struct file_system_type *fs_type,
 	return get_sb_single(fs_type, flags, data, devpts_fill_super, mnt);
 }
 
-static struct file_system_type devpts_fs_type = {
+struct file_system_type devpts_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "devpts",
 	.get_sb		= devpts_get_sb,
 	.kill_sb	= kill_anon_super,
 };
+
+EXPORT_SYMBOL(devpts_fs_type);
 
 /*
  * The normal naming convention is simply /dev/pts/<number>; this conforms
@@ -183,12 +195,12 @@ int devpts_new_index(void)
 	int ida_ret;
 
 retry:
-	if (!ida_pre_get(&allocated_ptys, GFP_KERNEL)) {
+	if (!ida_pre_get(&ve_allocated_ptys, GFP_KERNEL)) {
 		return -ENOMEM;
 	}
 
 	mutex_lock(&allocated_ptys_lock);
-	ida_ret = ida_get_new(&allocated_ptys, &index);
+	ida_ret = ida_get_new(&ve_allocated_ptys, &index);
 	if (ida_ret < 0) {
 		mutex_unlock(&allocated_ptys_lock);
 		if (ida_ret == -EAGAIN)
@@ -197,7 +209,7 @@ retry:
 	}
 
 	if (index >= pty_limit) {
-		ida_remove(&allocated_ptys, index);
+		ida_remove(&ve_allocated_ptys, index);
 		mutex_unlock(&allocated_ptys_lock);
 		return -EIO;
 	}
@@ -208,7 +220,7 @@ retry:
 void devpts_kill_index(int idx)
 {
 	mutex_lock(&allocated_ptys_lock);
-	ida_remove(&allocated_ptys, idx);
+	ida_remove(&ve_allocated_ptys, idx);
 	mutex_unlock(&allocated_ptys_lock);
 }
 
@@ -278,6 +290,17 @@ void devpts_pty_kill(int number)
 	mutex_unlock(&devpts_root->d_inode->i_mutex);
 }
 
+void prepare_tty(void)
+{
+#ifdef CONFIG_VE
+	get_ve0()->allocated_ptys = &allocated_ptys;
+	/*
+	 * in this case, tty_register_driver() setups
+	 * owner_env correctly right from the bootup
+	 */
+#endif
+}
+
 static int __init init_devpts_fs(void)
 {
 	int err = register_filesystem(&devpts_fs_type);
@@ -286,11 +309,13 @@ static int __init init_devpts_fs(void)
 		if (IS_ERR(devpts_mnt))
 			err = PTR_ERR(devpts_mnt);
 	}
+	prepare_tty();
 	return err;
 }
 
 static void __exit exit_devpts_fs(void)
 {
+	/* the code is never called, the argument is irrelevant */
 	unregister_filesystem(&devpts_fs_type);
 	mntput(devpts_mnt);
 }

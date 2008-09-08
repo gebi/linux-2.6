@@ -20,11 +20,13 @@
 #include <linux/threads.h>
 #include <linux/quicklist.h>
 
+#include <bc/kmem.h>
+
 #include <asm/mmu_context.h>
 
 static inline pgd_t *pgd_alloc(struct mm_struct *mm)
 {
-	return quicklist_alloc(0, GFP_KERNEL, NULL);
+	return quicklist_alloc(0, GFP_KERNEL_UBC|__GFP_SOFT_UBC, NULL);
 }
 
 static inline void pgd_free(struct mm_struct *mm, pgd_t *pgd)
@@ -41,7 +43,7 @@ pgd_populate(struct mm_struct *mm, pgd_t * pgd_entry, pud_t * pud)
 
 static inline pud_t *pud_alloc_one(struct mm_struct *mm, unsigned long addr)
 {
-	return quicklist_alloc(0, GFP_KERNEL, NULL);
+	return quicklist_alloc(0, GFP_KERNEL_UBC|__GFP_SOFT_UBC, NULL);
 }
 
 static inline void pud_free(struct mm_struct *mm, pud_t *pud)
@@ -59,7 +61,7 @@ pud_populate(struct mm_struct *mm, pud_t * pud_entry, pmd_t * pmd)
 
 static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long addr)
 {
-	return quicklist_alloc(0, GFP_KERNEL, NULL);
+	return quicklist_alloc(0, GFP_KERNEL_UBC|__GFP_SOFT_UBC, NULL);
 }
 
 static inline void pmd_free(struct mm_struct *mm, pmd_t *pmd)
@@ -87,7 +89,7 @@ static inline pgtable_t pte_alloc_one(struct mm_struct *mm, unsigned long addr)
 	struct page *page;
 	void *pg;
 
-	pg = quicklist_alloc(0, GFP_KERNEL, NULL);
+	pg = quicklist_alloc(0, GFP_KERNEL_UBC|__GFP_SOFT_UBC, NULL);
 	if (!pg)
 		return NULL;
 	page = virt_to_page(pg);

@@ -34,6 +34,13 @@ static struct hlist_head *nf_ct_helper_hash __read_mostly;
 static unsigned int nf_ct_helper_hsize __read_mostly;
 static unsigned int nf_ct_helper_count __read_mostly;
 static int nf_ct_helper_vmalloc;
+#ifdef CONFIG_VE_IPTABLES
+#define ve_nf_ct_helper_hash	(get_exec_env()->_nf_conntrack->_nf_ct_helper_hash)
+#define ve_nf_ct_helper_vmalloc	(get_exec_env()->_nf_conntrack->_nf_ct_helper_vmalloc)
+#else
+#define ve_nf_ct_helper_hash	nf_ct_helper_hash
+#define ve_nf_ct_helper_vmalloc	nf_ct_helper_vmalloc
+#endif
 
 
 /* Stupid hash, but collision free for the default registrations of the
@@ -56,7 +63,7 @@ __nf_ct_helper_find(const struct nf_conntrack_tuple *tuple)
 		return NULL;
 
 	h = helper_hash(tuple);
-	hlist_for_each_entry_rcu(helper, n, &nf_ct_helper_hash[h], hnode) {
+	hlist_for_each_entry_rcu(helper, n, &ve_nf_ct_helper_hash[h], hnode) {
 		if (nf_ct_tuple_src_mask_cmp(tuple, &helper->tuple, &mask))
 			return helper;
 	}
@@ -72,7 +79,7 @@ __nf_conntrack_helper_find_byname(const char *name)
 	unsigned int i;
 
 	for (i = 0; i < nf_ct_helper_hsize; i++) {
-		hlist_for_each_entry_rcu(h, n, &nf_ct_helper_hash[i], hnode) {
+		hlist_for_each_entry_rcu(h, n, &ve_nf_ct_helper_hash[i], hnode) {
 			if (!strcmp(h->name, name))
 				return h;
 		}
@@ -115,7 +122,7 @@ int nf_conntrack_helper_register(struct nf_conntrack_helper *me)
 	BUG_ON(me->expect_class_max >= NF_CT_MAX_EXPECT_CLASSES);
 
 	mutex_lock(&nf_ct_helper_mutex);
-	hlist_add_head_rcu(&me->hnode, &nf_ct_helper_hash[h]);
+	hlist_add_head_rcu(&me->hnode, &ve_nf_ct_helper_hash[h]);
 	nf_ct_helper_count++;
 	mutex_unlock(&nf_ct_helper_mutex);
 
@@ -145,7 +152,7 @@ void nf_conntrack_helper_unregister(struct nf_conntrack_helper *me)
 	/* Get rid of expectations */
 	for (i = 0; i < nf_ct_expect_hsize; i++) {
 		hlist_for_each_entry_safe(exp, n, next,
-					  &nf_ct_expect_hash[i], hnode) {
+					  &ve_nf_ct_expect_hash[i], hnode) {
 			struct nf_conn_help *help = nfct_help(exp->master);
 			if ((help->helper == me || exp->helper == me) &&
 			    del_timer(&exp->timeout)) {
@@ -156,10 +163,10 @@ void nf_conntrack_helper_unregister(struct nf_conntrack_helper *me)
 	}
 
 	/* Get rid of expecteds, set helpers to NULL. */
-	hlist_for_each_entry(h, n, &unconfirmed, hnode)
+	hlist_for_each_entry(h, n, &ve_unconfirmed, hnode)
 		unhelp(h, me);
 	for (i = 0; i < nf_conntrack_htable_size; i++) {
-		hlist_for_each_entry(h, n, &nf_conntrack_hash[i], hnode)
+		hlist_for_each_entry(h, n, &ve_nf_conntrack_hash[i], hnode)
 			unhelp(h, me);
 	}
 	spin_unlock_bh(&nf_conntrack_lock);
@@ -177,26 +184,29 @@ int nf_conntrack_helper_init(void)
 	int err;
 
 	nf_ct_helper_hsize = 1; /* gets rounded up to use one page */
-	nf_ct_helper_hash = nf_ct_alloc_hashtable(&nf_ct_helper_hsize,
-						  &nf_ct_helper_vmalloc);
-	if (!nf_ct_helper_hash)
+	ve_nf_ct_helper_hash = nf_ct_alloc_hashtable(&nf_ct_helper_hsize,
+						  &ve_nf_ct_helper_vmalloc);
+	if (!ve_nf_ct_helper_hash)
 		return -ENOMEM;
 
-	err = nf_ct_extend_register(&helper_extend);
-	if (err < 0)
-		goto err1;
+	if (ve_is_super(get_exec_env())) {
+		err = nf_ct_extend_register(&helper_extend);
+		if (err < 0)
+			goto err1;
+	}
 
 	return 0;
 
 err1:
-	nf_ct_free_hashtable(nf_ct_helper_hash, nf_ct_helper_vmalloc,
+	nf_ct_free_hashtable(ve_nf_ct_helper_hash, ve_nf_ct_helper_vmalloc,
 			     nf_ct_helper_hsize);
 	return err;
 }
 
 void nf_conntrack_helper_fini(void)
 {
-	nf_ct_extend_unregister(&helper_extend);
-	nf_ct_free_hashtable(nf_ct_helper_hash, nf_ct_helper_vmalloc,
+	if (ve_is_super(get_exec_env()))
+		nf_ct_extend_unregister(&helper_extend);
+	nf_ct_free_hashtable(ve_nf_ct_helper_hash, ve_nf_ct_helper_vmalloc,
 			     nf_ct_helper_hsize);
 }

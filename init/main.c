@@ -60,6 +60,9 @@
 #include <linux/sched.h>
 #include <linux/signal.h>
 #include <linux/idr.h>
+#include <linux/fairsched.h>
+
+#include <bc/beancounter.h>
 
 #include <asm/io.h>
 #include <asm/bugs.h>
@@ -104,6 +107,16 @@ extern void tc_init(void);
 
 enum system_states system_state;
 EXPORT_SYMBOL(system_state);
+
+#ifdef CONFIG_VE
+extern void init_ve_system(void);
+extern void init_ve0(void);
+extern void prepare_ve0_process(struct task_struct *tsk);
+#else
+#define init_ve_system()		do { } while (0)
+#define init_ve0()			do { } while (0)
+#define prepare_ve0_process(tsk)	do { } while (0)
+#endif
 
 /*
  * Boot command-line arguments
@@ -543,6 +556,9 @@ asmlinkage void __init start_kernel(void)
 
 	smp_setup_processor_id();
 
+	prepare_ve0_process(&init_task);
+	init_ve0();
+
 	/*
 	 * Need to run as early as possible, to initialize the
 	 * lockdep hash:
@@ -561,6 +577,7 @@ asmlinkage void __init start_kernel(void)
  * enable them
  */
 	lock_kernel();
+	ub_init_early();
 	tick_init();
 	boot_cpu_init();
 	page_address_init();
@@ -666,6 +683,7 @@ asmlinkage void __init start_kernel(void)
 	thread_info_cache_init();
 	fork_init(num_physpages);
 	proc_caches_init();
+	ub_init_late();
 	buffer_init();
 	unnamed_dev_init();
 	key_init();
@@ -686,6 +704,10 @@ asmlinkage void __init start_kernel(void)
 	check_bugs();
 
 	acpi_early_init(); /* before LAPIC and SMP init */
+
+#ifdef CONFIG_BC_RSS_ACCOUNTING
+	ub_init_pbc();
+#endif
 
 	/* Do the rest non-__init'ed, we're now alive */
 	rest_init();
@@ -767,6 +789,8 @@ static void __init do_initcalls(void)
  */
 static void __init do_basic_setup(void)
 {
+	init_ve_system();
+
 	rcu_init_sched(); /* needed by module_init stage. */
 	/* drivers will send hotplug events */
 	init_workqueues();
@@ -858,6 +882,7 @@ static int __init kernel_init(void * unused)
 	do_pre_smp_initcalls();
 
 	smp_init();
+	fairsched_init_late();
 	sched_init_smp();
 
 	cpuset_init_smp();

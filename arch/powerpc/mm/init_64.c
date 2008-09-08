@@ -168,8 +168,8 @@ struct kmem_cache *pgtable_cache[ARRAY_SIZE(pgtable_cache_size)];
 
 void pgtable_cache_init(void)
 {
-	pgtable_cache[0] = kmem_cache_create(pgtable_cache_name[0], PGD_TABLE_SIZE, PGD_TABLE_SIZE, SLAB_PANIC, pgd_ctor);
-	pgtable_cache[1] = kmem_cache_create(pgtable_cache_name[1], PMD_TABLE_SIZE, PMD_TABLE_SIZE, SLAB_PANIC, pmd_ctor);
+	pgtable_cache[0] = kmem_cache_create(pgtable_cache_name[0], PGD_TABLE_SIZE, PGD_TABLE_SIZE, SLAB_PANIC|SLAB_UBC|SLAB_NO_CHARGE, pgd_ctor);
+	pgtable_cache[1] = kmem_cache_create(pgtable_cache_name[1], PMD_TABLE_SIZE, PMD_TABLE_SIZE, SLAB_PANIC|SLAB_UBC|SLAB_NO_CHARGE, pmd_ctor);
 }
 
 #ifdef CONFIG_SPARSEMEM_VMEMMAP

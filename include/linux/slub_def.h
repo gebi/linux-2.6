@@ -95,6 +95,10 @@ struct kmem_cache {
 	struct kobject kobj;	/* For sysfs */
 #endif
 
+#ifdef CONFIG_BEANCOUNTERS
+	atomic_t grown;
+	int objuse;
+#endif
 #ifdef CONFIG_NUMA
 	/*
 	 * Defragmentation by allocating from a remote node.
@@ -125,6 +129,19 @@ struct kmem_cache {
  * 2^x bytes of allocations.
  */
 extern struct kmem_cache kmalloc_caches[PAGE_SHIFT + 1];
+
+#ifdef CONFIG_BEANCOUNTERS
+extern struct kmem_cache ub_kmalloc_caches[KMALLOC_SHIFT_HIGH + 1];
+static inline struct kmem_cache *__kmalloc_cache(gfp_t f, int idx)
+{
+	return (f & __GFP_UBC) ? &ub_kmalloc_caches[idx] : &kmalloc_caches[idx];
+}
+#else
+static inline struct kmem_cache *__kmalloc_cache(gfp_t flags, int idx)
+{
+	return &kmalloc_caches[idx];
+}
+#endif
 
 /*
  * Sorry that the following has to be that ugly but some versions of GCC
@@ -184,14 +201,14 @@ static __always_inline int kmalloc_index(size_t size)
  * This ought to end up with a global pointer to the right cache
  * in kmalloc_caches.
  */
-static __always_inline struct kmem_cache *kmalloc_slab(size_t size)
+static __always_inline struct kmem_cache *kmalloc_slab(size_t size, gfp_t flags)
 {
 	int index = kmalloc_index(size);
 
 	if (index == 0)
 		return NULL;
 
-	return &kmalloc_caches[index];
+	return __kmalloc_cache(flags, index);
 }
 
 #ifdef CONFIG_ZONE_DMA
@@ -216,7 +233,7 @@ static __always_inline void *kmalloc(size_t size, gfp_t flags)
 			return kmalloc_large(size, flags);
 
 		if (!(flags & SLUB_DMA)) {
-			struct kmem_cache *s = kmalloc_slab(size);
+			struct kmem_cache *s = kmalloc_slab(size, flags);
 
 			if (!s)
 				return ZERO_SIZE_PTR;
@@ -235,7 +252,7 @@ static __always_inline void *kmalloc_node(size_t size, gfp_t flags, int node)
 {
 	if (__builtin_constant_p(size) &&
 		size <= PAGE_SIZE && !(flags & SLUB_DMA)) {
-			struct kmem_cache *s = kmalloc_slab(size);
+			struct kmem_cache *s = kmalloc_slab(size, flags);
 
 		if (!s)
 			return ZERO_SIZE_PTR;

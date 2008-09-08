@@ -43,5 +43,9 @@
 	.p2align	3
 #endif
 
+#define SYS_SKIP(from, to)	.rept to - from		\
+				SYSCALL(sys_ni_syscall)	\
+				.endr
+
 _GLOBAL(sys_call_table)
 #include <asm/systbl.h>

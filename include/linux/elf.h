@@ -404,4 +404,6 @@ extern int elf_coredump_extra_notes_size(void);
 extern int elf_coredump_extra_notes_write(struct file *file, loff_t *foffset);
 #endif
 
+extern int sysctl_at_vsyscall;
+
 #endif /* _LINUX_ELF_H */

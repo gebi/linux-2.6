@@ -20,6 +20,8 @@
 
 #include <linux/module.h>
 #include <net/tcp.h>
+#include <bc/sock_orphan.h>
+#include <bc/tcp.h>
 
 int sysctl_tcp_syn_retries __read_mostly = TCP_SYN_RETRIES;
 int sysctl_tcp_synack_retries __read_mostly = TCP_SYNACK_RETRIES;
@@ -65,7 +67,8 @@ static void tcp_write_err(struct sock *sk)
 static int tcp_out_of_resources(struct sock *sk, int do_reset)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
-	int orphans = atomic_read(&tcp_orphan_count);
+	int orphans = ub_get_orphan_count(sk);
+	int orph = orphans;
 
 	/* If peer does not open window for long time, or did not transmit
 	 * anything for long time, penalize it. */
@@ -76,10 +79,16 @@ static int tcp_out_of_resources(struct sock *sk, int do_reset)
 	if (sk->sk_err_soft)
 		orphans <<= 1;
 
-	if (tcp_too_many_orphans(sk, orphans)) {
-		if (net_ratelimit())
-			printk(KERN_INFO "Out of socket memory\n");
-
+	if (ub_too_many_orphans(sk, orphans)) {
+		if (net_ratelimit()) {
+			int ubid = 0;
+#ifdef CONFIG_USER_RESOURCE
+			ubid = sock_has_ubc(sk) ?
+				top_beancounter(sock_bc(sk)->ub)->ub_uid : 0;
+#endif
+			printk(KERN_INFO "Orphaned socket dropped "
+			       "(%d,%d in CT%d)\n", orph, orphans, ubid);
+		}
 		/* Catch exceptional cases, when connection requires reset.
 		 *      1. Last segment was sent recently. */
 		if ((s32)(tcp_time_stamp - tp->lsndtime) <= TCP_TIMEWAIT_LEN ||
@@ -172,8 +181,11 @@ static int tcp_write_timeout(struct sock *sk)
 static void tcp_delack_timer(unsigned long data)
 {
 	struct sock *sk = (struct sock*)data;
+	struct ve_struct *env;
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct inet_connection_sock *icsk = inet_csk(sk);
+
+	env = set_exec_env(sk->owner_env);
 
 	bh_lock_sock(sk);
 	if (sock_owned_by_user(sk)) {
@@ -223,11 +235,12 @@ static void tcp_delack_timer(unsigned long data)
 	TCP_CHECK_TIMER(sk);
 
 out:
-	if (tcp_memory_pressure)
+	if (ub_tcp_memory_pressure(sk))
 		sk_mem_reclaim(sk);
 out_unlock:
 	bh_unlock_sock(sk);
 	sock_put(sk);
+	(void)set_exec_env(env);
 }
 
 static void tcp_probe_timer(struct sock *sk)
@@ -282,7 +295,10 @@ static void tcp_probe_timer(struct sock *sk)
 static void tcp_retransmit_timer(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
+	struct ve_struct *env;
 	struct inet_connection_sock *icsk = inet_csk(sk);
+
+	env = set_exec_env(sk->owner_env);
 
 	if (!tp->packets_out)
 		goto out;
@@ -391,14 +407,18 @@ out_reset_timer:
 	if (icsk->icsk_retransmits > sysctl_tcp_retries1)
 		__sk_dst_reset(sk);
 
-out:;
+out:
+	(void)set_exec_env(env);
 }
 
 static void tcp_write_timer(unsigned long data)
 {
 	struct sock *sk = (struct sock*)data;
+	struct ve_struct *env;
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	int event;
+
+	env = set_exec_env(sk->owner_env);
 
 	bh_lock_sock(sk);
 	if (sock_owned_by_user(sk)) {
@@ -433,6 +453,7 @@ out:
 out_unlock:
 	bh_unlock_sock(sk);
 	sock_put(sk);
+	(void)set_exec_env(env);
 }
 
 /*
@@ -460,9 +481,12 @@ void tcp_set_keepalive(struct sock *sk, int val)
 static void tcp_keepalive_timer (unsigned long data)
 {
 	struct sock *sk = (struct sock *) data;
+	struct ve_struct *env;
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
 	__u32 elapsed;
+
+	env = set_exec_env(sk->owner_env);
 
 	/* Only process if socket is not in use. */
 	bh_lock_sock(sk);
@@ -535,4 +559,5 @@ death:
 out:
 	bh_unlock_sock(sk);
 	sock_put(sk);
+	(void)set_exec_env(env);
 }

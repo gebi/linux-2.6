@@ -612,6 +612,7 @@ source "arch/ia64/kvm/Kconfig"
 
 source "lib/Kconfig"
 
+source "kernel/bc/Kconfig"
 #
 # Use the generic interrupt handling code in kernel/irq/:
 #
@@ -638,6 +639,8 @@ config IOMMU_HELPER
 source "arch/ia64/hp/sim/Kconfig"
 
 source "arch/ia64/Kconfig.debug"
+
+source "kernel/Kconfig.openvz"
 
 source "security/Kconfig"
 

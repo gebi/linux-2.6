@@ -16,7 +16,7 @@
 
 static inline pgd_t *pgd_alloc(struct mm_struct *mm)
 {
-	return quicklist_alloc(0, GFP_KERNEL, NULL);
+	return quicklist_alloc(0, GFP_KERNEL_UBC, NULL);
 }
 
 static inline void pgd_free(struct mm_struct *mm, pgd_t *pgd)
@@ -28,7 +28,7 @@ static inline void pgd_free(struct mm_struct *mm, pgd_t *pgd)
 
 static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long addr)
 {
-	return quicklist_alloc(0, GFP_KERNEL, NULL);
+	return quicklist_alloc(0, GFP_KERNEL_UBC|__GFP_REPEAT, NULL);
 }
 
 static inline void pmd_free(struct mm_struct *mm, pmd_t *pmd)
@@ -48,7 +48,7 @@ static inline pgtable_t pte_alloc_one(struct mm_struct *mm,
 	struct page *page;
 	void *pg;
 
-	pg = quicklist_alloc(0, GFP_KERNEL, NULL);
+	pg = quicklist_alloc(0, GFP_KERNEL_UBC, NULL);
 	if (!pg)
 		return NULL;
 	page = virt_to_page(pg);

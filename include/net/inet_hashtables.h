@@ -75,6 +75,7 @@ struct inet_ehash_bucket {
  * ports are created in O(1) time?  I thought so. ;-)	-DaveM
  */
 struct inet_bind_bucket {
+	struct ve_struct	*owner_env;
 	struct net		*ib_net;
 	unsigned short		port;
 	signed short		fastreuse;
@@ -198,7 +199,8 @@ extern struct inet_bind_bucket *
 		    inet_bind_bucket_create(struct kmem_cache *cachep,
 					    struct net *net,
 					    struct inet_bind_hashbucket *head,
-					    const unsigned short snum);
+					    const unsigned short snum,
+					    struct ve_struct *env);
 extern void inet_bind_bucket_destroy(struct kmem_cache *cachep,
 				     struct inet_bind_bucket *tb);
 
@@ -374,7 +376,8 @@ static inline struct sock *inet_lookup(struct net *net,
 extern int __inet_hash_connect(struct inet_timewait_death_row *death_row,
 		struct sock *sk, u32 port_offset,
 		int (*check_established)(struct inet_timewait_death_row *,
-			struct sock *, __u16, struct inet_timewait_sock **),
+			struct sock *, __u16, struct inet_timewait_sock **,
+			struct ve_struct *),
 			       void (*hash)(struct sock *sk));
 extern int inet_hash_connect(struct inet_timewait_death_row *death_row,
 			     struct sock *sk);

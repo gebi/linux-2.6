@@ -26,6 +26,8 @@
 #include <linux/syscalls.h>
 #include <linux/security.h>
 #include <linux/pid_namespace.h>
+#include <linux/nsproxy.h>
+#include <bc/io_prio.h>
 
 static int set_task_ioprio(struct task_struct *task, int ioprio)
 {
@@ -71,8 +73,11 @@ asmlinkage long sys_ioprio_set(int which, int who, int ioprio)
 	int data = IOPRIO_PRIO_DATA(ioprio);
 	struct task_struct *p, *g;
 	struct user_struct *user;
-	struct pid *pgrp;
 	int ret;
+	struct pid *pgrp;
+
+	if (!ve_is_super(get_exec_env()))
+		return -EPERM;
 
 	switch (class) {
 		case IOPRIO_CLASS_RT:
@@ -130,16 +135,22 @@ asmlinkage long sys_ioprio_set(int which, int who, int ioprio)
 			if (!user)
 				break;
 
-			do_each_thread(g, p) {
+			do_each_thread_all(g, p) {
 				if (p->uid != who)
 					continue;
 				ret = set_task_ioprio(p, ioprio);
 				if (ret)
 					goto free_uid;
-			} while_each_thread(g, p);
+			} while_each_thread_all(g, p);
 free_uid:
 			if (who)
 				free_uid(user);
+			break;
+		case IOPRIO_WHO_UBC:
+			if (class != IOPRIO_CLASS_BE)
+				return -ERANGE;
+
+			ret = bc_set_ioprio(who, data);
 			break;
 		default:
 			ret = -EINVAL;
@@ -185,9 +196,9 @@ asmlinkage long sys_ioprio_get(int which, int who)
 {
 	struct task_struct *g, *p;
 	struct user_struct *user;
-	struct pid *pgrp;
 	int ret = -ESRCH;
 	int tmpio;
+	struct pid *pgrp;
 
 	read_lock(&tasklist_lock);
 	switch (which) {
@@ -223,7 +234,7 @@ asmlinkage long sys_ioprio_get(int which, int who)
 			if (!user)
 				break;
 
-			do_each_thread(g, p) {
+			do_each_thread_ve(g, p) {
 				if (p->uid != user->uid)
 					continue;
 				tmpio = get_task_ioprio(p);
@@ -233,7 +244,7 @@ asmlinkage long sys_ioprio_get(int which, int who)
 					ret = tmpio;
 				else
 					ret = ioprio_best(ret, tmpio);
-			} while_each_thread(g, p);
+			} while_each_thread_ve(g, p);
 
 			if (who)
 				free_uid(user);

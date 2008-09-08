@@ -71,6 +71,7 @@ struct vfsmount {
 	 * are held, and all mnt_writer[]s on this mount have 0 as their ->count
 	 */
 	atomic_t __mnt_writers;
+	unsigned owner;
 };
 
 static inline struct vfsmount *mntget(struct vfsmount *mnt)

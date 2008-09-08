@@ -309,7 +309,6 @@ good_area:
 	 * make sure we exit gracefully rather than endlessly redo
 	 * the fault.
 	 */
- survive:
 	ret = handle_mm_fault(mm, vma, address, is_write);
 	if (unlikely(ret & VM_FAULT_ERROR)) {
 		if (ret & VM_FAULT_OOM)
@@ -349,14 +348,12 @@ bad_area_nosemaphore:
  */
 out_of_memory:
 	up_read(&mm->mmap_sem);
-	if (is_global_init(current)) {
-		yield();
-		down_read(&mm->mmap_sem);
-		goto survive;
-	}
-	printk("VM: killing process %s\n", current->comm);
 	if (user_mode(regs))
-		do_group_exit(SIGKILL);
+		/*
+		 * 0-order allocation always success if something really
+		 * fatal not happen: beancounter overdraft or OOM. Den
+		 */
+		force_sig(SIGKILL, current);
 	return SIGKILL;
 
 do_sigbus:

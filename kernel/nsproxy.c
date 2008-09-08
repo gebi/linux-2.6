@@ -26,6 +26,14 @@ static struct kmem_cache *nsproxy_cachep;
 
 struct nsproxy init_nsproxy = INIT_NSPROXY(init_nsproxy);
 
+void get_task_namespaces(struct task_struct *tsk)
+{
+	struct nsproxy *ns = tsk->nsproxy;
+	if (ns) {
+		get_nsproxy(ns);
+	}
+}
+
 /*
  * creates a copy of "orig" with refcount 1.
  */
@@ -133,10 +141,12 @@ int copy_namespaces(unsigned long flags, struct task_struct *tsk)
 				CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNET)))
 		return 0;
 
+#ifndef CONFIG_VE
 	if (!capable(CAP_SYS_ADMIN)) {
 		err = -EPERM;
 		goto out;
 	}
+#endif
 
 	/*
 	 * CLONE_NEWIPC must detach from the undolist: after switching
@@ -162,6 +172,7 @@ out:
 	put_nsproxy(old_ns);
 	return err;
 }
+EXPORT_SYMBOL(copy_namespaces);
 
 void free_nsproxy(struct nsproxy *ns)
 {
@@ -178,6 +189,22 @@ void free_nsproxy(struct nsproxy *ns)
 	put_net(ns->net_ns);
 	kmem_cache_free(nsproxy_cachep, ns);
 }
+EXPORT_SYMBOL(free_nsproxy);
+
+struct mnt_namespace * get_task_mnt_ns(struct task_struct *tsk)
+{
+	struct mnt_namespace *mnt_ns = NULL;
+
+	task_lock(tsk);
+	if (tsk->nsproxy)
+		mnt_ns = tsk->nsproxy->mnt_ns;
+	if (mnt_ns)
+		get_mnt_ns(mnt_ns);
+	task_unlock(tsk);
+
+	return mnt_ns;
+}
+EXPORT_SYMBOL(get_task_mnt_ns);
 
 /*
  * Called from unshare. Unshare all the namespaces part of nsproxy.

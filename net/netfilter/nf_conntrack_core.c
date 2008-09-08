@@ -30,6 +30,8 @@
 #include <linux/socket.h>
 #include <linux/mm.h>
 
+#include <net/sock.h>
+
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_l3proto.h>
 #include <net/netfilter/nf_conntrack_l4proto.h>
@@ -54,8 +56,10 @@ EXPORT_SYMBOL_GPL(nf_conntrack_htable_size);
 int nf_conntrack_max __read_mostly;
 EXPORT_SYMBOL_GPL(nf_conntrack_max);
 
+#ifndef CONFIG_VE_IPTABLES
 struct hlist_head *nf_conntrack_hash __read_mostly;
 EXPORT_SYMBOL_GPL(nf_conntrack_hash);
+#endif
 
 struct nf_conn nf_conntrack_untracked __read_mostly;
 EXPORT_SYMBOL_GPL(nf_conntrack_untracked);
@@ -180,7 +184,14 @@ static void
 destroy_conntrack(struct nf_conntrack *nfct)
 {
 	struct nf_conn *ct = (struct nf_conn *)nfct;
+	struct nf_conn_help *help = nfct_help(ct);
+	struct nf_conntrack_l3proto *l3proto;
 	struct nf_conntrack_l4proto *l4proto;
+#ifdef CONFIG_VE_IPTABLES
+	struct ve_struct *old_ve;
+
+	old_ve = set_exec_env(ct->ct_owner_env);
+#endif
 
 	pr_debug("destroy_conntrack(%p)\n", ct);
 	NF_CT_ASSERT(atomic_read(&nfct->use) == 0);
@@ -189,10 +200,17 @@ destroy_conntrack(struct nf_conntrack *nfct)
 	nf_conntrack_event(IPCT_DESTROY, ct);
 	set_bit(IPS_DYING_BIT, &ct->status);
 
+	if (help && help->helper && help->helper->destroy)
+		help->helper->destroy(ct);
+
 	/* To make sure we don't get any weird locking issues here:
 	 * destroy_conntrack() MUST NOT be called with a write lock
 	 * to nf_conntrack_lock!!! -HW */
 	rcu_read_lock();
+	l3proto = __nf_ct_l3proto_find(nf_ct_l3num(ct));
+	if (l3proto && l3proto->destroy)
+		l3proto->destroy(ct);
+
 	l4proto = __nf_ct_l4proto_find(nf_ct_l3num(ct), nf_ct_protonum(ct));
 	if (l4proto && l4proto->destroy)
 		l4proto->destroy(ct);
@@ -220,6 +238,9 @@ destroy_conntrack(struct nf_conntrack *nfct)
 
 	pr_debug("destroy_conntrack: returning ct=%p to slab\n", ct);
 	nf_conntrack_free(ct);
+#ifdef CONFIG_VE_IPTABLES
+	(void)set_exec_env(old);
+#endif
 }
 
 static void death_by_timeout(unsigned long ul_conntrack)
@@ -256,7 +277,7 @@ __nf_conntrack_find(const struct nf_conntrack_tuple *tuple)
 	 * at least once for the stats anyway.
 	 */
 	local_bh_disable();
-	hlist_for_each_entry_rcu(h, n, &nf_conntrack_hash[hash], hnode) {
+	hlist_for_each_entry_rcu(h, n, &ve_nf_conntrack_hash[hash], hnode) {
 		if (nf_ct_tuple_equal(tuple, &h->tuple)) {
 			NF_CT_STAT_INC(found);
 			local_bh_enable();
@@ -295,9 +316,9 @@ static void __nf_conntrack_hash_insert(struct nf_conn *ct,
 				       unsigned int repl_hash)
 {
 	hlist_add_head_rcu(&ct->tuplehash[IP_CT_DIR_ORIGINAL].hnode,
-			   &nf_conntrack_hash[hash]);
+			   &ve_nf_conntrack_hash[hash]);
 	hlist_add_head_rcu(&ct->tuplehash[IP_CT_DIR_REPLY].hnode,
-			   &nf_conntrack_hash[repl_hash]);
+			   &ve_nf_conntrack_hash[repl_hash]);
 }
 
 void nf_conntrack_hash_insert(struct nf_conn *ct)
@@ -351,11 +372,11 @@ __nf_conntrack_confirm(struct sk_buff *skb)
 	/* See if there's one in the list already, including reverse:
 	   NAT could have grabbed it without realizing, since we're
 	   not in the hash.  If there is, we lost race. */
-	hlist_for_each_entry(h, n, &nf_conntrack_hash[hash], hnode)
+	hlist_for_each_entry(h, n, &ve_nf_conntrack_hash[hash], hnode)
 		if (nf_ct_tuple_equal(&ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple,
 				      &h->tuple))
 			goto out;
-	hlist_for_each_entry(h, n, &nf_conntrack_hash[repl_hash], hnode)
+	hlist_for_each_entry(h, n, &ve_nf_conntrack_hash[repl_hash], hnode)
 		if (nf_ct_tuple_equal(&ct->tuplehash[IP_CT_DIR_REPLY].tuple,
 				      &h->tuple))
 			goto out;
@@ -406,7 +427,7 @@ nf_conntrack_tuple_taken(const struct nf_conntrack_tuple *tuple,
 	 * least once for the stats anyway.
 	 */
 	rcu_read_lock_bh();
-	hlist_for_each_entry_rcu(h, n, &nf_conntrack_hash[hash], hnode) {
+	hlist_for_each_entry_rcu(h, n, &ve_nf_conntrack_hash[hash], hnode) {
 		if (nf_ct_tuplehash_to_ctrack(h) != ignored_conntrack &&
 		    nf_ct_tuple_equal(tuple, &h->tuple)) {
 			NF_CT_STAT_INC(found);
@@ -436,7 +457,7 @@ static noinline int early_drop(unsigned int hash)
 
 	rcu_read_lock();
 	for (i = 0; i < nf_conntrack_htable_size; i++) {
-		hlist_for_each_entry_rcu(h, n, &nf_conntrack_hash[hash],
+		hlist_for_each_entry_rcu(h, n, &ve_nf_conntrack_hash[hash],
 					 hnode) {
 			tmp = nf_ct_tuplehash_to_ctrack(h);
 			if (!test_bit(IPS_ASSURED_BIT, &tmp->status))
@@ -466,9 +487,11 @@ static noinline int early_drop(unsigned int hash)
 
 struct nf_conn *nf_conntrack_alloc(const struct nf_conntrack_tuple *orig,
 				   const struct nf_conntrack_tuple *repl,
+				   struct user_beancounter *ub,
 				   gfp_t gfp)
 {
 	struct nf_conn *ct = NULL;
+	struct user_beancounter *old_ub;
 
 	if (unlikely(!nf_conntrack_hash_rnd_initted)) {
 		get_random_bytes(&nf_conntrack_hash_rnd, 4);
@@ -476,25 +499,28 @@ struct nf_conn *nf_conntrack_alloc(const struct nf_conntrack_tuple *orig,
 	}
 
 	/* We don't want any race condition at early drop stage */
-	atomic_inc(&nf_conntrack_count);
+	atomic_inc(&ve_nf_conntrack_count);
 
-	if (nf_conntrack_max &&
-	    unlikely(atomic_read(&nf_conntrack_count) > nf_conntrack_max)) {
+	if (ve_nf_conntrack_max &&
+	    unlikely(atomic_read(&ve_nf_conntrack_count) >
+			ve_nf_conntrack_max)) {
 		unsigned int hash = hash_conntrack(orig);
 		if (!early_drop(hash)) {
-			atomic_dec(&nf_conntrack_count);
+			atomic_dec(&ve_nf_conntrack_count);
 			if (net_ratelimit())
-				printk(KERN_WARNING
-				       "nf_conntrack: table full, dropping"
-				       " packet.\n");
+				ve_printk(VE_LOG_BOTH, KERN_WARNING
+				       "nf_conntrack: CT %d: table full, dropping"
+				       " packet.\n", VEID(get_exec_env()));
 			return ERR_PTR(-ENOMEM);
 		}
 	}
 
+	old_ub = set_exec_ub(ub);
 	ct = kmem_cache_zalloc(nf_conntrack_cachep, gfp);
+	(void)set_exec_ub(old_ub);
 	if (ct == NULL) {
 		pr_debug("nf_conntrack_alloc: Can't alloc conntrack.\n");
-		atomic_dec(&nf_conntrack_count);
+		atomic_dec(&ve_nf_conntrack_count);
 		return ERR_PTR(-ENOMEM);
 	}
 
@@ -504,6 +530,9 @@ struct nf_conn *nf_conntrack_alloc(const struct nf_conntrack_tuple *orig,
 	/* Don't set timer yet: wait for confirmation */
 	setup_timer(&ct->timeout, death_by_timeout, (unsigned long)ct);
 	INIT_RCU_HEAD(&ct->rcu);
+#ifdef CONFIG_VE_IPTABLES
+	ct->ct_owner_env = get_exec_env();
+#endif
 
 	return ct;
 }
@@ -515,7 +544,7 @@ static void nf_conntrack_free_rcu(struct rcu_head *head)
 
 	nf_ct_ext_free(ct);
 	kmem_cache_free(nf_conntrack_cachep, ct);
-	atomic_dec(&nf_conntrack_count);
+	atomic_dec(&ve_nf_conntrack_count);
 }
 
 void nf_conntrack_free(struct nf_conn *ct)
@@ -538,13 +567,20 @@ init_conntrack(const struct nf_conntrack_tuple *tuple,
 	struct nf_conn_help *help;
 	struct nf_conntrack_tuple repl_tuple;
 	struct nf_conntrack_expect *exp;
+	struct user_beancounter *ub = NULL;
 
 	if (!nf_ct_invert_tuple(&repl_tuple, tuple, l3proto, l4proto)) {
 		pr_debug("Can't invert tuple.\n");
 		return NULL;
 	}
 
-	ct = nf_conntrack_alloc(tuple, &repl_tuple, GFP_ATOMIC);
+#ifdef CONFIG_BEANCOUNTERS
+	if (skb->dev != NULL)  /* received skb */
+		ub = netdev_bc(skb->dev)->exec_ub;
+	else if (skb->sk != NULL) /* sent skb */
+		ub = sock_bc(skb->sk)->ub;
+#endif
+	ct = nf_conntrack_alloc(tuple, &repl_tuple, ub, GFP_ATOMIC);
 	if (ct == NULL || IS_ERR(ct)) {
 		pr_debug("Can't allocate conntrack.\n");
 		return (struct nf_conntrack_tuple_hash *)ct;
@@ -593,7 +629,8 @@ init_conntrack(const struct nf_conntrack_tuple *tuple,
 	}
 
 	/* Overload tuple linked list to put us in unconfirmed list. */
-	hlist_add_head(&ct->tuplehash[IP_CT_DIR_ORIGINAL].hnode, &unconfirmed);
+	hlist_add_head(&ct->tuplehash[IP_CT_DIR_ORIGINAL].hnode,
+		       &ve_unconfirmed);
 
 	spin_unlock_bh(&nf_conntrack_lock);
 
@@ -947,13 +984,13 @@ get_next_corpse(int (*iter)(struct nf_conn *i, void *data),
 
 	spin_lock_bh(&nf_conntrack_lock);
 	for (; *bucket < nf_conntrack_htable_size; (*bucket)++) {
-		hlist_for_each_entry(h, n, &nf_conntrack_hash[*bucket], hnode) {
+		hlist_for_each_entry(h, n, &ve_nf_conntrack_hash[*bucket], hnode) {
 			ct = nf_ct_tuplehash_to_ctrack(h);
 			if (iter(ct, data))
 				goto found;
 		}
 	}
-	hlist_for_each_entry(h, n, &unconfirmed, hnode) {
+	hlist_for_each_entry(h, n, &ve_unconfirmed, hnode) {
 		ct = nf_ct_tuplehash_to_ctrack(h);
 		if (iter(ct, data))
 			set_bit(IPS_DYING_BIT, &ct->status);
@@ -1008,7 +1045,10 @@ EXPORT_SYMBOL_GPL(nf_conntrack_flush);
    supposed to kill the mall. */
 void nf_conntrack_cleanup(void)
 {
-	rcu_assign_pointer(ip_ct_attach, NULL);
+	struct ve_struct *ve = get_exec_env();
+
+	if (ve_is_super(ve))
+		rcu_assign_pointer(ip_ct_attach, NULL);
 
 	/* This makes sure all current packets have passed through
 	   netfilter framework.  Roll on, two-stage module
@@ -1018,10 +1058,12 @@ void nf_conntrack_cleanup(void)
 	nf_ct_event_cache_flush();
  i_see_dead_people:
 	nf_conntrack_flush();
-	if (atomic_read(&nf_conntrack_count) != 0) {
+	if (atomic_read(&ve_nf_conntrack_count) != 0) {
 		schedule();
 		goto i_see_dead_people;
 	}
+	if (!ve_is_super(ve))
+		goto skip_ct_cache;
 	/* wait until all references to nf_conntrack_untracked are dropped */
 	while (atomic_read(&nf_conntrack_untracked.ct_general.use) > 1)
 		schedule();
@@ -1029,13 +1071,19 @@ void nf_conntrack_cleanup(void)
 	rcu_assign_pointer(nf_ct_destroy, NULL);
 
 	kmem_cache_destroy(nf_conntrack_cachep);
-	nf_ct_free_hashtable(nf_conntrack_hash, nf_conntrack_vmalloc,
-			     nf_conntrack_htable_size);
+skip_ct_cache:
+	nf_ct_free_hashtable(ve_nf_conntrack_hash, ve_nf_conntrack_vmalloc,
+			nf_conntrack_htable_size);
 
 	nf_conntrack_acct_fini();
 	nf_conntrack_expect_fini();
 	nf_conntrack_helper_fini();
 	nf_conntrack_proto_fini();
+
+	nf_ct_proto_generic_sysctl_cleanup();
+#ifdef CONFIG_VE_IPTABLES
+	kfree(ve->_nf_conntrack);
+#endif
 }
 
 struct hlist_head *nf_ct_alloc_hashtable(unsigned int *sizep, int *vmalloced)
@@ -1046,13 +1094,13 @@ struct hlist_head *nf_ct_alloc_hashtable(unsigned int *sizep, int *vmalloced)
 	*vmalloced = 0;
 
 	size = *sizep = roundup(*sizep, PAGE_SIZE / sizeof(struct hlist_head));
-	hash = (void*)__get_free_pages(GFP_KERNEL|__GFP_NOWARN,
+	hash = (void*)__get_free_pages(GFP_KERNEL_UBC|__GFP_NOWARN,
 				       get_order(sizeof(struct hlist_head)
 						 * size));
 	if (!hash) {
 		*vmalloced = 1;
 		printk(KERN_WARNING "nf_conntrack: falling back to vmalloc.\n");
-		hash = vmalloc(sizeof(struct hlist_head) * size);
+		hash = ub_vmalloc(sizeof(struct hlist_head) * size);
 	}
 
 	if (hash)
@@ -1094,8 +1142,8 @@ int nf_conntrack_set_hashsize(const char *val, struct kernel_param *kp)
 	 */
 	spin_lock_bh(&nf_conntrack_lock);
 	for (i = 0; i < nf_conntrack_htable_size; i++) {
-		while (!hlist_empty(&nf_conntrack_hash[i])) {
-			h = hlist_entry(nf_conntrack_hash[i].first,
+		while (!hlist_empty(&ve_nf_conntrack_hash[i])) {
+			h = hlist_entry(ve_nf_conntrack_hash[i].first,
 					struct nf_conntrack_tuple_hash, hnode);
 			hlist_del_rcu(&h->hnode);
 			bucket = __hash_conntrack(&h->tuple, hashsize, rnd);
@@ -1103,12 +1151,12 @@ int nf_conntrack_set_hashsize(const char *val, struct kernel_param *kp)
 		}
 	}
 	old_size = nf_conntrack_htable_size;
-	old_vmalloced = nf_conntrack_vmalloc;
-	old_hash = nf_conntrack_hash;
+	old_vmalloced = ve_nf_conntrack_vmalloc;
+	old_hash = ve_nf_conntrack_hash;
 
 	nf_conntrack_htable_size = hashsize;
-	nf_conntrack_vmalloc = vmalloced;
-	nf_conntrack_hash = hash;
+	ve_nf_conntrack_vmalloc = vmalloced;
+	ve_nf_conntrack_hash = hash;
 	nf_conntrack_hash_rnd = rnd;
 	spin_unlock_bh(&nf_conntrack_lock);
 
@@ -1120,52 +1168,81 @@ EXPORT_SYMBOL_GPL(nf_conntrack_set_hashsize);
 module_param_call(hashsize, nf_conntrack_set_hashsize, param_get_uint,
 		  &nf_conntrack_htable_size, 0600);
 
-int __init nf_conntrack_init(void)
+int nf_conntrack_init(void)
 {
+	struct ve_struct *ve = get_exec_env();
 	int max_factor = 8;
-	int ret;
+	int ret = 0, i;
 
-	/* Idea from tcp.c: use 1/16384 of memory.  On i386: 32MB
-	 * machine has 512 buckets. >= 1GB machines have 16384 buckets. */
-	if (!nf_conntrack_htable_size) {
-		nf_conntrack_htable_size
-			= (((num_physpages << PAGE_SHIFT) / 16384)
-			   / sizeof(struct hlist_head));
-		if (num_physpages > (1024 * 1024 * 1024 / PAGE_SIZE))
-			nf_conntrack_htable_size = 16384;
-		if (nf_conntrack_htable_size < 32)
-			nf_conntrack_htable_size = 32;
+	if (ve_is_super(ve)) {
 
-		/* Use a max. factor of four by default to get the same max as
-		 * with the old struct list_heads. When a table size is given
-		 * we use the old value of 8 to avoid reducing the max.
-		 * entries. */
-		max_factor = 4;
+		/* Idea from tcp.c: use 1/16384 of memory.  On i386: 32MB
+		 * machine has 512 buckets. >= 1GB machines have 16384 buckets. */
+		if (!nf_conntrack_htable_size) {
+			nf_conntrack_htable_size
+				= (((num_physpages << PAGE_SHIFT) / 16384)
+						/ sizeof(struct hlist_head));
+			if (num_physpages > (1024 * 1024 * 1024 / PAGE_SIZE))
+				nf_conntrack_htable_size = 16384;
+			if (nf_conntrack_htable_size < 32)
+				nf_conntrack_htable_size = 32;
+
+			/* Use a max. factor of four by default to get the same
+			 * max as with the old struct list_heads. When a table
+			 * size is given we use the old value of 8 to avoid
+			 * reducing the max. entries. */
+			max_factor = 4;
+		}
+		nf_conntrack_max = max_factor * nf_conntrack_htable_size;
+
+		printk("nf_conntrack version %s (%u buckets, %d max)\n",
+			NF_CONNTRACK_VERSION, nf_conntrack_htable_size,
+			nf_conntrack_max);
 	}
-	nf_conntrack_hash = nf_ct_alloc_hashtable(&nf_conntrack_htable_size,
-						  &nf_conntrack_vmalloc);
-	if (!nf_conntrack_hash) {
+
+#ifdef CONFIG_VE_IPTABLES
+	ve->_nf_conntrack = kzalloc(sizeof(struct ve_nf_conntrack), GFP_KERNEL);
+	if (!ve->_nf_conntrack) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	ve_nf_conntrack_max = nf_conntrack_max;
+	ve_nf_conntrack_checksum = nf_conntrack_checksum;
+	ve_nf_ct_expect_max = nf_ct_expect_max;
+	atomic_set(&ve_nf_conntrack_count, 0);
+	INIT_HLIST_HEAD(&ve_unconfirmed);
+#endif
+	ve_nf_conntrack_hash = nf_ct_alloc_hashtable(&nf_conntrack_htable_size,
+						  &ve_nf_conntrack_vmalloc);
+	if (!ve_nf_conntrack_hash) {
 		printk(KERN_ERR "Unable to create nf_conntrack_hash\n");
 		goto err_out;
 	}
 
-	nf_conntrack_max = max_factor * nf_conntrack_htable_size;
-
-	printk("nf_conntrack version %s (%u buckets, %d max)\n",
-	       NF_CONNTRACK_VERSION, nf_conntrack_htable_size,
-	       nf_conntrack_max);
-
-	nf_conntrack_cachep = kmem_cache_create("nf_conntrack",
+	if (ve_is_super(ve)) {
+		nf_conntrack_cachep = kmem_cache_create("nf_conntrack",
 						sizeof(struct nf_conn),
-						0, 0, NULL);
-	if (!nf_conntrack_cachep) {
-		printk(KERN_ERR "Unable to create nf_conn slab cache\n");
-		goto err_free_hash;
+						0, SLAB_UBC, NULL);
+		if (!nf_conntrack_cachep) {
+			printk(KERN_ERR "Unable to create nf_conn slab cache\n");
+			goto err_free_hash;
+		}
 	}
+
+	ret = nf_ct_proto_generic_sysctl_init();
+	if (ret < 0)
+		goto err_free_conntrack_slab;
 
 	ret = nf_conntrack_proto_init();
 	if (ret < 0)
-		goto err_free_conntrack_slab;
+		goto err_generic_proto;
+
+	/* Don't NEED lock here, but good form anyway. */
+	spin_lock_bh(&nf_conntrack_lock);
+	for (i = 0; i < AF_MAX; i++)
+		ve_nf_ct_l3protos[i] = &nf_conntrack_l3proto_generic;
+	spin_unlock_bh(&nf_conntrack_lock);
 
 	ret = nf_conntrack_expect_init();
 	if (ret < 0)
@@ -1179,17 +1256,19 @@ int __init nf_conntrack_init(void)
 	if (ret < 0)
 		goto out_fini_helper;
 
-	/* For use by REJECT target */
-	rcu_assign_pointer(ip_ct_attach, nf_conntrack_attach);
-	rcu_assign_pointer(nf_ct_destroy, destroy_conntrack);
+	if (ve_is_super(ve)) {
+		/* For use by REJECT target */
+		rcu_assign_pointer(ip_ct_attach, nf_conntrack_attach);
+		rcu_assign_pointer(nf_ct_destroy, destroy_conntrack);
 
-	/* Set up fake conntrack:
-	    - to never be deleted, not in any hashes */
-	atomic_set(&nf_conntrack_untracked.ct_general.use, 1);
-	/*  - and look it like as a confirmed connection */
-	set_bit(IPS_CONFIRMED_BIT, &nf_conntrack_untracked.status);
+		/* Set up fake conntrack:
+		   - to never be deleted, not in any hashes */
+		atomic_set(&nf_conntrack_untracked.ct_general.use, 1);
+		/*  - and look it like as a confirmed connection */
+		set_bit(IPS_CONFIRMED_BIT, &nf_conntrack_untracked.status);
+	}
 
-	return ret;
+	return 0;
 
 out_fini_helper:
 	nf_conntrack_helper_fini();
@@ -1197,11 +1276,18 @@ out_fini_expect:
 	nf_conntrack_expect_fini();
 out_fini_proto:
 	nf_conntrack_proto_fini();
+err_generic_proto:
+	nf_ct_proto_generic_sysctl_cleanup();
 err_free_conntrack_slab:
-	kmem_cache_destroy(nf_conntrack_cachep);
+	if (ve_is_super(ve))
+		kmem_cache_destroy(nf_conntrack_cachep);
 err_free_hash:
-	nf_ct_free_hashtable(nf_conntrack_hash, nf_conntrack_vmalloc,
+	nf_ct_free_hashtable(ve_nf_conntrack_hash, nf_conntrack_vmalloc,
 			     nf_conntrack_htable_size);
 err_out:
-	return -ENOMEM;
+#ifdef CONFIG_VE_IPTABLES
+	kfree(ve->_nf_conntrack);
+out:
+#endif
+	return ret;
 }

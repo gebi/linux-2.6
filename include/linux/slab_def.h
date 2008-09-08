@@ -15,6 +15,26 @@
 #include <asm/cache.h>		/* kmalloc_sizes.h needs L1_CACHE_BYTES */
 #include <linux/compiler.h>
 
+/*
+ * DEBUG	- 1 for kmem_cache_create() to honour; SLAB_RED_ZONE & SLAB_POISON.
+ *		  0 for faster, smaller code (especially in the critical paths).
+ *
+ * STATS	- 1 to collect stats for /proc/slabinfo.
+ *		  0 for faster, smaller code (especially in the critical paths).
+ *
+ * FORCED_DEBUG	- 1 enables SLAB_RED_ZONE and SLAB_POISON (if possible)
+ */
+
+#ifdef CONFIG_DEBUG_SLAB
+#define	SLAB_DEBUG		1
+#define	SLAB_STATS		1
+#define SLAB_FORCED_DEBUG	1
+#else
+#define	SLAB_DEBUG		0
+#define	SLAB_STATS		0
+#define SLAB_FORCED_DEBUG	0
+#endif
+
 /* Size description struct for general caches. */
 struct cache_sizes {
 	size_t		 	cs_size;
@@ -24,6 +44,7 @@ struct cache_sizes {
 #endif
 };
 extern struct cache_sizes malloc_sizes[];
+extern int malloc_cache_num;
 
 void *kmem_cache_alloc(struct kmem_cache *, gfp_t);
 void *__kmalloc(size_t size, gfp_t flags);
@@ -48,6 +69,8 @@ static inline void *kmalloc(size_t size, gfp_t flags)
 			__you_cannot_kmalloc_that_much();
 		}
 found:
+		if (flags & __GFP_UBC)
+			i += malloc_cache_num;
 #ifdef CONFIG_ZONE_DMA
 		if (flags & GFP_DMA)
 			return kmem_cache_alloc(malloc_sizes[i].cs_dmacachep,

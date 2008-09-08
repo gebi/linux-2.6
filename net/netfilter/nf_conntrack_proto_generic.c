@@ -8,6 +8,7 @@
 
 #include <linux/types.h>
 #include <linux/jiffies.h>
+#include <linux/sched.h>
 #include <linux/timer.h>
 #include <linux/netfilter.h>
 #include <net/netfilter/nf_conntrack_l4proto.h>
@@ -48,7 +49,7 @@ static int packet(struct nf_conn *ct,
 		  int pf,
 		  unsigned int hooknum)
 {
-	nf_ct_refresh_acct(ct, ctinfo, skb, nf_ct_generic_timeout);
+	nf_ct_refresh_acct(ct, ctinfo, skb, ve_nf_ct_generic_timeout);
 	return NF_ACCEPT;
 }
 
@@ -107,3 +108,64 @@ struct nf_conntrack_l4proto nf_conntrack_l4proto_generic __read_mostly =
 #endif
 #endif
 };
+
+#if defined(CONFIG_VE_IPTABLES) && defined(CONFIG_SYSCTL)
+int nf_ct_proto_generic_sysctl_init(void)
+{
+	struct nf_conntrack_l4proto *generic;
+
+	if (ve_is_super(get_exec_env())) {
+		generic = &nf_conntrack_l4proto_generic;
+		goto out;
+	}
+
+	generic = kmemdup(&nf_conntrack_l4proto_generic,
+			sizeof(struct nf_conntrack_l4proto), GFP_KERNEL);
+	if (generic == NULL)
+		goto no_mem_ct;
+
+	generic->ctl_table_header = &ve_generic_sysctl_header;
+	generic->ctl_table = kmemdup(generic_sysctl_table,
+			sizeof(generic_sysctl_table), GFP_KERNEL);
+	if (generic->ctl_table == NULL)
+		goto no_mem_sys;
+
+	generic->ctl_table[0].data = &ve_nf_ct_generic_timeout;
+#ifdef CONFIG_NF_CONNTRACK_PROC_COMPAT
+	generic->ctl_compat_table_header = ve_generic_compat_sysctl_header;
+	generic->ctl_compat_table = kmemdup(generic_compat_sysctl_table,
+			sizeof(generic_compat_sysctl_table), GFP_KERNEL);
+	if (generic->ctl_compat_table == NULL)
+		goto no_mem_compat;
+	generic->ctl_compat_table[0].data = &ve_nf_ct_generic_timeout;
+#endif
+out:
+	ve_nf_ct_generic_timeout = nf_ct_generic_timeout;
+
+	ve_nf_conntrack_l4proto_generic = generic;
+	return 0;
+
+#ifdef CONFIG_NF_CONNTRACK_PROC_COMPAT
+no_mem_compat:
+	kfree(generic->ctl_table);
+#endif
+no_mem_sys:
+	kfree(generic);
+no_mem_ct:
+	return -ENOMEM;
+}
+EXPORT_SYMBOL(nf_ct_proto_generic_sysctl_init);
+
+void nf_ct_proto_generic_sysctl_cleanup(void)
+{
+	if (!ve_is_super(get_exec_env())) {
+#ifdef CONFIG_NF_CONNTRACK_PROC_COMPAT
+		kfree(ve_nf_conntrack_l4proto_generic->ctl_compat_table);
+#endif
+		kfree(ve_nf_conntrack_l4proto_generic->ctl_table);
+
+		kfree(ve_nf_conntrack_l4proto_generic);
+	}
+}
+EXPORT_SYMBOL(nf_ct_proto_generic_sysctl_cleanup);
+#endif /* CONFIG_VE_IPTABLES && CONFIG_SYSCTL */

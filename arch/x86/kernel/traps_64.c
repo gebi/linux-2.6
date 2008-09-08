@@ -381,7 +381,7 @@ show_stack_log_lvl(struct task_struct *task, struct pt_regs *regs,
 		if (((long) stack & (THREAD_SIZE-1)) == 0)
 			break;
 		}
-		if (i && ((i % 4) == 0))
+		if (i && ((i % 4) == 0) && decode_call_traces)
 			printk("\n");
 		printk(" %016lx", *stack++);
 		touch_nmi_watchdog();
@@ -425,10 +425,12 @@ void show_registers(struct pt_regs *regs)
 	struct task_struct *cur = cpu_pda(cpu)->pcurrent;
 
 	sp = regs->sp;
-	printk("CPU %d ", cpu);
+	printk("CPU: %d ", cpu);
 	__show_regs(regs);
-	printk("Process %s (pid: %d, threadinfo %p, task %p)\n",
-		cur->comm, cur->pid, task_thread_info(cur), cur);
+	printk("Process %s (pid: %d, veid=%d, threadinfo %p, task %p)\n",
+		cur->comm, cur->pid,
+		VEID(VE_TASK_INFO(current)->owner_env),
+		task_thread_info(cur), cur);
 
 	/*
 	 * When in-kernel, we also print out the stack and code at the
@@ -830,6 +832,13 @@ asmlinkage notrace __kprobes void default_do_nmi(struct pt_regs *regs)
 		io_check_error(reason, regs);
 }
 
+static int dummy_nmi_callback(struct pt_regs *regs, int cpu)
+{
+	return 0;
+}
+
+static nmi_callback_t nmi_ipi_callback = dummy_nmi_callback;
+
 asmlinkage notrace __kprobes void
 do_nmi(struct pt_regs *regs, long error_code)
 {
@@ -837,10 +846,22 @@ do_nmi(struct pt_regs *regs, long error_code)
 
 	add_pda(__nmi_count, 1);
 
-	if (!ignore_nmis)
-		default_do_nmi(regs);
+	if (!ignore_nmis) {
+		if (!nmi_ipi_callback(regs, smp_processor_id()))
+			default_do_nmi(regs);
+	}
 
 	nmi_exit();
+}
+
+void set_nmi_ipi_callback(nmi_callback_t callback)
+{
+	nmi_ipi_callback = callback;
+}
+
+void unset_nmi_ipi_callback(void)
+{
+	nmi_ipi_callback = dummy_nmi_callback;
 }
 
 void stop_nmi(void)

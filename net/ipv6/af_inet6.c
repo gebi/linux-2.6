@@ -56,6 +56,10 @@
 #ifdef CONFIG_IPV6_TUNNEL
 #include <net/ip6_tunnel.h>
 #endif
+#ifdef CONFIG_IPV6_MIP6
+#include <net/mip6.h>
+#endif
+#include <bc/net.h>
 
 #include <asm/uaccess.h>
 #include <asm/system.h>
@@ -140,6 +144,10 @@ lookup_protocol:
 			goto out_rcu_unlock;
 	}
 
+	err = vz_security_protocol_check(answer->protocol);
+	if (err < 0)
+		goto out_rcu_unlock;
+
 	err = -EPERM;
 	if (answer->capability > 0 && !capable(answer->capability))
 		goto out_rcu_unlock;
@@ -156,6 +164,13 @@ lookup_protocol:
 	sk = sk_alloc(net, PF_INET6, GFP_KERNEL, answer_prot);
 	if (sk == NULL)
 		goto out;
+
+	err = -ENOBUFS;
+	if (ub_sock_charge(sk, PF_INET6, sock->type))
+		goto out_sk_free;
+	/* if charge was successful, sock_init_data() MUST be called to
+	 * set sk->sk_type. otherwise sk will be uncharged to wrong resource
+	 */
 
 	sock_init_data(sock, sk);
 
@@ -231,6 +246,9 @@ out:
 out_rcu_unlock:
 	rcu_read_unlock();
 	goto out;
+out_sk_free:
+	sk_free(sk);
+	return err;
 }
 
 
@@ -794,45 +812,48 @@ static void ipv6_packet_cleanup(void)
 	dev_remove_pack(&ipv6_packet_type);
 }
 
-static int __init init_ipv6_mibs(void)
+int init_ipv6_mibs(void)
 {
-	if (snmp_mib_init((void **)ipv6_statistics,
+	if (snmp_mib_init((void **)ve_ipv6_statistics,
 			  sizeof(struct ipstats_mib)) < 0)
 		goto err_ip_mib;
-	if (snmp_mib_init((void **)icmpv6_statistics,
+	if (snmp_mib_init((void **)ve_icmpv6_statistics,
 			  sizeof(struct icmpv6_mib)) < 0)
 		goto err_icmp_mib;
-	if (snmp_mib_init((void **)icmpv6msg_statistics,
+	if (snmp_mib_init((void **)ve_icmpv6msg_statistics,
 			  sizeof(struct icmpv6msg_mib)) < 0)
 		goto err_icmpmsg_mib;
-	if (snmp_mib_init((void **)udp_stats_in6, sizeof (struct udp_mib)) < 0)
+	if (snmp_mib_init((void **)ve_udp_stats_in6,
+			  sizeof (struct udp_mib)) < 0)
 		goto err_udp_mib;
-	if (snmp_mib_init((void **)udplite_stats_in6,
+	if (snmp_mib_init((void **)ve_udplite_stats_in6,
 			  sizeof (struct udp_mib)) < 0)
 		goto err_udplite_mib;
 	return 0;
 
 err_udplite_mib:
-	snmp_mib_free((void **)udp_stats_in6);
+	snmp_mib_free((void **)ve_udp_stats_in6);
 err_udp_mib:
-	snmp_mib_free((void **)icmpv6msg_statistics);
+	snmp_mib_free((void **)ve_icmpv6msg_statistics);
 err_icmpmsg_mib:
-	snmp_mib_free((void **)icmpv6_statistics);
+	snmp_mib_free((void **)ve_icmpv6_statistics);
 err_icmp_mib:
-	snmp_mib_free((void **)ipv6_statistics);
+	snmp_mib_free((void **)ve_ipv6_statistics);
 err_ip_mib:
 	return -ENOMEM;
 
 }
+EXPORT_SYMBOL(init_ipv6_mibs);
 
-static void cleanup_ipv6_mibs(void)
+void cleanup_ipv6_mibs(void)
 {
-	snmp_mib_free((void **)ipv6_statistics);
-	snmp_mib_free((void **)icmpv6_statistics);
-	snmp_mib_free((void **)icmpv6msg_statistics);
-	snmp_mib_free((void **)udp_stats_in6);
-	snmp_mib_free((void **)udplite_stats_in6);
+	snmp_mib_free((void **)ve_ipv6_statistics);
+	snmp_mib_free((void **)ve_icmpv6_statistics);
+	snmp_mib_free((void **)ve_icmpv6msg_statistics);
+	snmp_mib_free((void **)ve_udp_stats_in6);
+	snmp_mib_free((void **)ve_udplite_stats_in6);
 }
+EXPORT_SYMBOL(cleanup_ipv6_mibs);
 
 static int inet6_net_init(struct net *net)
 {

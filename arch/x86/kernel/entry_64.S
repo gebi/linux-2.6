@@ -279,7 +279,12 @@ ENTRY(ret_from_fork)
 	popf				# reset kernel eflags
 	CFI_ADJUST_CFA_OFFSET -4
 	call schedule_tail
+ret_from_fork_tail:
 	GET_THREAD_INFO(%rcx)
+	btr $TIF_RESUME,threadinfo_flags(%rcx)
+	jc  x86_64_ret_from_resume
+
+ret_from_fork_check:
 	testl $(_TIF_SYSCALL_TRACE|_TIF_SYSCALL_AUDIT),TI_flags(%rcx)
 	jnz rff_trace
 rff_action:	
@@ -295,6 +300,19 @@ rff_trace:
 	call syscall_trace_leave
 	GET_THREAD_INFO(%rcx)	
 	jmp rff_action
+
+x86_64_ret_from_resume:
+	movq (%rsp),%rax
+	testq %rax,%rax
+	jz 1f
+	movq  %rsp,%rdi
+	call  *%rax
+1:
+	addq $256,%rsp
+	cmpq $0,ORIG_RAX(%rsp)
+	jge  ret_from_fork_tail
+	RESTORE_REST
+	jmp  int_ret_from_sys_call
 	CFI_ENDPROC
 END(ret_from_fork)
 
@@ -1155,7 +1173,7 @@ ENTRY(kernel_thread)
 	xorl %r9d,%r9d
 	
 	# clone now
-	call do_fork
+	call do_fork_kthread
 	movq %rax,RAX(%rsp)
 	xorl %edi,%edi
 

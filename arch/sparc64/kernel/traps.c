@@ -2186,6 +2186,10 @@ void die_if_kernel(char *str, struct pt_regs *regs)
 "                 \\__U_/\n");
 
 	printk("%s(%d): %s [#%d]\n", current->comm, task_pid_nr(current), str, ++die_counter);
+	printk("VE:EXCVE %d:%d, CPU %d, VCPU %d:%d\n",
+		VEID(VE_TASK_INFO(current)->owner_env), VEID(get_exec_env()),
+		smp_processor_id(),
+		task_vsched_id(current), task_cpu(current));
 	notify_die(DIE_OOPS, str, regs, 0, 255, SIGSEGV);
 	__asm__ __volatile__("flushw");
 	show_regs(regs);

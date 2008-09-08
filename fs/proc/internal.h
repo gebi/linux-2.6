@@ -12,6 +12,12 @@
 #include <linux/proc_fs.h>
 
 extern struct proc_dir_entry proc_root;
+#ifdef CONFIG_VE
+extern struct proc_dir_entry glob_proc_root;
+#else
+#define glob_proc_root	proc_root
+#endif
+
 #ifdef CONFIG_PROC_SYSCTL
 extern int proc_sys_init(void);
 #else
@@ -85,10 +91,11 @@ static inline int proc_fd(struct inode *inode)
 	return PROC_I(inode)->fd;
 }
 
-struct dentry *proc_lookup_de(struct proc_dir_entry *de, struct inode *ino,
+struct dentry *proc_lookup_de(struct proc_dir_entry *de,
+		struct proc_dir_entry *lpde, struct inode *ino,
 		struct dentry *dentry);
-int proc_readdir_de(struct proc_dir_entry *de, struct file *filp, void *dirent,
-		filldir_t filldir);
+int proc_readdir_de(struct proc_dir_entry *de, struct proc_dir_entry *lpde,
+		struct file *filp, void *dirent, filldir_t filldir);
 
 struct pde_opener {
 	struct inode *inode;

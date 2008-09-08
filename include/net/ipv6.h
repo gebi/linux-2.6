@@ -115,7 +115,7 @@ extern struct ctl_path net_ipv6_ctl_path[];
 	struct inet6_dev *_idev = (idev);				\
 	if (likely(_idev != NULL))					\
 		SNMP_INC_STATS##modifier((_idev)->stats.statname, (field)); \
-	SNMP_INC_STATS##modifier(statname##_statistics, (field));	\
+	SNMP_INC_STATS##modifier(ve_##statname##_statistics, (field));	\
 })
 
 #define _DEVADD(statname, modifier, idev, field, val)			\
@@ -123,8 +123,21 @@ extern struct ctl_path net_ipv6_ctl_path[];
 	struct inet6_dev *_idev = (idev);				\
 	if (likely(_idev != NULL))					\
 		SNMP_ADD_STATS##modifier((_idev)->stats.statname, (field), (val)); \
-	SNMP_ADD_STATS##modifier(statname##_statistics, (field), (val));\
+	SNMP_ADD_STATS##modifier(ve_##statname##_statistics, (field), (val));\
 })
+
+#ifdef CONFIG_VE
+#define ve_ipv6_statistics	(get_exec_env()->_ipv6_statistics)
+#define ve_icmpv6_statistics	(get_exec_env()->_icmpv6_statistics)
+#define ve_icmpv6msg_statistics	(get_exec_env()->_icmpv6msg_statistics)
+
+extern int init_ipv6_mibs(void);
+extern void cleanup_ipv6_mibs(void);
+#else
+#define ve_ipv6_statistics	ipv6_statistics
+#define ve_icmpv6_statistics	icmpv6_statistics
+#define ve_icmpv6msg_statistics	icmpv6msg_statistics
+#endif
 
 /* MIBs */
 DECLARE_SNMP_STAT(struct ipstats_mib, ipv6_statistics);

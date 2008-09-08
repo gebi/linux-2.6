@@ -56,6 +56,11 @@ struct elevator_ops
 	elevator_init_fn *elevator_init_fn;
 	elevator_exit_fn *elevator_exit_fn;
 	void (*trim)(struct io_context *);
+	/* In original cfq design task holds a cfqq refcount and puts it
+	 * on exit via io context. Now async cfqqs are hold by UB,
+	 * so we need somehow to put these queues. Use this function.
+	 */
+	void (*put_queue)(struct cfq_queue *);
 };
 
 #define ELV_NAME_MAX	(16)

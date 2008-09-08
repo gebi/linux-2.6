@@ -32,6 +32,7 @@
 #include <linux/list.h>
 #include <linux/writeback.h>
 #include <linux/inotify.h>
+#include <linux/mount.h>
 
 static atomic_t inotify_cookie;
 
@@ -69,19 +70,6 @@ static atomic_t inotify_cookie;
  * inotify_add_watch() to the final put_inotify_watch().
  */
 
-/*
- * struct inotify_handle - represents an inotify instance
- *
- * This structure is protected by the mutex 'mutex'.
- */
-struct inotify_handle {
-	struct idr		idr;		/* idr mapping wd -> watch */
-	struct mutex		mutex;		/* protects this bad boy */
-	struct list_head	watches;	/* list of watches */
-	atomic_t		count;		/* reference count */
-	u32			last_wd;	/* the last wd allocated */
-	const struct inotify_operations *in_ops; /* inotify caller operations */
-};
 
 static inline void get_inotify_handle(struct inotify_handle *ih)
 {
@@ -118,6 +106,9 @@ void put_inotify_watch(struct inotify_watch *watch)
 		struct inotify_handle *ih = watch->ih;
 
 		iput(watch->inode);
+		path_put(&watch->path);
+		watch->path.dentry = NULL;
+		watch->path.mnt = NULL;
 		ih->in_ops->destroy_watch(watch);
 		put_inotify_handle(ih);
 	}
@@ -476,6 +467,8 @@ void inotify_init_watch(struct inotify_watch *watch)
 	INIT_LIST_HEAD(&watch->i_list);
 	atomic_set(&watch->count, 0);
 	get_inotify_watch(watch); /* initial get */
+	watch->path.dentry = NULL;
+	watch->path.mnt = NULL;
 }
 EXPORT_SYMBOL_GPL(inotify_init_watch);
 
@@ -616,8 +609,8 @@ EXPORT_SYMBOL_GPL(inotify_find_update_watch);
  * Caller must ensure it only calls inotify_add_watch() once per watch.
  * Calls inotify_handle_get_wd() so may sleep.
  */
-s32 inotify_add_watch(struct inotify_handle *ih, struct inotify_watch *watch,
-		      struct inode *inode, u32 mask)
+s32 __inotify_add_watch(struct inotify_handle *ih, struct inotify_watch *watch,
+		struct path *path, struct inode * inode, u32 mask)
 {
 	int ret = 0;
 	int newly_watched;
@@ -645,6 +638,10 @@ s32 inotify_add_watch(struct inotify_handle *ih, struct inotify_watch *watch,
 	 * Save a reference to the inode and bump the ref count to make it
 	 * official.  We hold a reference to nameidata, which makes this safe.
 	 */
+	if (path) {
+		path_get(path);
+		watch->path = *path;
+	}
 	watch->inode = igrab(inode);
 
 	/* Add the watch to the handle's and the inode's list */
@@ -665,6 +662,18 @@ out:
 	return ret;
 }
 EXPORT_SYMBOL_GPL(inotify_add_watch);
+
+s32 inotify_add_watch(struct inotify_handle *ih, struct inotify_watch *watch,
+		      struct inode *inode, u32 mask)
+{
+	return __inotify_add_watch(ih, watch, NULL, inode, mask);
+}
+
+s32 inotify_add_watch_dget(struct inotify_handle *ih,
+		struct inotify_watch *watch, struct path *p, u32 mask)
+{
+	return __inotify_add_watch(ih, watch, p, p->dentry->d_inode, mask);
+}
 
 /**
  * inotify_clone_watch - put the watch next to existing one

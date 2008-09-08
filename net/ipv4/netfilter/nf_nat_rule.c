@@ -15,6 +15,7 @@
 #include <linux/kmod.h>
 #include <linux/skbuff.h>
 #include <linux/proc_fs.h>
+#include <linux/nsproxy.h>
 #include <net/checksum.h>
 #include <net/route.h>
 #include <linux/bitops.h>
@@ -33,7 +34,7 @@ static struct
 	struct ipt_replace repl;
 	struct ipt_standard entries[3];
 	struct ipt_error term;
-} nat_initial_table __initdata = {
+} nat_initial_table = {
 	.repl = {
 		.name = "nat",
 		.valid_hooks = NAT_VALID_HOOKS,
@@ -65,7 +66,12 @@ static struct xt_table __nat_table = {
 	.me		= THIS_MODULE,
 	.af		= AF_INET,
 };
+#ifdef CONFIG_VE_IPTABLES
+#define nat_table			\
+	(get_exec_env()->_nf_conntrack->_nf_nat_table)
+#else
 static struct xt_table *nat_table;
+#endif
 
 /* Source NAT */
 static unsigned int ipt_snat_target(struct sk_buff *skb,
@@ -226,14 +232,20 @@ static struct xt_target ipt_dnat_reg __read_mostly = {
 	.family		= AF_INET,
 };
 
-int __init nf_nat_rule_init(void)
+int nf_nat_rule_init(void)
 {
 	int ret;
+	struct net *net = get_exec_env()->ve_netns;
 
-	nat_table = ipt_register_table(&init_net, &__nat_table,
+	nat_table = ipt_register_table(net, &__nat_table,
 				       &nat_initial_table.repl);
 	if (IS_ERR(nat_table))
 		return PTR_ERR(nat_table);
+
+	ret = 0;
+	if (!ve_is_super(get_exec_env()))
+		goto done;
+
 	ret = xt_register_target(&ipt_snat_reg);
 	if (ret != 0)
 		goto unregister_table;
@@ -242,19 +254,26 @@ int __init nf_nat_rule_init(void)
 	if (ret != 0)
 		goto unregister_snat;
 
+done:
 	return ret;
 
  unregister_snat:
 	xt_unregister_target(&ipt_snat_reg);
  unregister_table:
 	ipt_unregister_table(nat_table);
+	nat_table = NULL;
 
 	return ret;
 }
 
 void nf_nat_rule_cleanup(void)
 {
+	if (!ve_is_super(get_exec_env()))
+		goto skip;
+
 	xt_unregister_target(&ipt_dnat_reg);
 	xt_unregister_target(&ipt_snat_reg);
+skip:
 	ipt_unregister_table(nat_table);
+	nat_table = NULL;
 }

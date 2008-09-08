@@ -15,6 +15,7 @@
 #include <linux/fs.h>
 #include <linux/mount.h>
 #include <linux/pagemap.h>
+#include <linux/module.h>
 #include <linux/init.h>
 
 #include "sysfs.h"
@@ -22,8 +23,11 @@
 /* Random magic number */
 #define SYSFS_MAGIC 0x62656572
 
-static struct vfsmount *sysfs_mount;
+#ifndef CONFIG_VE
+struct vfsmount *sysfs_mount;
 struct super_block * sysfs_sb = NULL;
+#endif
+
 struct kmem_cache *sysfs_dir_cachep;
 
 static const struct super_operations sysfs_ops = {
@@ -39,6 +43,13 @@ struct sysfs_dirent sysfs_root = {
 	.s_ino		= 1,
 };
 
+static void init_ve0_sysfs_root(void)
+{
+#ifdef CONFIG_VE
+	get_ve0()->_sysfs_root = &sysfs_root;
+#endif
+}
+
 static int sysfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct inode *inode;
@@ -52,7 +63,7 @@ static int sysfs_fill_super(struct super_block *sb, void *data, int silent)
 	sysfs_sb = sb;
 
 	/* get root inode, initialize and unlock it */
-	inode = sysfs_get_inode(&sysfs_root);
+	inode = sysfs_get_inode(ve_sysfs_root);
 	if (!inode) {
 		pr_debug("sysfs: could not get root inode\n");
 		return -ENOMEM;
@@ -65,7 +76,7 @@ static int sysfs_fill_super(struct super_block *sb, void *data, int silent)
 		iput(inode);
 		return -ENOMEM;
 	}
-	root->d_fsdata = &sysfs_root;
+	root->d_fsdata = ve_sysfs_root;
 	sb->s_root = root;
 	return 0;
 }
@@ -76,16 +87,19 @@ static int sysfs_get_sb(struct file_system_type *fs_type,
 	return get_sb_single(fs_type, flags, data, sysfs_fill_super, mnt);
 }
 
-static struct file_system_type sysfs_fs_type = {
+struct file_system_type sysfs_fs_type = {
 	.name		= "sysfs",
 	.get_sb		= sysfs_get_sb,
 	.kill_sb	= kill_anon_super,
 };
 
+EXPORT_SYMBOL(sysfs_fs_type);
+
 int __init sysfs_init(void)
 {
 	int err = -ENOMEM;
 
+	init_ve0_sysfs_root();
 	sysfs_dir_cachep = kmem_cache_create("sysfs_dir_cache",
 					      sizeof(struct sysfs_dirent),
 					      0, 0, NULL);

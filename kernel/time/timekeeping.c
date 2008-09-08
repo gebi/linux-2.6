@@ -43,6 +43,7 @@ __cacheline_aligned_in_smp DEFINE_SEQLOCK(xtime_lock);
  * used instead.
  */
 struct timespec xtime __attribute__ ((aligned (16)));
+EXPORT_SYMBOL_GPL(xtime);
 struct timespec wall_to_monotonic __attribute__ ((aligned (16)));
 static unsigned long total_sleep_time;		/* seconds */
 

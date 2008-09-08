@@ -700,6 +700,8 @@ EXPORT_SYMBOL(mark_buffer_dirty_inode);
 static int __set_page_dirty(struct page *page,
 		struct address_space *mapping, int warn)
 {
+	int acct = 0;
+
 	if (unlikely(!mapping))
 		return !TestSetPageDirty(page);
 
@@ -714,12 +716,14 @@ static int __set_page_dirty(struct page *page,
 			__inc_zone_page_state(page, NR_FILE_DIRTY);
 			__inc_bdi_stat(mapping->backing_dev_info,
 					BDI_RECLAIMABLE);
-			task_io_account_write(PAGE_CACHE_SIZE);
+			acct = 1;
 		}
 		radix_tree_tag_set(&mapping->page_tree,
 				page_index(page), PAGECACHE_TAG_DIRTY);
 	}
 	spin_unlock_irq(&mapping->tree_lock);
+	if (acct)
+		task_io_account_write(page, PAGE_CACHE_SIZE, 0);
 	__mark_inode_dirty(mapping->host, I_DIRTY_PAGES);
 
 	return 1;

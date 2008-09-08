@@ -6,9 +6,17 @@
 #define _NF_CONNTRACK_EXPECT_H
 #include <net/netfilter/nf_conntrack.h>
 
-extern struct hlist_head *nf_ct_expect_hash;
 extern unsigned int nf_ct_expect_hsize;
 extern unsigned int nf_ct_expect_max;
+#ifdef CONFIG_VE_IPTABLES
+#include <linux/sched.h>
+#define ve_nf_ct_expect_hash	(get_exec_env()->_nf_conntrack->_nf_ct_expect_hash)
+#define ve_nf_ct_expect_max	(get_exec_env()->_nf_conntrack->_nf_ct_expect_max)
+#else
+extern struct hlist_head *nf_ct_expect_hash;
+#define ve_nf_ct_expect_hash	nf_ct_expect_hash
+#define ve_nf_ct_expect_max	nf_ct_expect_max
+#endif
 
 struct nf_conntrack_expect
 {
@@ -72,6 +80,8 @@ void nf_conntrack_expect_fini(void);
 
 struct nf_conntrack_expect *
 __nf_ct_expect_find(const struct nf_conntrack_tuple *tuple);
+
+void nf_ct_expect_insert(struct nf_conntrack_expect *exp);
 
 struct nf_conntrack_expect *
 nf_ct_expect_find_get(const struct nf_conntrack_tuple *tuple);

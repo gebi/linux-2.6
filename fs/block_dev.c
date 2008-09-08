@@ -1307,7 +1307,7 @@ int __invalidate_device(struct block_device *bdev)
 		 * hold).
 		 */
 		shrink_dcache_sb(sb);
-		res = invalidate_inodes(sb);
+		res = invalidate_inodes_check(sb, 1);
 		drop_super(sb);
 	}
 	invalidate_bdev(bdev);

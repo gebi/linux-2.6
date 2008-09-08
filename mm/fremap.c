@@ -21,6 +21,8 @@
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
 
+#include <bc/vmpages.h>
+
 static void zap_pte(struct mm_struct *mm, struct vm_area_struct *vma,
 			unsigned long addr, pte_t *ptep)
 {
@@ -36,6 +38,7 @@ static void zap_pte(struct mm_struct *mm, struct vm_area_struct *vma,
 			if (pte_dirty(pte))
 				set_page_dirty(page);
 			page_remove_rmap(page, vma);
+			pb_remove_ref(page, mm);
 			page_cache_release(page);
 			update_hiwater_rss(mm);
 			dec_mm_counter(mm, file_rss);
@@ -62,8 +65,10 @@ static int install_file_pte(struct mm_struct *mm, struct vm_area_struct *vma,
 	if (!pte)
 		goto out;
 
-	if (!pte_none(*pte))
+	if (!pte_none(*pte)) {
 		zap_pte(mm, vma, addr, pte);
+		ub_unused_privvm_inc(mm, vma);
+	}
 
 	set_pte_at(mm, addr, pte, pgoff_to_pte(pgoff));
 	/*
@@ -240,4 +245,5 @@ out:
 
 	return err;
 }
+EXPORT_SYMBOL_GPL(sys_remap_file_pages);
 

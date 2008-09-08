@@ -41,6 +41,8 @@ struct fsyscall_gtod_data_t fsyscall_gtod_data = {
 struct itc_jitter_data_t itc_jitter_data;
 
 volatile int time_keeper_id = 0; /* smp_processor_id() of time-keeper */
+unsigned int cpu_khz;                                   /* TSC clocks / usec, not used here */
+EXPORT_SYMBOL(cpu_khz);
 
 #ifdef CONFIG_IA64_DEBUG_IRQ
 
@@ -357,6 +359,8 @@ ia64_init_itm (void)
 
 	/* avoid softlock up message when cpu is unplug and plugged again. */
 	touch_softlockup_watchdog();
+
+	cpu_khz = local_cpu_data->proc_freq / 1000;
 
 	/* Setup the CPU local timer tick */
 	ia64_cpu_local_tick();

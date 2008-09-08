@@ -32,6 +32,7 @@
 #include <linux/interrupt.h>
 #include <linux/swap.h>
 #include <linux/slab.h>
+#include <linux/virtinfo.h>
 #include <linux/genhd.h>
 #include <linux/smp.h>
 #include <linux/signal.h>
@@ -48,6 +49,7 @@
 #include <linux/vmalloc.h>
 #include <linux/crash_dump.h>
 #include <linux/pid_namespace.h>
+#include <linux/vmstat.h>
 #include <linux/bootmem.h>
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
@@ -86,19 +88,39 @@ static int loadavg_read_proc(char *page, char **start, off_t off,
 	int a, b, c;
 	int len;
 	unsigned long seq;
+	long running, threads;
+	struct ve_struct *ve;
 
+	ve = get_exec_env();
 	do {
 		seq = read_seqbegin(&xtime_lock);
-		a = avenrun[0] + (FIXED_1/200);
-		b = avenrun[1] + (FIXED_1/200);
-		c = avenrun[2] + (FIXED_1/200);
+		if (ve_is_super(ve)) {
+			a = avenrun[0] + (FIXED_1/200);
+			b = avenrun[1] + (FIXED_1/200);
+			c = avenrun[2] + (FIXED_1/200);
+#ifdef CONFIG_VE
+		} else {
+			a = ve->avenrun[0] + (FIXED_1/200);
+			b = ve->avenrun[1] + (FIXED_1/200);
+			c = ve->avenrun[2] + (FIXED_1/200);
+#endif
+		}
 	} while (read_seqretry(&xtime_lock, seq));
+		if (ve_is_super(ve)) {
+			running = nr_running();
+			threads = nr_threads;
+#ifdef CONFIG_VE
+		} else {
+			running = nr_running_ve(ve);
+			threads = atomic_read(&ve->pcounter);
+#endif
+		}
 
-	len = sprintf(page,"%d.%02d %d.%02d %d.%02d %ld/%d %d\n",
+	len = sprintf(page,"%d.%02d %d.%02d %d.%02d %ld/%ld %d\n",
 		LOAD_INT(a), LOAD_FRAC(a),
 		LOAD_INT(b), LOAD_FRAC(b),
 		LOAD_INT(c), LOAD_FRAC(c),
-		nr_running(), nr_threads,
+		running, threads,
 		task_active_pid_ns(current)->last_pid);
 	return proc_calc_metrics(page, start, off, count, eof, len);
 }
@@ -113,6 +135,13 @@ static int uptime_read_proc(char *page, char **start, off_t off,
 
 	do_posix_clock_monotonic_gettime(&uptime);
 	monotonic_to_bootbased(&uptime);
+#ifdef CONFIG_VE
+	if (!ve_is_super(get_exec_env())) {
+		set_normalized_timespec(&uptime,
+		      uptime.tv_sec - get_exec_env()->start_timespec.tv_sec,
+		      uptime.tv_nsec - get_exec_env()->start_timespec.tv_nsec);
+	}
+#endif
 	cputime_to_timespec(idletime, &idle);
 	len = sprintf(page,"%lu.%02lu %lu.%02lu\n",
 			(unsigned long) uptime.tv_sec,
@@ -131,29 +160,50 @@ int __attribute__((weak)) arch_report_meminfo(char *page)
 static int meminfo_read_proc(char *page, char **start, off_t off,
 				 int count, int *eof, void *data)
 {
-	struct sysinfo i;
+	struct meminfo mi;
 	int len;
-	unsigned long committed;
-	unsigned long allowed;
+	unsigned long dummy;
 	struct vmalloc_info vmi;
-	long cached;
+
+	get_zone_counts(&mi.active, &mi.inactive, &dummy);
 
 /*
  * display in kilobytes.
  */
 #define K(x) ((x) << (PAGE_SHIFT - 10))
-	si_meminfo(&i);
-	si_swapinfo(&i);
-	committed = atomic_long_read(&vm_committed_space);
-	allowed = ((totalram_pages - hugetlb_total_pages())
+	si_meminfo(&mi.si);
+	si_swapinfo(&mi.si);
+	mi.committed_space = atomic_read(&vm_committed_space);
+	mi.swapcache = total_swapcache_pages;
+	mi.allowed = ((totalram_pages - hugetlb_total_pages())
 		* sysctl_overcommit_ratio / 100) + total_swap_pages;
 
-	cached = global_page_state(NR_FILE_PAGES) -
-			total_swapcache_pages - i.bufferram;
-	if (cached < 0)
-		cached = 0;
+	mi.cache = global_page_state(NR_FILE_PAGES) -
+			total_swapcache_pages - mi.si.bufferram;
+	if (mi.cache < 0)
+		mi.cache = 0;
 
 	get_vmalloc_info(&vmi);
+	mi.vmalloc_used = vmi.used >> PAGE_SHIFT;
+	mi.vmalloc_largest = vmi.largest_chunk >> PAGE_SHIFT;
+	mi.vmalloc_total = VMALLOC_TOTAL >> PAGE_SHIFT;
+
+	mi.pi.nr_file_dirty = global_page_state(NR_FILE_DIRTY);
+	mi.pi.nr_writeback = global_page_state(NR_WRITEBACK);
+	mi.pi.nr_anon_pages = global_page_state(NR_ANON_PAGES);
+	mi.pi.nr_file_mapped = global_page_state(NR_FILE_MAPPED);
+	mi.pi.nr_slab_rec = global_page_state(NR_SLAB_RECLAIMABLE);
+	mi.pi.nr_slab_unrec = global_page_state(NR_SLAB_UNRECLAIMABLE);
+	mi.pi.nr_pagetable = global_page_state(NR_PAGETABLE);
+	mi.pi.nr_unstable_nfs = global_page_state(NR_UNSTABLE_NFS);
+	mi.pi.nr_bounce = global_page_state(NR_BOUNCE);
+	mi.pi.nr_writeback_temp = global_page_state(NR_WRITEBACK_TEMP);
+
+#ifdef CONFIG_BEANCOUNTERS
+	if (virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_MEMINFO, &mi)
+			& NOTIFY_FAIL)
+		return -ENOMSG;
+#endif
 
 	/*
 	 * Tagged format, for easy grepping and expansion.
@@ -190,38 +240,38 @@ static int meminfo_read_proc(char *page, char **start, off_t off,
 		"VmallocTotal: %8lu kB\n"
 		"VmallocUsed:  %8lu kB\n"
 		"VmallocChunk: %8lu kB\n",
-		K(i.totalram),
-		K(i.freeram),
-		K(i.bufferram),
-		K(cached),
-		K(total_swapcache_pages),
-		K(global_page_state(NR_ACTIVE)),
-		K(global_page_state(NR_INACTIVE)),
+		K(mi.si.totalram),
+		K(mi.si.freeram),
+		K(mi.si.bufferram),
+		K(mi.cache),
+		K(mi.swapcache),
+		K(mi.active),
+		K(mi.inactive),
 #ifdef CONFIG_HIGHMEM
-		K(i.totalhigh),
-		K(i.freehigh),
-		K(i.totalram-i.totalhigh),
-		K(i.freeram-i.freehigh),
+		K(mi.si.totalhigh),
+		K(mi.si.freehigh),
+		K(mi.si.totalram-mi.si.totalhigh),
+		K(mi.si.freeram-mi.si.freehigh),
 #endif
-		K(i.totalswap),
-		K(i.freeswap),
-		K(global_page_state(NR_FILE_DIRTY)),
-		K(global_page_state(NR_WRITEBACK)),
-		K(global_page_state(NR_ANON_PAGES)),
-		K(global_page_state(NR_FILE_MAPPED)),
-		K(global_page_state(NR_SLAB_RECLAIMABLE) +
-				global_page_state(NR_SLAB_UNRECLAIMABLE)),
-		K(global_page_state(NR_SLAB_RECLAIMABLE)),
-		K(global_page_state(NR_SLAB_UNRECLAIMABLE)),
-		K(global_page_state(NR_PAGETABLE)),
-		K(global_page_state(NR_UNSTABLE_NFS)),
-		K(global_page_state(NR_BOUNCE)),
-		K(global_page_state(NR_WRITEBACK_TEMP)),
-		K(allowed),
-		K(committed),
-		(unsigned long)VMALLOC_TOTAL >> 10,
-		vmi.used >> 10,
-		vmi.largest_chunk >> 10
+		K(mi.si.totalswap),
+		K(mi.si.freeswap),
+		K(mi.pi.nr_file_dirty),
+		K(mi.pi.nr_writeback),
+		K(mi.pi.nr_anon_pages),
+		K(mi.pi.nr_file_mapped),
+		K(mi.pi.nr_slab_rec +
+				mi.pi.nr_slab_unrec),
+		K(mi.pi.nr_slab_rec),
+		K(mi.pi.nr_slab_unrec),
+		K(mi.pi.nr_pagetable),
+		K(mi.pi.nr_unstable_nfs),
+		K(mi.pi.nr_bounce),
+		K(mi.pi.nr_writeback_temp),
+		K(mi.allowed),
+		K(mi.committed_space),
+		K(mi.vmalloc_total),
+		K(mi.vmalloc_used),
+		K(mi.vmalloc_largest)
 		);
 
 		len += hugetlb_report_meminfo(page + len);
@@ -493,25 +543,21 @@ static const struct file_operations proc_vmalloc_operations = {
 #define arch_irq_stat() 0
 #endif
 
-static int show_stat(struct seq_file *p, void *v)
+static void show_stat_ve0(struct seq_file *p)
 {
 	int i;
-	unsigned long jif;
 	cputime64_t user, nice, system, idle, iowait, irq, softirq, steal;
 	cputime64_t guest;
 	u64 sum = 0;
-	struct timespec boottime;
 	unsigned int *per_irq_sum;
 
 	per_irq_sum = kzalloc(sizeof(unsigned int)*NR_IRQS, GFP_KERNEL);
 	if (!per_irq_sum)
-		return -ENOMEM;
+		return;
 
 	user = nice = system = idle = iowait =
 		irq = softirq = steal = cputime64_zero;
 	guest = cputime64_zero;
-	getboottime(&boottime);
-	jif = boottime.tv_sec;
 
 	for_each_possible_cpu(i) {
 		int j;
@@ -573,9 +619,85 @@ static int show_stat(struct seq_file *p, void *v)
 
 	for (i = 0; i < NR_IRQS; i++)
 		seq_printf(p, " %u", per_irq_sum[i]);
+	kfree(per_irq_sum);
+	seq_printf(p, "\nswap %lu %lu\n",
+			vm_events(PSWPIN), vm_events(PSWPOUT));
+}
+
+#ifdef CONFIG_VE
+static void show_stat_ve(struct seq_file *p, struct ve_struct *ve)
+{
+	int i;
+	u64 user, nice, system;
+	cycles_t idle, iowait;
+	cpumask_t ve_cpus;
+
+	ve_cpu_online_map(ve, &ve_cpus);
+
+	user = nice = system = idle = iowait = 0;
+	for_each_cpu_mask(i, ve_cpus) {
+		user += VE_CPU_STATS(ve, i)->user;
+		nice += VE_CPU_STATS(ve, i)->nice;
+		system += VE_CPU_STATS(ve, i)->system;
+		idle += ve_sched_get_idle_time(ve, i);
+		iowait += ve_sched_get_iowait_time(ve, i);
+	}
+
+	seq_printf(p, "cpu  %llu %llu %llu %llu %llu 0 0 0\n",
+		(unsigned long long)cputime64_to_clock_t(user),
+		(unsigned long long)cputime64_to_clock_t(nice),
+		(unsigned long long)cputime64_to_clock_t(system),
+		(unsigned long long)cycles_to_clocks(idle),
+		(unsigned long long)cycles_to_clocks(iowait));
+
+	for_each_cpu_mask(i, ve_cpus) {
+		user = VE_CPU_STATS(ve, i)->user;
+		nice = VE_CPU_STATS(ve, i)->nice;
+		system = VE_CPU_STATS(ve, i)->system;
+		idle = ve_sched_get_idle_time(ve, i);
+		iowait = ve_sched_get_iowait_time(ve, i);
+		seq_printf(p, "cpu%d %llu %llu %llu %llu %llu 0 0 0\n",
+			i,
+			(unsigned long long)cputime64_to_clock_t(user),
+			(unsigned long long)cputime64_to_clock_t(nice),
+			(unsigned long long)cputime64_to_clock_t(system),
+			(unsigned long long)cycles_to_clocks(idle),
+			(unsigned long long)cycles_to_clocks(iowait));
+	}
+	seq_printf(p, "intr 0\nswap 0 0\n");
+}
+#endif
+
+int show_stat(struct seq_file *p, void *v)
+{
+	extern unsigned long total_forks;
+	unsigned long seq, jif;
+	struct ve_struct *env;
+	unsigned long __nr_running, __nr_iowait;
+ 
+	do {
+		seq = read_seqbegin(&xtime_lock);
+		jif = - wall_to_monotonic.tv_sec;
+		if (wall_to_monotonic.tv_nsec)
+			--jif;
+	} while (read_seqretry(&xtime_lock, seq));
+
+	env = get_exec_env();
+	if (ve_is_super(env)) {
+		show_stat_ve0(p);
+		__nr_running = nr_running();
+		__nr_iowait = nr_iowait();
+	}
+#ifdef CONFIG_VE
+	else {
+		show_stat_ve(p, env);
+		__nr_running = nr_running_ve(env);
+		__nr_iowait = nr_iowait_ve(env);
+	}
+#endif
 
 	seq_printf(p,
-		"\nctxt %llu\n"
+		"ctxt %llu\n"
 		"btime %lu\n"
 		"processes %lu\n"
 		"procs_running %lu\n"
@@ -583,10 +705,9 @@ static int show_stat(struct seq_file *p, void *v)
 		nr_context_switches(),
 		(unsigned long)jif,
 		total_forks,
-		nr_running(),
-		nr_iowait());
+		__nr_running,
+		__nr_iowait);
 
-	kfree(per_irq_sum);
 	return 0;
 }
 
@@ -673,7 +794,8 @@ static int cmdline_read_proc(char *page, char **start, off_t off,
 {
 	int len;
 
-	len = sprintf(page, "%s\n", saved_command_line);
+	len = sprintf(page, "%s\n",
+		ve_is_super(get_exec_env()) ? saved_command_line : "quiet");
 	return proc_calc_metrics(page, start, off, count, eof, len);
 }
 
@@ -704,11 +826,16 @@ static ssize_t write_sysrq_trigger(struct file *file, const char __user *buf,
 				   size_t count, loff_t *ppos)
 {
 	if (count) {
-		char c;
+		int i, cnt;
+		char c[32];
 
-		if (get_user(c, buf))
+		cnt = min(count, sizeof(c));
+		if (copy_from_user(c, buf, cnt))
 			return -EFAULT;
-		__handle_sysrq(c, NULL, 0);
+
+
+		for (i = 0; i < cnt && c[i] != '\n'; i++)
+			__handle_sysrq(c[i], NULL, 0);
 	}
 	return count;
 }
@@ -856,38 +983,39 @@ void __init proc_misc_init(void)
 	static struct {
 		char *name;
 		int (*read_proc)(char*,char**,off_t,int,int*,void*);
+		struct proc_dir_entry *parent;
 	} *p, simple_ones[] = {
-		{"loadavg",     loadavg_read_proc},
-		{"uptime",	uptime_read_proc},
-		{"meminfo",	meminfo_read_proc},
-		{"version",	version_read_proc},
+		{"loadavg",     loadavg_read_proc, &glob_proc_root},
+		{"uptime",	uptime_read_proc, &glob_proc_root},
+		{"meminfo",	meminfo_read_proc, &glob_proc_root},
+		{"version",	version_read_proc, &glob_proc_root},
 #ifdef CONFIG_PROC_HARDWARE
 		{"hardware",	hardware_read_proc},
 #endif
 #ifdef CONFIG_STRAM_PROC
 		{"stram",	stram_read_proc},
 #endif
-		{"filesystems",	filesystems_read_proc},
-		{"cmdline",	cmdline_read_proc},
+		{"filesystems",	filesystems_read_proc, &glob_proc_root},
+		{"cmdline",	cmdline_read_proc, &glob_proc_root},
 		{"execdomains",	execdomains_read_proc},
 		{NULL,}
 	};
 	for (p = simple_ones; p->name; p++)
-		create_proc_read_entry(p->name, 0, NULL, p->read_proc, NULL);
+		create_proc_read_entry(p->name, 0, p->parent, p->read_proc, NULL);
 
-	proc_symlink("mounts", NULL, "self/mounts");
+	proc_symlink("mounts", &glob_proc_root, "self/mounts");
 
 	/* And now for trickier ones */
 #ifdef CONFIG_PRINTK
 	proc_create("kmsg", S_IRUSR, NULL, &proc_kmsg_operations);
 #endif
-	proc_create("locks", 0, NULL, &proc_locks_operations);
+	proc_create("locks", 0, &glob_proc_root, &proc_locks_operations);
 	proc_create("devices", 0, NULL, &proc_devinfo_operations);
-	proc_create("cpuinfo", 0, NULL, &proc_cpuinfo_operations);
+	proc_create("cpuinfo", 0, &glob_proc_root, &proc_cpuinfo_operations);
 #ifdef CONFIG_BLOCK
 	proc_create("partitions", 0, NULL, &proc_partitions_operations);
 #endif
-	proc_create("stat", 0, NULL, &proc_stat_operations);
+	proc_create("stat", 0, &glob_proc_root, &proc_stat_operations);
 	proc_create("interrupts", 0, NULL, &proc_interrupts_operations);
 #ifdef CONFIG_SLABINFO
 	proc_create("slabinfo",S_IWUSR|S_IRUGO,NULL,&proc_slabinfo_operations);
@@ -900,13 +1028,13 @@ void __init proc_misc_init(void)
 #endif
 	proc_create("buddyinfo", S_IRUGO, NULL, &fragmentation_file_operations);
 	proc_create("pagetypeinfo", S_IRUGO, NULL, &pagetypeinfo_file_ops);
-	proc_create("vmstat", S_IRUGO, NULL, &proc_vmstat_file_operations);
+	proc_create("vmstat", S_IRUGO, &glob_proc_root, &proc_vmstat_file_operations);
 	proc_create("zoneinfo", S_IRUGO, NULL, &proc_zoneinfo_file_operations);
 #ifdef CONFIG_BLOCK
 	proc_create("diskstats", 0, NULL, &proc_diskstats_operations);
 #endif
 #ifdef CONFIG_MODULES
-	proc_create("modules", 0, NULL, &proc_modules_operations);
+	proc_create("modules", 0, &glob_proc_root, &proc_modules_operations);
 #endif
 #ifdef CONFIG_SCHEDSTATS
 	proc_create("schedstat", 0, NULL, &proc_schedstat_operations);

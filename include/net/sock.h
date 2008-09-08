@@ -57,6 +57,8 @@
 #include <net/dst.h>
 #include <net/checksum.h>
 
+#include <bc/net.h>
+
 /*
  * This structure really needs to be cleaned up.
  * Most of it is for TCP, and not used by any of
@@ -279,6 +281,8 @@ struct sock {
   	int			(*sk_backlog_rcv)(struct sock *sk,
 						  struct sk_buff *skb);  
 	void                    (*sk_destruct)(struct sock *sk);
+	struct sock_beancounter sk_bc;
+	struct ve_struct	*owner_env;
 };
 
 /*
@@ -495,6 +499,8 @@ static inline void sk_add_backlog(struct sock *sk, struct sk_buff *skb)
 	})
 
 extern int sk_stream_wait_connect(struct sock *sk, long *timeo_p);
+extern int __sk_stream_wait_memory(struct sock *sk, long *timeo_p,
+				unsigned long amount);
 extern int sk_stream_wait_memory(struct sock *sk, long *timeo_p);
 extern void sk_stream_wait_close(struct sock *sk, long timeo_p);
 extern int sk_stream_error(struct sock *sk, int flags, int err);
@@ -729,7 +735,8 @@ static inline int sk_has_account(struct sock *sk)
 	return !!sk->sk_prot->memory_allocated;
 }
 
-static inline int sk_wmem_schedule(struct sock *sk, int size)
+static inline int sk_wmem_schedule(struct sock *sk, int size,
+		struct sk_buff *skb)
 {
 	if (!sk_has_account(sk))
 		return 1;
@@ -737,12 +744,15 @@ static inline int sk_wmem_schedule(struct sock *sk, int size)
 		__sk_mem_schedule(sk, size, SK_MEM_SEND);
 }
 
-static inline int sk_rmem_schedule(struct sock *sk, int size)
+static inline int sk_rmem_schedule(struct sock *sk,  struct sk_buff *skb)
 {
 	if (!sk_has_account(sk))
 		return 1;
-	return size <= sk->sk_forward_alloc ||
-		__sk_mem_schedule(sk, size, SK_MEM_RECV);
+	if (!(skb->truesize <= sk->sk_forward_alloc ||
+	      __sk_mem_schedule(sk, skb->truesize, SK_MEM_RECV)))
+		return 0;
+
+	return !ub_sockrcvbuf_charge(sk, skb);
 }
 
 static inline void sk_mem_reclaim(struct sock *sk)
@@ -860,6 +870,11 @@ extern int			sock_getsockopt(struct socket *sock, int level,
 						int __user *optlen);
 extern struct sk_buff 		*sock_alloc_send_skb(struct sock *sk,
 						     unsigned long size,
+						     int noblock,
+						     int *errcode);
+extern struct sk_buff 		*sock_alloc_send_skb2(struct sock *sk,
+						     unsigned long size,
+						     unsigned long size2,
 						     int noblock,
 						     int *errcode);
 extern void *sock_kmalloc(struct sock *sk, int size,
@@ -1124,6 +1139,7 @@ static inline int skb_copy_to_page(struct sock *sk, char __user *from,
 
 static inline void skb_set_owner_w(struct sk_buff *skb, struct sock *sk)
 {
+	WARN_ON(skb->destructor);
 	sock_hold(sk);
 	skb->sk = sk;
 	skb->destructor = sock_wfree;
@@ -1132,6 +1148,7 @@ static inline void skb_set_owner_w(struct sk_buff *skb, struct sock *sk)
 
 static inline void skb_set_owner_r(struct sk_buff *skb, struct sock *sk)
 {
+	WARN_ON(skb->destructor);
 	skb->sk = sk;
 	skb->destructor = sock_rfree;
 	atomic_add(skb->truesize, &sk->sk_rmem_alloc);

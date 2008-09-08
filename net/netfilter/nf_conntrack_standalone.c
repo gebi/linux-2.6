@@ -9,6 +9,7 @@
 #include <linux/types.h>
 #include <linux/netfilter.h>
 #include <linux/module.h>
+#include <linux/nsproxy.h>
 #include <linux/skbuff.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
@@ -18,6 +19,7 @@
 #ifdef CONFIG_SYSCTL
 #include <linux/sysctl.h>
 #endif
+#include <linux/nfcalls.h>
 
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_core.h>
@@ -28,6 +30,10 @@
 #include <net/netfilter/nf_conntrack_acct.h>
 
 MODULE_LICENSE("GPL");
+
+int ip_conntrack_disable_ve0 = 0;
+module_param(ip_conntrack_disable_ve0, int, 0440);
+EXPORT_SYMBOL(ip_conntrack_disable_ve0);
 
 #ifdef CONFIG_PROC_FS
 int
@@ -51,7 +57,7 @@ static struct hlist_node *ct_get_first(struct seq_file *seq)
 	for (st->bucket = 0;
 	     st->bucket < nf_conntrack_htable_size;
 	     st->bucket++) {
-		n = rcu_dereference(nf_conntrack_hash[st->bucket].first);
+		n = rcu_dereference(ve_nf_conntrack_hash[st->bucket].first);
 		if (n)
 			return n;
 	}
@@ -67,7 +73,7 @@ static struct hlist_node *ct_get_next(struct seq_file *seq,
 	while (head == NULL) {
 		if (++st->bucket >= nf_conntrack_htable_size)
 			return NULL;
-		head = rcu_dereference(nf_conntrack_hash[st->bucket].first);
+		head = rcu_dereference(ve_nf_conntrack_hash[st->bucket].first);
 	}
 	return head;
 }
@@ -226,7 +232,7 @@ static void ct_cpu_seq_stop(struct seq_file *seq, void *v)
 
 static int ct_cpu_seq_show(struct seq_file *seq, void *v)
 {
-	unsigned int nr_conntracks = atomic_read(&nf_conntrack_count);
+	unsigned int nr_conntracks = atomic_read(&ve_nf_conntrack_count);
 	const struct ip_conntrack_stat *st = v;
 
 	if (v == SEQ_START_TOKEN) {
@@ -280,27 +286,30 @@ static const struct file_operations ct_cpu_seq_fops = {
 static int nf_conntrack_standalone_init_proc(void)
 {
 	struct proc_dir_entry *pde;
+	struct net *net = get_exec_env()->ve_netns;
 
-	pde = proc_net_fops_create(&init_net, "nf_conntrack", 0440, &ct_file_ops);
+	pde = proc_net_fops_create(net, "nf_conntrack", 0440, &ct_file_ops);
 	if (!pde)
 		goto out_nf_conntrack;
 
-	pde = proc_create("nf_conntrack", S_IRUGO, init_net.proc_net_stat,
+	pde = proc_create("nf_conntrack", S_IRUGO, net->proc_net_stat,
 			  &ct_cpu_seq_fops);
 	if (!pde)
 		goto out_stat_nf_conntrack;
 	return 0;
 
 out_stat_nf_conntrack:
-	proc_net_remove(&init_net, "nf_conntrack");
+	proc_net_remove(net, "nf_conntrack");
 out_nf_conntrack:
 	return -ENOMEM;
 }
 
 static void nf_conntrack_standalone_fini_proc(void)
 {
-	remove_proc_entry("nf_conntrack", init_net.proc_net_stat);
-	proc_net_remove(&init_net, "nf_conntrack");
+	struct net *net = get_exec_env()->ve_netns;
+
+	remove_proc_entry("nf_conntrack", net->proc_net_stat);
+	proc_net_remove(net, "nf_conntrack");
 }
 #else
 static int nf_conntrack_standalone_init_proc(void)
@@ -404,21 +413,46 @@ EXPORT_SYMBOL_GPL(nf_ct_log_invalid);
 
 static int nf_conntrack_standalone_init_sysctl(void)
 {
-	nf_ct_netfilter_header =
-		register_sysctl_paths(nf_ct_path, nf_ct_netfilter_table);
-	if (!nf_ct_netfilter_header)
-		goto out;
+	struct ctl_table *nf_table, *ct_table;
 
-	nf_ct_sysctl_header =
-		 register_sysctl_paths(nf_net_netfilter_sysctl_path,
-					nf_ct_sysctl_table);
-	if (!nf_ct_sysctl_header)
-		goto out_unregister_netfilter;
+	nf_table = nf_ct_netfilter_table;
+	ct_table = nf_ct_sysctl_table;
+
+	if (!ve_is_super(get_exec_env())) {
+		nf_table = kmemdup(nf_table, sizeof(nf_ct_netfilter_table),
+				GFP_KERNEL);
+		if (nf_table == NULL)
+			goto out;
+
+		ct_table = kmemdup(ct_table, sizeof(nf_ct_sysctl_table),
+				GFP_KERNEL);
+		if (ct_table == NULL)
+			goto err_ctt;
+
+		nf_table[0].child = ct_table;
+
+	nf_table[1].data = &ve_nf_conntrack_max;
+	ct_table[0].data = &ve_nf_conntrack_max;
+	ct_table[1].data = &ve_nf_conntrack_count;
+	/* nf_conntrack_htable_size is shared and readonly */
+	ct_table[3].data = &ve_nf_conntrack_checksum;
+	ct_table[4].data = &ve_nf_ct_log_invalid;
+	ct_table[5].data = &ve_nf_ct_expect_max;
+
+	ve_nf_ct_sysctl_header = register_net_sysctl_table(get_exec_env()->ve_netns,
+							   nf_ct_path, nf_table);
+	if (ve_nf_ct_sysctl_header == NULL)
+		goto err_reg;
+
 
 	return 0;
 
-out_unregister_netfilter:
-	unregister_sysctl_table(nf_ct_netfilter_header);
+err_reg:
+	if (ct_table != nf_ct_sysctl_table)
+		kfree(ct_table);
+err_ctt:
+	if (nf_table != nf_ct_netfilter_table)
+		kfree(nf_table);
 out:
 	printk("nf_conntrack: can't register to sysctl.\n");
 	return -ENOMEM;
@@ -426,8 +460,15 @@ out:
 
 static void nf_conntrack_standalone_fini_sysctl(void)
 {
-	unregister_sysctl_table(nf_ct_netfilter_header);
-	unregister_sysctl_table(nf_ct_sysctl_header);
+	struct ctl_table *table = ve_nf_ct_sysctl_header->ctl_table_arg;
+
+	unregister_net_sysctl_table(ve_nf_ct_sysctl_header);
+
+	if (!ve_is_super(get_exec_env())) {
+		kfree(table[0].child);
+		kfree(table);
+	}
+
 }
 #else
 static int nf_conntrack_standalone_init_sysctl(void)
@@ -440,7 +481,7 @@ static void nf_conntrack_standalone_fini_sysctl(void)
 }
 #endif /* CONFIG_SYSCTL */
 
-static int __init nf_conntrack_standalone_init(void)
+static int nf_conntrack_init_ve(void)
 {
 	int ret;
 
@@ -463,11 +504,32 @@ out:
 	return ret;
 }
 
-static void __exit nf_conntrack_standalone_fini(void)
+static void nf_conntrack_cleanup_ve(void)
 {
 	nf_conntrack_standalone_fini_sysctl();
 	nf_conntrack_standalone_fini_proc();
 	nf_conntrack_cleanup();
+}
+
+static int __init nf_conntrack_standalone_init(void)
+{
+#ifdef CONFIG_VE_IPTABLES
+	KSYMRESOLVE(nf_conntrack_init_ve);
+	KSYMRESOLVE(nf_conntrack_cleanup_ve);
+	KSYMMODRESOLVE(nf_conntrack);
+#endif
+
+	return nf_conntrack_init_ve();
+}
+
+static void __exit nf_conntrack_standalone_fini(void)
+{
+#ifdef CONFIG_VE_IPTABLES
+	KSYMMODUNRESOLVE(nf_conntrack);
+	KSYMUNRESOLVE(nf_conntrack_init_ve);
+	KSYMUNRESOLVE(nf_conntrack_cleanup_ve);
+#endif
+	nf_conntrack_cleanup_ve();
 }
 
 module_init(nf_conntrack_standalone_init);

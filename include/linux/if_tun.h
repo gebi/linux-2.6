@@ -82,4 +82,35 @@ struct tun_filter {
 	__u8   addr[0][ETH_ALEN];
 };
 
+struct sk_buff_head;
+struct tun_struct {
+	struct list_head        list;
+	unsigned int 		flags;
+	int			attached;
+	uid_t			owner;
+	gid_t			group;
+
+	wait_queue_head_t	read_wait;
+	struct sk_buff_head	readq;
+
+	struct net_device	*dev;
+	struct fasync_struct	*fasync;
+
+	struct tap_filter       txflt;
+
+#ifdef TUN_DEBUG
+	int debug;
+#endif
+};
+
+struct tun_net {
+	struct list_head dev_list;
+};
+
+extern int tun_net_open(struct net_device *dev);
+extern int tun_chr_open(struct inode *inode, struct file * file);
+extern void tun_net_init(struct net_device *dev);
+extern void tun_setup(struct net_device *dev);
+extern struct list_head tun_dev_list;
+
 #endif /* __IF_TUN_H */

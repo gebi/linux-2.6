@@ -124,6 +124,7 @@ asmlinkage long sys_dup2(unsigned int oldfd, unsigned int newfd)
 	}
 	return sys_dup3(oldfd, newfd, 0);
 }
+EXPORT_SYMBOL_GPL(sys_dup2);
 
 asmlinkage long sys_dup(unsigned int fildes)
 {
@@ -146,6 +147,9 @@ static int setfl(int fd, struct file * filp, unsigned long arg)
 {
 	struct inode * inode = filp->f_path.dentry->d_inode;
 	int error = 0;
+
+	if (!capable(CAP_SYS_RAWIO) && !odirect_enable)
+		arg &= ~O_DIRECT;
 
 	/*
 	 * O_APPEND cannot be cleared if the file is marked as append-only

@@ -14,6 +14,8 @@
 #include <linux/quotaops.h>
 #include <linux/buffer_head.h>
 
+#include <bc/beancounter.h>
+
 #define VALID_FLAGS (SYNC_FILE_RANGE_WAIT_BEFORE|SYNC_FILE_RANGE_WRITE| \
 			SYNC_FILE_RANGE_WAIT_AFTER)
 
@@ -38,7 +40,14 @@ static void do_sync(unsigned long wait)
 
 asmlinkage long sys_sync(void)
 {
+	struct user_beancounter *ub;
+
+	ub = get_exec_ub();
+	ub_percpu_inc(ub, sync);
+
 	do_sync(1);
+
+	ub_percpu_inc(ub, sync_done);
 	return 0;
 }
 
@@ -80,12 +89,19 @@ long do_fsync(struct file *file, int datasync)
 	int ret;
 	int err;
 	struct address_space *mapping = file->f_mapping;
+	struct user_beancounter *ub;
 
 	if (!file->f_op || !file->f_op->fsync) {
 		/* Why?  We can still call filemap_fdatawrite */
 		ret = -EINVAL;
 		goto out;
 	}
+
+	ub = get_exec_ub();
+	if (datasync)
+		ub_percpu_inc(ub, fdsync);
+	else
+		ub_percpu_inc(ub, fsync);
 
 	ret = filemap_fdatawrite(mapping);
 
@@ -101,6 +117,11 @@ long do_fsync(struct file *file, int datasync)
 	err = filemap_fdatawait(mapping);
 	if (!ret)
 		ret = err;
+
+	if (datasync)
+		ub_percpu_inc(ub, fdsync_done);
+	else
+		ub_percpu_inc(ub, fsync_done);
 out:
 	return ret;
 }
@@ -252,11 +273,15 @@ int do_sync_mapping_range(struct address_space *mapping, loff_t offset,
 			  loff_t endbyte, unsigned int flags)
 {
 	int ret;
+	struct user_beancounter *ub;
 
 	if (!mapping) {
 		ret = -EINVAL;
-		goto out;
+		goto out_noacct;
 	}
+
+	ub = get_exec_ub();
+	ub_percpu_inc(ub, frsync);
 
 	ret = 0;
 	if (flags & SYNC_FILE_RANGE_WAIT_BEFORE) {
@@ -280,6 +305,8 @@ int do_sync_mapping_range(struct address_space *mapping, loff_t offset,
 					endbyte >> PAGE_CACHE_SHIFT);
 	}
 out:
+	ub_percpu_inc(ub, frsync_done);
+out_noacct:
 	return ret;
 }
 EXPORT_SYMBOL_GPL(do_sync_mapping_range);

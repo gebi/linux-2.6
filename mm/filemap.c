@@ -42,6 +42,7 @@
 
 #include <asm/mman.h>
 
+#include <bc/io_acct.h>
 
 /*
  * Shared mappings implemented 30.11.1994. It's not fully working yet,
@@ -118,6 +119,7 @@ void __remove_from_page_cache(struct page *page)
 	mem_cgroup_uncharge_cache_page(page);
 	radix_tree_delete(&mapping->page_tree, page->index);
 	page->mapping = NULL;
+	ub_io_release_debug(page);
 	mapping->nrpages--;
 	__dec_zone_page_state(page, NR_FILE_PAGES);
 	BUG_ON(page_mapped(page));
