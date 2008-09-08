@@ -153,6 +153,18 @@ DECLARE_SNMP_STAT(struct udp_mib, udp_stats_in6);
 /* UDP-Lite does not have a standardized MIB yet, so we inherit from UDP */
 DECLARE_SNMP_STAT(struct udp_mib, udplite_stats_in6);
 
+#ifdef CONFIG_VE
+#define ve_udp_statistics (get_exec_env()->_udp_statistics)
+#define ve_udplite_statistics (get_exec_env()->_udplite_statistics)
+#define ve_udp_stats_in6 (get_exec_env()->_udp_stats_in6)
+#define ve_udplite_stats_in6 (get_exec_env()->_udplite_stats_in6)
+#else
+#define ve_udp_statistics udp_statistics
+#define ve_udplite_statistics udplite_statistics
+#define ve_udp_stats_in6 udp_stats_in6
+#define ve_udplite_stats_in6 udplite_stats_in6
+#endif
+
 /*
  * 	SNMP statistics for UDP and UDP-Lite
  */

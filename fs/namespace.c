@@ -1785,7 +1785,7 @@ int do_add_mount(struct vfsmount *newmnt, struct path *path,
 	newmnt->mnt_flags = mnt_flags;
 
 	/* make this before graft_tree reveals mnt_root to the world... */
-	if (nd->path.dentry->d_flags & DCACHE_VIRTUAL)
+	if (path->dentry->d_flags & DCACHE_VIRTUAL)
 		newmnt->mnt_root->d_flags |= DCACHE_VIRTUAL;
 
 	if ((err = graft_tree(newmnt, path)))

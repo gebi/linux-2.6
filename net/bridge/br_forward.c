@@ -83,7 +83,7 @@ void br_deliver(const struct net_bridge_port *to, struct sk_buff *skb, int free)
 			struct sk_buff *skb2;
 
 			if ((skb2 = skb_clone(skb, GFP_ATOMIC)) == NULL) {
-				to->br->statistics.tx_dropped++;
+				to->dev->stats.tx_dropped++;
 				return;
 			}
 			skb = skb2;
@@ -165,7 +165,7 @@ void br_xmit_deliver(struct net_bridge *br, struct net_bridge_port *port,
 			struct sk_buff *skb2;
 
 			if ((skb2 = skb_clone(skb, GFP_ATOMIC)) == NULL) {
-				br->statistics.tx_dropped++;
+				br->dev->stats.tx_dropped++;
 				return;
 			}
 			__br_deliver(p, skb2);

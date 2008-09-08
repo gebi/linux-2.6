@@ -166,7 +166,7 @@ int sockaddr_to_veaddr(struct sockaddr __user *uaddr, int addrlen,
 	int err;
 	char addr[MAX_SOCK_ADDR];
 
-	err = move_addr_to_kernel(uaddr, addrlen, &addr);
+	err = move_addr_to_kernel(uaddr, addrlen, (struct sockaddr *)&addr);
 	if (err < 0)
 		goto out;
 

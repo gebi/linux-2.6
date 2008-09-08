@@ -215,8 +215,6 @@ static int init_fini_ve_mibs(struct ve_struct *ve, int fini)
 {
 	if (fini)
 		goto fini;
-	if (init_ipv4_mibs())
-		goto err_ipv4;
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 	if (init_ipv6_mibs())
 		goto err_ipv6;
@@ -228,8 +226,6 @@ fini:
 	cleanup_ipv6_mibs();
 err_ipv6:
 #endif
-	cleanup_ipv4_mibs();
-err_ipv4:
 	return -ENOMEM;
 }
 
@@ -474,7 +470,7 @@ static int init_ve_mem_class(void)
 	for (i = 0; mem_class_devices[i].name; i++)
 		device_create(ve_mem_class, NULL,
 				MKDEV(MEM_MAJOR, mem_class_devices[i].minor),
-				mem_class_devices[i].name);
+				NULL, mem_class_devices[i].name);
 
 	get_exec_env()->mem_class = ve_mem_class;
 	return 0;
@@ -1524,7 +1520,7 @@ static int __init init_vzmond(void)
 
 	pid = kernel_thread(vzmond, NULL, 0);
 	if (pid > 0) {
-		tsk = find_task_by_pid(pid);
+		tsk = find_task_by_vpid(pid);
 		BUG_ON(tsk == NULL);
 		ve_cleanup_thread = tsk;
 	}

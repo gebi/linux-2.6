@@ -76,7 +76,7 @@ config VZ_WDOG
  
 config VZ_CHECKPOINT
  	tristate "Checkpointing & restoring Virtual Environments"
- 	depends on VE_CALLS && INET
+ 	depends on VE_CALLS
 	select PM
 	select PM_SLEEP
 	select TUN

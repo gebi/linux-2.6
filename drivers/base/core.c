@@ -1176,6 +1176,14 @@ int devices_init(void)
 	kset_unregister(devices_kset);
 	return -ENOMEM;
 }
+EXPORT_SYMBOL_GPL(devices_init);
+
+void devices_fini(void)
+{
+	kset_unregister(devices_kset);
+}
+EXPORT_SYMBOL_GPL(devices_fini);
+
 
 EXPORT_SYMBOL_GPL(device_for_each_child);
 EXPORT_SYMBOL_GPL(device_find_child);

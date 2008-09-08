@@ -279,10 +279,10 @@ asmlinkage long sys_setpriority(int which, int who, int niceval)
 				if ((who != current->uid) && !(user = find_user(who)))
 					goto out_unlock;	/* No processes for this user */
 
-			do_each_thread_ve(g, p)
+			do_each_thread_ve(g, p) {
 				if (p->uid == who)
 					error = set_one_prio(p, niceval, error);
-			while_each_thread_ve(g, p);
+			} while_each_thread_ve(g, p);
 			if (who != current->uid)
 				free_uid(user);		/* For find_user() */
 			break;

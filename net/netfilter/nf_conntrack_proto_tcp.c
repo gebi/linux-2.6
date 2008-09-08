@@ -966,7 +966,7 @@ static int tcp_packet(struct nf_conn *ct,
 		 tcp_timeouts[new_state] > ve_nf_ct_tcp_timeout_unacknowledged)
 		timeout = ve_nf_ct_tcp_timeout_unacknowledged;
 	else
-		timeout = ve_tcp_timeouts[new_state];
+		timeout = ve_nf_ct_tcp_timeouts[new_state];
 	write_unlock_bh(&tcp_lock);
 
 	nf_conntrack_event_cache(IPCT_PROTOINFO_VOLATILE, skb);
@@ -1469,9 +1469,10 @@ int nf_ct_proto_tcp_sysctl_init(void)
 	tcp4->ctl_table[6].data = &ve_nf_ct_tcp_timeouts[7];
 	tcp4->ctl_table[7].data = &ve_nf_ct_tcp_timeouts[8];
 	tcp4->ctl_table[8].data = &ve_nf_ct_tcp_timeout_max_retrans;
-	tcp4->ctl_table[9].data = &ve_nf_ct_tcp_loose;
-	tcp4->ctl_table[10].data = &ve_nf_ct_tcp_be_liberal;
-	tcp4->ctl_table[11].data = &ve_nf_ct_tcp_max_retrans;
+	tcp4->ctl_table[9].data = &ve_nf_ct_tcp_timeout_unacknowledged;
+	tcp4->ctl_table[10].data = &ve_nf_ct_tcp_loose;
+	tcp4->ctl_table[11].data = &ve_nf_ct_tcp_be_liberal;
+	tcp4->ctl_table[12].data = &ve_nf_ct_tcp_max_retrans;
 
 #ifdef CONFIG_NF_CONNTRACK_PROC_COMPAT
 	tcp4->ctl_compat_table_header = ve_tcp_compat_sysctl_header;
@@ -1512,6 +1513,7 @@ out:
 	ve_nf_ct_tcp_timeouts[7] = tcp_timeouts[TCP_CONNTRACK_TIME_WAIT];
 	ve_nf_ct_tcp_timeouts[8] = tcp_timeouts[TCP_CONNTRACK_CLOSE];
 	ve_nf_ct_tcp_timeout_max_retrans = nf_ct_tcp_timeout_max_retrans;
+	ve_nf_ct_tcp_timeout_unacknowledged = nf_ct_tcp_timeout_unacknowledged;
 	ve_nf_ct_tcp_loose = nf_ct_tcp_loose;
 	ve_nf_ct_tcp_be_liberal = nf_ct_tcp_be_liberal;
 	ve_nf_ct_tcp_max_retrans = nf_ct_tcp_max_retrans;

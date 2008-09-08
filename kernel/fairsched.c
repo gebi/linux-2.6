@@ -292,7 +292,7 @@ static int do_fairsched_mvpr(pid_t pid, unsigned int nodeid)
 
 	write_lock_irq(&tasklist_lock);
 	retval = -ESRCH;
-	p = find_task_by_pid(pid);
+	p = find_task_by_vpid(pid);
 	if (p == NULL)
 		goto out_unlock;
 

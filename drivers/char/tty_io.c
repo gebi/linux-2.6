@@ -3791,7 +3791,7 @@ int init_ve_tty_class(void)
 		return -ENOMEM;
 
 	ve_ptmx_dev_class = device_create(ve_tty_class, NULL,
-				MKDEV(TTYAUX_MAJOR, 2), "ptmx");
+				MKDEV(TTYAUX_MAJOR, 2), NULL, "ptmx");
 	if (IS_ERR(ve_ptmx_dev_class)) {
 		class_destroy(ve_tty_class);
 		return PTR_ERR(ve_ptmx_dev_class);

@@ -535,7 +535,7 @@ pid_t pid_to_vpid(pid_t nr)
 {
 	struct pid *pid;
 
-	pid = find_pid(nr);
+	pid = find_pid_ns(nr, &init_pid_ns);
 	if (pid)
 		return pid->numbers[pid->level].nr;
 	return -1;

@@ -145,6 +145,8 @@ extern unsigned int nf_ct_log_invalid;
 #define ve_nf_ct_tcp_timeouts		(ve_nf_ct4->_nf_ct_tcp_timeouts)
 #define ve_nf_ct_tcp_timeout_max_retrans	\
 				(ve_nf_ct4->_nf_ct_tcp_timeout_max_retrans)
+#define ve_nf_ct_tcp_timeout_unacknowledged	\
+				(ve_nf_ct4->_nf_ct_tcp_timeout_unacknowledged)
 #define ve_nf_ct_tcp_max_retrans	(ve_nf_ct4->_nf_ct_tcp_max_retrans)
 #define ve_nf_ct_tcp_loose		(ve_nf_ct4->_nf_ct_tcp_loose)
 #define ve_nf_ct_tcp_be_liberal		(ve_nf_ct4->_nf_ct_tcp_be_liberal)
@@ -196,6 +198,8 @@ extern int nf_ct_proto_udp_sysctl_init(void);
 #define ve_nf_ct_tcp_timeouts		*tcp_timeouts
 #define ve_nf_ct_tcp_timeout_max_retrans	\
 					nf_ct_tcp_timeout_max_retrans
+#define ve_nf_ct_tcp_timeout_unacknowledged	\
+					nf_ct_tcp_timeout_unacknowledged
 #define ve_nf_ct_tcp_max_retrans	nf_ct_tcp_max_retrans
 #define ve_nf_ct_tcp_loose		nf_ct_tcp_loose
 #define ve_nf_ct_tcp_be_liberal		nf_ct_tcp_be_liberal

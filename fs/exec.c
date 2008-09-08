@@ -1558,7 +1558,7 @@ static int zap_process(struct task_struct *start)
 			signal_wake_up(t, 1);
 			nr++;
 		}
-	} while_each_thread(start, t);
+	} while_each_thread_ve(start, t);
 
 	return nr;
 }
@@ -1628,7 +1628,7 @@ static inline int zap_threads(struct task_struct *tsk, struct mm_struct *mm,
 				}
 				break;
 			}
-		} while_each_thread(g, p);
+		} while_each_thread_ve(g, p);
 	}
 	rcu_read_unlock();
 done:

@@ -83,6 +83,14 @@ struct tun_filter {
 };
 
 struct sk_buff_head;
+
+#define FLT_EXACT_COUNT 8
+struct tap_filter {
+	unsigned int    count;    /* Number of addrs. Zero means disabled */
+	u32             mask[2];  /* Mask of the hashed addrs */
+	unsigned char	addr[FLT_EXACT_COUNT][ETH_ALEN];
+};
+
 struct tun_struct {
 	struct list_head        list;
 	unsigned int 		flags;
@@ -95,6 +103,7 @@ struct tun_struct {
 
 	struct net_device	*dev;
 	struct fasync_struct	*fasync;
+	struct file		*bind_file;
 
 	struct tap_filter       txflt;
 

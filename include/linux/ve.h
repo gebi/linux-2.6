@@ -79,6 +79,7 @@ struct ve_nf_conntrack {
 	unsigned int			_nf_ct_generic_timeout;
 	unsigned int			_nf_ct_log_invalid;
 	unsigned int			_nf_ct_tcp_timeout_max_retrans;
+	unsigned int			_nf_ct_tcp_timeout_unacknowledged;
 	int				_nf_ct_tcp_be_liberal;
 	int				_nf_ct_tcp_loose;
 	int				_nf_ct_tcp_max_retrans;

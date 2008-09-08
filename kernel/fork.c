@@ -936,7 +936,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 					unsigned long stack_size,
 					int __user *child_tidptr,
 					struct pid *pid,
-					pid_t vpid)
+					pid_t vpid,
 					int trace)
 {
 	int retval;

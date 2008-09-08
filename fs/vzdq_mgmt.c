@@ -8,7 +8,6 @@
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/list.h>
-#include <asm/semaphore.h>
 #include <linux/sched.h>
 #include <linux/fs.h>
 #include <linux/dcache.h>
@@ -130,7 +129,7 @@ static int vzquota_on(unsigned int quota_id, const char __user *quota_root,
 					char __user *buf)
 {
 	int err;
-	struct nameidata nd;
+	struct path path;
 	struct vz_quota_master *qmblk;
 	struct super_block *dqsb;
 
@@ -146,16 +145,16 @@ static int vzquota_on(unsigned int quota_id, const char __user *quota_root,
 	if (qmblk->dq_state != VZDQ_STARTING)
 		goto out;
 
-	err = user_path_walk(quota_root, &nd);
+	err = user_path(quota_root, &path);
 	if (err)
 		goto out;
 	/* init path must be a directory */
 	err = -ENOTDIR;
-	if (!S_ISDIR(nd.path.dentry->d_inode->i_mode))
+	if (!S_ISDIR(path.dentry->d_inode->i_mode))
 		goto out_path;
 
-	qmblk->dq_root_path = nd.path;
-	qmblk->dq_sb = nd.path.dentry->d_inode->i_sb;
+	qmblk->dq_root_path = path;
+	qmblk->dq_sb = path.dentry->d_inode->i_sb;
 	err = vzquota_get_super(qmblk->dq_sb);
 	if (err)
 		goto out_super;
@@ -186,7 +185,7 @@ out_super:
 	qmblk->dq_root_path.dentry = NULL;
 	qmblk->dq_root_path.mnt = NULL;
 out_path:
-	path_put(&nd.path);
+	path_put(&path);
 out:
 	if (dqsb)
 		vzquota_put_super(dqsb);

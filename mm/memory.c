@@ -43,6 +43,7 @@
 #include <linux/hugetlb.h>
 #include <linux/mman.h>
 #include <linux/virtinfo.h>
+#include <linux/sched.h>
 #include <linux/vzstat.h>
 #include <linux/swap.h>
 #include <linux/highmem.h>

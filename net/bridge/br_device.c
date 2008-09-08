@@ -53,8 +53,8 @@ int br_xmit(struct sk_buff *skb, struct net_bridge_port *port)
 	if (!br->via_phys_dev)
 		return 0;
 
-	br->statistics.tx_packets++;
-	br->statistics.tx_bytes += skb->len;
+	br->dev->stats.tx_packets++;
+	br->dev->stats.tx_bytes += skb->len;
 
 	skb_reset_mac_header(skb);
 	skb_pull(skb, ETH_HLEN);

@@ -332,9 +332,6 @@ EXPORT_SYMBOL_GPL(nf_conntrack_checksum);
 static int log_invalid_proto_min = 0;
 static int log_invalid_proto_max = 255;
 
-static struct ctl_table_header *nf_ct_sysctl_header;
-static struct ctl_table_header *nf_ct_netfilter_header;
-
 static ctl_table nf_ct_sysctl_table[] = {
 	{
 		.ctl_name	= NET_NF_CONNTRACK_MAX,
@@ -430,6 +427,7 @@ static int nf_conntrack_standalone_init_sysctl(void)
 			goto err_ctt;
 
 		nf_table[0].child = ct_table;
+	}
 
 	nf_table[1].data = &ve_nf_conntrack_max;
 	ct_table[0].data = &ve_nf_conntrack_max;

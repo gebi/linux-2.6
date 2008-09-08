@@ -182,10 +182,10 @@ struct vz_quota_ugid_setinfo {
 #ifdef __KERNEL__
 #include <linux/list.h>
 #include <asm/atomic.h>
-#include <asm/semaphore.h>
 #include <linux/time.h>
 #include <linux/vzquota_qlnk.h>
 #include <linux/vzdq_tree.h>
+#include <linux/semaphore.h>
 
 /* Values for dq_info flags */
 #define VZ_QUOTA_INODES	0x01	   /* inodes limit warning printed */

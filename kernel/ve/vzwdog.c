@@ -175,25 +175,24 @@ static void show_pgdatinfo(void)
 	printk("\n");
 }
 
-static void show_diskio(void)
+static int show_partition_io(struct device *dev, void *x)
 {
-	struct device *dev;
+	char *name;
 	char buf[BDEVNAME_SIZE];
+	struct gendisk *gd;
+	
+	gd = dev_to_disk(dev);
 
-	printk("disk_io: ");
+	name = disk_name(gd, 0, buf);
+	if ((strlen(name) > 4) && (strncmp(name, "loop", 4) == 0) &&
+			isdigit(name[4]))
+		return 0;
 
-	list_for_each_entry(dev, &block_class.devices, node) {
-		char *name;
-		struct gendisk *gd = dev_to_disk(dev);
+	if ((strlen(name) > 3) && (strncmp(name, "ram", 3) == 0) &&
+			isdigit(name[3]))
+		return 0;
 
-		name = disk_name(gd, 0, buf);
-		if ((strlen(name) > 4) && (strncmp(name, "loop", 4) == 0) &&
-		    isdigit(name[4]))
-			continue;
-		if ((strlen(name) > 3) && (strncmp(name, "ram", 3) == 0) &&
-		    isdigit(name[3]))
-			continue;
-		printk("(%u,%u) %s r(%lu %lu %lu) w(%lu %lu %lu)\n",
+	printk("(%u,%u) %s r(%lu %lu %lu) w(%lu %lu %lu)\n",
 			gd->major, gd->first_minor,
 			name,
 			disk_stat_read(gd, ios[READ]),
@@ -202,8 +201,14 @@ static void show_diskio(void)
 			disk_stat_read(gd, ios[WRITE]),
 			disk_stat_read(gd, sectors[WRITE]),
 			disk_stat_read(gd, merges[WRITE]));
-	}
 
+	return 0;
+}
+
+static void show_diskio(void)
+{
+	printk("disk_io: ");
+	class_for_each_device(&block_class, NULL, NULL, show_partition_io);
 	printk("\n");
 }
 

@@ -134,7 +134,7 @@ static int __init vzctl_init(void)
 	}
 
 	class_err = device_create(vzctl_class, NULL,
-			MKDEV(VZCTL_MAJOR, 0), VZCTL_NAME);
+			MKDEV(VZCTL_MAJOR, 0), NULL, VZCTL_NAME);
 	if (IS_ERR(class_err)) {
 		ret = PTR_ERR(class_err);
 		goto out_rmclass;

@@ -15,7 +15,6 @@
 #include <linux/list.h>
 #include <asm/atomic.h>
 #include <linux/spinlock.h>
-#include <asm/semaphore.h>
 #include <linux/slab.h>
 #include <linux/fs.h>
 #include <linux/dcache.h>

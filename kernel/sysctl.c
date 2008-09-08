@@ -181,16 +181,18 @@ static struct ctl_table_header root_table_header = {
 };
 
 #ifdef CONFIG_VE
-static LIST_HEAD(empty_list);
+static struct ctl_table_set empty_set = {
+	.list = LIST_HEAD_INIT(empty_set.list),
+};
 
-static struct list_head *sysctl_default_lookup(struct ctl_table_root *r,
+static struct ctl_table_set *sysctl_default_lookup(struct ctl_table_root *r,
 		struct nsproxy *namespaces)
 {
 	if (ve_is_super(get_exec_env()))
-		return &r->header_list;
+		return &r->default_set;
 
-	BUG_ON(!list_empty(&empty_list));
-	return &empty_list;
+	BUG_ON(!list_empty(&empty_set.list));
+	return &empty_set;
 }
 
 /*
@@ -199,7 +201,8 @@ static struct list_head *sysctl_default_lookup(struct ctl_table_root *r,
  * visible rw in ve0 only
  */
 static struct ctl_table_root sysctl_default_root = {
-	.header_list	= LIST_HEAD_INIT(sysctl_default_root.header_list),
+	.default_set.list =
+			LIST_HEAD_INIT(sysctl_default_root.default_set.list),
 	.lookup		= sysctl_default_lookup,
 };
 
@@ -208,7 +211,8 @@ static struct ctl_table_root sysctl_default_root = {
  * visible rw everywhere (glob 1)
  */
 static struct ctl_table_root sysctl_virt_root = {
-	.header_list	= LIST_HEAD_INIT(sysctl_virt_root.header_list),
+	.default_set.list =
+			LIST_HEAD_INIT(sysctl_virt_root.default_set.list),
 };
 
 static int sysctl_root_perms(struct ctl_table_root *root,

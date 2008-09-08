@@ -80,13 +80,6 @@ static int debug;
 #define DBG1( a... )
 #endif
 
-#define FLT_EXACT_COUNT 8
-struct tap_filter {
-	unsigned int    count;    /* Number of addrs. Zero means disabled */
-	u32             mask[2];  /* Mask of the hashed addrs */
-	unsigned char	addr[FLT_EXACT_COUNT][ETH_ALEN];
-};
-
 /* TAP filterting */
 static void addr_hash_set(u32 *mask, const u8 *addr)
 {

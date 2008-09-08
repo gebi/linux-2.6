@@ -154,7 +154,7 @@ asmlinkage long sys_statfs(const char __user *pathname, struct statfs __user * b
 	error = user_path(pathname, &path);
 	if (!error) {
 		struct statfs tmp;
-		error = vfs_statfs_native(path.dentry, nd.path.mnt, &tmp);
+		error = vfs_statfs_native(path.dentry, path.mnt, &tmp);
 		if (!error && copy_to_user(buf, &tmp, sizeof(tmp)))
 			error = -EFAULT;
 		path_put(&path);
@@ -173,7 +173,7 @@ asmlinkage long sys_statfs64(const char __user *pathname, size_t sz, struct stat
 	error = user_path(pathname, &path);
 	if (!error) {
 		struct statfs64 tmp;
-		error = vfs_statfs64(path.dentry, nd.path.mnt, &tmp);
+		error = vfs_statfs64(path.dentry, path.mnt, &tmp);
 		if (!error && copy_to_user(buf, &tmp, sizeof(tmp)))
 			error = -EFAULT;
 		path_put(&path);

@@ -194,6 +194,11 @@ void cgroup_unlock(void)
 {
 }
 
+bool cgroup_lock_live_group(struct cgroup *cg)
+{
+	return 1;
+}
+
 
 int cgroup_is_removed(const struct cgroup *cgrp)
 {

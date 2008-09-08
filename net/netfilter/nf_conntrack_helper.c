@@ -30,14 +30,14 @@
 #include <net/netfilter/nf_conntrack_extend.h>
 
 static DEFINE_MUTEX(nf_ct_helper_mutex);
-static struct hlist_head *nf_ct_helper_hash __read_mostly;
 static unsigned int nf_ct_helper_hsize __read_mostly;
 static unsigned int nf_ct_helper_count __read_mostly;
-static int nf_ct_helper_vmalloc;
 #ifdef CONFIG_VE_IPTABLES
 #define ve_nf_ct_helper_hash	(get_exec_env()->_nf_conntrack->_nf_ct_helper_hash)
 #define ve_nf_ct_helper_vmalloc	(get_exec_env()->_nf_conntrack->_nf_ct_helper_vmalloc)
 #else
+static struct hlist_head *nf_ct_helper_hash __read_mostly;
+static int nf_ct_helper_vmalloc;
 #define ve_nf_ct_helper_hash	nf_ct_helper_hash
 #define ve_nf_ct_helper_vmalloc	nf_ct_helper_vmalloc
 #endif
