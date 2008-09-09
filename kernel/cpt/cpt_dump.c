@@ -481,11 +481,14 @@ int cpt_kill(struct cpt_context *ctx)
 		if (tsk->ptrace) {
 			write_lock_irq(&tasklist_lock);
 			tsk->ptrace = 0;
-			if (!list_empty(&tsk->ptrace_list)) {
-				list_del_init(&tsk->ptrace_list);
-				remove_parent(tsk);
-				tsk->parent = tsk->parent;
-				add_parent(tsk);
+			if (!list_empty(&tsk->ptrace_entry)) {
+				list_del_init(&tsk->ptrace_entry);
+				/* 
+				 * This code used to be here:
+				 *  remove_parent(tsk);
+				 *  tsk->parent = tsk->parent;
+				 *  add_parent(tsk);
+				 */
 			}
 			write_unlock_irq(&tasklist_lock);
 		}
@@ -675,7 +678,7 @@ static int vps_collect_tasks(struct cpt_context *ctx)
 			read_lock(&tasklist_lock);
 		}
 
-		list_for_each_entry(child, &tsk->ptrace_children, ptrace_list) {
+		list_for_each_entry(child, &tsk->ptraced, ptrace_entry) {
 			if (child->parent != tsk)
 				continue;
 			if (child->pid != child->tgid)

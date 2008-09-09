@@ -1439,10 +1439,13 @@ int rst_restore_process(struct cpt_context *ctx)
 			write_lock_irq(&tasklist_lock);
 			parent = find_task_by_vpid(ti->cpt_ppid);
 			if (parent && parent != tsk->parent) {
-				list_add(&tsk->ptrace_list, &tsk->parent->ptrace_children);
-				remove_parent(tsk);
-				tsk->parent = parent;
-				add_parent(tsk);
+				list_add(&tsk->ptrace_entry, &tsk->parent->ptraced);
+				/*
+				 * Ptraced kids are no longer in the parent children
+				 *  remove_parent(tsk);
+				 *  tsk->parent = parent;
+				 *  add_parent(tsk);
+				 */
 			}
 			write_unlock_irq(&tasklist_lock);
 			set_exec_env(env);
