@@ -260,11 +260,8 @@ static int attach_one_undo(int semid, struct sem_array *sma, void *arg)
 	if (semid != su->semid)
 		return 0;
 
-	su->proc_next = undo_list->proc_list;
-	undo_list->proc_list = su;
-
-	su->id_next = sma->undo;
-	sma->undo = su;
+	list_add(&su->list_proc, &undo_list->list_proc);
+	list_add(&su->list_id, &sma->list_id);
 
 	return 1;
 }

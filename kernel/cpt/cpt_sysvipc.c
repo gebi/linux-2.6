@@ -219,7 +219,7 @@ int cpt_dump_sysvsem(struct cpt_context *ctx)
 		ctx->write(&v, sizeof(v), ctx);
 
 		cpt_push_object(&saved_obj, ctx);
-		for (su = semu->proc_list; su; su = su->proc_next) {
+		list_for_each_entry(su, &semu->list_proc, list_proc) {
 			if (su->semid != -1) {
 				int err;
 				err = dump_one_semundo(su, ctx);
