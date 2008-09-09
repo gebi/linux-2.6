@@ -50,6 +50,9 @@
 #include <linux/nfs_xdr.h>
 #include <linux/magic.h>
 #include <linux/parser.h>
+#include <linux/ve_proto.h>
+#include <linux/vzcalluser.h>
+#include <linux/ve_nfs.h>
 
 #include <asm/system.h>
 #include <asm/uaccess.h>
@@ -213,7 +216,8 @@ static struct file_system_type nfs_fs_type = {
 	.name		= "nfs",
 	.get_sb		= nfs_get_sb,
 	.kill_sb	= nfs_kill_super,
-	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
+	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|
+			  FS_BINARY_MOUNTDATA|FS_VIRTUALIZED,
 };
 
 struct file_system_type nfs_xdev_fs_type = {
@@ -221,7 +225,8 @@ struct file_system_type nfs_xdev_fs_type = {
 	.name		= "nfs",
 	.get_sb		= nfs_xdev_get_sb,
 	.kill_sb	= nfs_kill_super,
-	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
+	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|
+			  FS_BINARY_MOUNTDATA|FS_VIRTUALIZED,
 };
 
 static const struct super_operations nfs_sops = {
@@ -286,6 +291,55 @@ static struct shrinker acl_shrinker = {
 	.seeks		= DEFAULT_SEEKS,
 };
 
+#ifdef CONFIG_VE
+static int ve_nfs_start(void *data)
+{
+	return 0;
+}
+
+static void ve_nfs_stop(void *data)
+{
+	struct ve_struct *ve;
+	struct super_block *sb;
+
+	flush_scheduled_work();
+
+	ve = (struct ve_struct *)data;
+	/* Basically, on a valid stop we can be here iff NFS was mounted
+	   read-only. In such a case client force-stop is not a problem.
+	   If we are here and NFS is read-write, we are in a FORCE stop, so
+	   force the client to stop.
+	   Lock daemon is already dead.
+	   Only superblock client remains. Den */
+	spin_lock(&sb_lock);
+	list_for_each_entry(sb, &super_blocks, s_list) {
+		struct rpc_clnt *clnt;
+		struct rpc_xprt *xprt;
+		if (sb->s_type != &nfs_fs_type)
+			continue;
+		clnt = NFS_SB(sb)->client;
+		if (!ve_accessible_strict(clnt->cl_xprt->owner_env, ve))
+			continue;
+		clnt->cl_broken = 1;
+		rpc_killall_tasks(clnt);
+
+		xprt = clnt->cl_xprt;
+		xprt_disconnect_done(xprt);
+		xprt->ops->close(xprt);
+	}
+	spin_unlock(&sb_lock);
+
+	flush_scheduled_work();
+}
+
+static struct ve_hook nfs_hook = {
+	.init	  = ve_nfs_start,
+	.fini	  = ve_nfs_stop,
+	.owner	  = THIS_MODULE,
+	.priority = HOOK_PRIO_NET_POST,
+};
+#endif
+
 /*
  * Register the NFS filesystems
  */
@@ -306,6 +360,7 @@ int __init register_nfs_fs(void)
 		goto error_2;
 #endif
 	register_shrinker(&acl_shrinker);
+	ve_hook_register(VE_SS_CHAIN, &nfs_hook);
 	return 0;
 
 #ifdef CONFIG_NFS_V4
@@ -324,6 +379,7 @@ error_0:
 void __exit unregister_nfs_fs(void)
 {
 	unregister_shrinker(&acl_shrinker);
+	ve_hook_unregister(&nfs_hook);
 #ifdef CONFIG_NFS_V4
 	unregister_filesystem(&nfs4_fs_type);
 #endif
@@ -1591,6 +1647,11 @@ static int nfs_get_sb(struct file_system_type *fs_type,
 		.mntflags = flags,
 	};
 	int error = -ENOMEM;
+	struct ve_struct *ve;
+
+	ve = get_exec_env();
+	if (!ve_is_super(ve) && !(ve->features & VE_FEATURE_NFS))
+		return -ENODEV;
 
 	data = kzalloc(sizeof(*data), GFP_KERNEL);
 	mntfh = kzalloc(sizeof(*mntfh), GFP_KERNEL);
@@ -1700,6 +1761,11 @@ static int nfs_xdev_get_sb(struct file_system_type *fs_type, int flags,
 		.mntflags = flags,
 	};
 	int error;
+	struct ve_struct *ve;
+
+	ve = get_exec_env();
+	if (!ve_is_super(ve) && !(ve->features & VE_FEATURE_NFS))
+		return -ENODEV;
 
 	dprintk("--> nfs_xdev_get_sb()\n");
 

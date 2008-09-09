@@ -64,6 +64,8 @@ static unsigned int min_slot_table_size = RPC_MIN_SLOT_TABLE;
 static unsigned int max_slot_table_size = RPC_MAX_SLOT_TABLE;
 static unsigned int xprt_min_resvport_limit = RPC_MIN_RESVPORT;
 static unsigned int xprt_max_resvport_limit = RPC_MAX_RESVPORT;
+static int xprt_min_abort_timeout = RPC_MIN_ABORT_TIMEOUT;
+static int xprt_max_abort_timeout = RPC_MAX_ABORT_TIMEOUT;
 
 static struct ctl_table_header *sunrpc_table_header;
 
@@ -115,6 +117,16 @@ static ctl_table xs_tunables_table[] = {
 		.strategy	= &sysctl_intvec,
 		.extra1		= &xprt_min_resvport_limit,
 		.extra2		= &xprt_max_resvport_limit
+	},
+	{
+		.procname	= "abort_timeout",
+		.data		= &xprt_abort_timeout,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.strategy	= &sysctl_intvec,
+		.extra1		= &xprt_min_abort_timeout,
+		.extra2		= &xprt_max_abort_timeout
 	},
 	{
 		.ctl_name = 0,
@@ -754,18 +766,23 @@ out_release:
 static void xs_close(struct rpc_xprt *xprt)
 {
 	struct sock_xprt *transport = container_of(xprt, struct sock_xprt, xprt);
-	struct socket *sock = transport->sock;
-	struct sock *sk = transport->inet;
-
-	if (!sk)
-		goto clear_close_wait;
+	struct socket *sock;
+	struct sock *sk;
 
 	dprintk("RPC:       xs_close xprt %p\n", xprt);
 
-	write_lock_bh(&sk->sk_callback_lock);
+	spin_lock_bh(&xprt->transport_lock);
+	if (transport->sock == NULL) {
+		spin_unlock_bh(&xprt->transport_lock);
+		goto clear_close_wait;
+	}
+	sock = transport->sock;
+	sk = transport->inet;
 	transport->inet = NULL;
 	transport->sock = NULL;
+	spin_unlock_bh(&xprt->transport_lock);
 
+	write_lock_bh(&sk->sk_callback_lock);
 	sk->sk_user_data = NULL;
 	sk->sk_data_ready = transport->old_data_ready;
 	sk->sk_state_change = transport->old_state_change;
@@ -1489,7 +1506,12 @@ static void xs_udp_connect_worker4(struct work_struct *work)
 	struct rpc_xprt *xprt = &transport->xprt;
 	struct socket *sock = transport->sock;
 	int err, status = -EIO;
+	struct ve_struct *ve;
 
+	ve = set_exec_env(xprt->owner_env);
+	down_read(&xprt->owner_env->op_sem);
+	if (!xprt->owner_env->is_running)
+		goto out;
 	if (xprt->shutdown || !xprt_bound(xprt))
 		goto out;
 
@@ -1500,6 +1522,7 @@ static void xs_udp_connect_worker4(struct work_struct *work)
 		dprintk("RPC:       can't create UDP transport socket (%d).\n", -err);
 		goto out;
 	}
+	sk_change_net_get(sock->sk, xprt->owner_env->ve_netns);
 	xs_reclassify_socket4(sock);
 
 	if (xs_bind4(transport, sock)) {
@@ -1515,6 +1538,8 @@ static void xs_udp_connect_worker4(struct work_struct *work)
 out:
 	xprt_wake_pending_tasks(xprt, status);
 	xprt_clear_connecting(xprt);
+	up_read(&xprt->owner_env->op_sem);
+	(void)set_exec_env(ve);
 }
 
 /**
@@ -1530,7 +1555,12 @@ static void xs_udp_connect_worker6(struct work_struct *work)
 	struct rpc_xprt *xprt = &transport->xprt;
 	struct socket *sock = transport->sock;
 	int err, status = -EIO;
+	struct ve_struct *ve;
 
+	ve = set_exec_env(xprt->owner_env);
+	down_read(&xprt->owner_env->op_sem);
+	if (!xprt->owner_env->is_running)
+		goto out;
 	if (xprt->shutdown || !xprt_bound(xprt))
 		goto out;
 
@@ -1541,6 +1571,7 @@ static void xs_udp_connect_worker6(struct work_struct *work)
 		dprintk("RPC:       can't create UDP transport socket (%d).\n", -err);
 		goto out;
 	}
+	sk_change_net_get(sock->sk, xprt->owner_env->ve_netns);
 	xs_reclassify_socket6(sock);
 
 	if (xs_bind6(transport, sock) < 0) {
@@ -1556,6 +1587,8 @@ static void xs_udp_connect_worker6(struct work_struct *work)
 out:
 	xprt_wake_pending_tasks(xprt, status);
 	xprt_clear_connecting(xprt);
+	up_read(&xprt->owner_env->op_sem);
+	(void)set_exec_env(ve);
 }
 
 /*
@@ -1634,7 +1667,12 @@ static void xs_tcp_connect_worker4(struct work_struct *work)
 	struct rpc_xprt *xprt = &transport->xprt;
 	struct socket *sock = transport->sock;
 	int err, status = -EIO;
+	struct ve_struct *ve;
 
+	ve = set_exec_env(xprt->owner_env);
+	down_read(&xprt->owner_env->op_sem);
+	if (!xprt->owner_env->is_running)
+		goto out;
 	if (xprt->shutdown || !xprt_bound(xprt))
 		goto out;
 
@@ -1644,6 +1682,7 @@ static void xs_tcp_connect_worker4(struct work_struct *work)
 			dprintk("RPC:       can't create TCP transport socket (%d).\n", -err);
 			goto out;
 		}
+		sk_change_net_get(sock->sk, xprt->owner_env->ve_netns);
 		xs_reclassify_socket4(sock);
 
 		if (xs_bind4(transport, sock) < 0) {
@@ -1679,6 +1718,8 @@ out:
 	xprt_wake_pending_tasks(xprt, status);
 out_clear:
 	xprt_clear_connecting(xprt);
+	up_read(&xprt->owner_env->op_sem);
+	(void)set_exec_env(ve);
 }
 
 /**
@@ -1694,7 +1735,12 @@ static void xs_tcp_connect_worker6(struct work_struct *work)
 	struct rpc_xprt *xprt = &transport->xprt;
 	struct socket *sock = transport->sock;
 	int err, status = -EIO;
+	struct ve_struct *ve;
 
+	ve = set_exec_env(xprt->owner_env);
+	down_read(&xprt->owner_env->op_sem);
+	if (!xprt->owner_env->is_running)
+		goto out;
 	if (xprt->shutdown || !xprt_bound(xprt))
 		goto out;
 
@@ -1704,6 +1750,7 @@ static void xs_tcp_connect_worker6(struct work_struct *work)
 			dprintk("RPC:       can't create TCP transport socket (%d).\n", -err);
 			goto out;
 		}
+		sk_change_net_get(sock->sk, xprt->owner_env->ve_netns);
 		xs_reclassify_socket6(sock);
 
 		if (xs_bind6(transport, sock) < 0) {
@@ -1738,6 +1785,8 @@ out:
 	xprt_wake_pending_tasks(xprt, status);
 out_clear:
 	xprt_clear_connecting(xprt);
+	up_read(&xprt->owner_env->op_sem);
+	(void)set_exec_env(ve);
 }
 
 /**

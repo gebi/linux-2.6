@@ -102,6 +102,7 @@ struct env_create_param3 {
 };
 
 #define VE_FEATURE_SYSFS	(1ULL << 0)
+#define VE_FEATURE_NFS		(1ULL << 1)
 #define VE_FEATURE_DEF_PERMS	(1ULL << 2)
 
 #define VE_FEATURES_OLD		(VE_FEATURE_SYSFS)

@@ -2363,7 +2363,7 @@ int kernel_sock_ioctl(struct socket *sock, int cmd, unsigned long arg)
 	struct ve_struct *old_env;
 
 	set_fs(KERNEL_DS);
-	old_env = set_exec_env(get_ve0());
+	old_env = set_exec_env(sock->sk->owner_env);
 	err = sock->ops->ioctl(sock, cmd, arg);
 	(void)set_exec_env(old_env);
 	set_fs(oldfs);

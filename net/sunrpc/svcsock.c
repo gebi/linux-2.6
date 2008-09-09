@@ -180,7 +180,7 @@ static int svc_sendto(struct svc_rqst *rqstp, struct xdr_buf *xdr)
 	RPC_IFDEBUG(char buf[RPC_MAX_ADDRBUFLEN]);
 	struct ve_struct *old_env;
 
-	old_env = set_exec_env(get_ve0());
+	old_env = set_exec_env(sock->sk->owner_env);
 
 	slen = xdr->len;
 
@@ -321,14 +321,11 @@ static int svc_recvfrom(struct svc_rqst *rqstp, struct kvec *iov, int nr,
 		.msg_flags	= MSG_DONTWAIT,
 	};
 	int len;
-	struct ve_struct *old_env;
 
 	rqstp->rq_xprt_hlen = 0;
 
-	old_env = set_exec_env(get_ve0());
 	len = kernel_recvmsg(svsk->sk_sock, &msg, iov, nr, buflen,
 				msg.msg_flags);
-	(void)set_exec_env(get_ve0());
 
 	dprintk("svc: socket %p recvfrom(%p, %Zu) = %d\n",
 		svsk, iov[0].iov_base, iov[0].iov_len, len);
@@ -727,13 +724,11 @@ static struct svc_xprt *svc_tcp_accept(struct svc_xprt *xprt)
 	struct svc_sock	*newsvsk;
 	int		err, slen;
 	RPC_IFDEBUG(char buf[RPC_MAX_ADDRBUFLEN]);
-	struct ve_struct *old_env;
 
 	dprintk("svc: tcp_accept %p sock %p\n", svsk, sock);
 	if (!sock)
 		return NULL;
 
-	old_env = set_exec_env(get_ve0());
 	clear_bit(XPT_CONN, &svsk->sk_xprt.xpt_flags);
 	err = kernel_accept(sock, &newsock, O_NONBLOCK);
 	if (err < 0) {
@@ -743,7 +738,7 @@ static struct svc_xprt *svc_tcp_accept(struct svc_xprt *xprt)
 		else if (err != -EAGAIN && net_ratelimit())
 			printk(KERN_WARNING "%s: accept failed (err %d)!\n",
 				   serv->sv_name, -err);
-		goto restore;
+		return NULL;
 	}
 	set_bit(XPT_CONN, &svsk->sk_xprt.xpt_flags);
 
@@ -784,8 +779,6 @@ static struct svc_xprt *svc_tcp_accept(struct svc_xprt *xprt)
 	}
 	svc_xprt_set_local(&newsvsk->sk_xprt, sin, slen);
 
-	(void)set_exec_env(old_env);
-
 	if (serv->sv_stats)
 		serv->sv_stats->nettcpconn++;
 
@@ -793,8 +786,6 @@ static struct svc_xprt *svc_tcp_accept(struct svc_xprt *xprt)
 
 failed:
 	sock_release(newsock);
-restore:
-	(void)set_exec_env(old_env);
 	return NULL;
 }
 
@@ -1225,7 +1216,6 @@ static struct svc_xprt *svc_create_socket(struct svc_serv *serv,
 	struct sockaddr *newsin = (struct sockaddr *)&addr;
 	int		newlen;
 	RPC_IFDEBUG(char buf[RPC_MAX_ADDRBUFLEN]);
-	struct ve_struct *old_env;
 
 	dprintk("svc: svc_create_socket(%s, %d, %s)\n",
 			serv->sv_program->pg_name, protocol,
@@ -1238,11 +1228,11 @@ static struct svc_xprt *svc_create_socket(struct svc_serv *serv,
 	}
 	type = (protocol == IPPROTO_UDP)? SOCK_DGRAM : SOCK_STREAM;
 
-	old_env = set_exec_env(get_ve0());
 	error = sock_create_kern(sin->sa_family, type, protocol, &sock);
 	if (error < 0)
-		goto restore;
+		return ERR_PTR(-ENOMEM);
 
+	sk_change_net_get(sock->sk, get_exec_env()->ve_netns);
 	svc_reclassify_socket(sock);
 
 	if (type == SOCK_STREAM)
@@ -1263,15 +1253,12 @@ static struct svc_xprt *svc_create_socket(struct svc_serv *serv,
 
 	if ((svsk = svc_setup_socket(serv, sock, &error, flags)) != NULL) {
 		svc_xprt_set_local(&svsk->sk_xprt, newsin, newlen);
-		(void)set_exec_env(old_env);
 		return (struct svc_xprt *)svsk;
 	}
 
 bummer:
 	dprintk("svc: svc_create_socket error = %d\n", -error);
 	sock_release(sock);
-restore:
-	(void)set_exec_env(old_env);
 	return ERR_PTR(error);
 }
 

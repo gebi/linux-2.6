@@ -127,6 +127,7 @@ static struct nfs_client *nfs_alloc_client(const struct nfs_client_initdata *cl_
 
 	atomic_set(&clp->cl_count, 1);
 	clp->cl_cons_state = NFS_CS_INITING;
+	clp->owner_env = get_exec_env();
 
 	memcpy(&clp->cl_addr, cl_init->addr, cl_init->addrlen);
 	clp->cl_addrlen = cl_init->addrlen;
@@ -257,6 +258,7 @@ static int nfs_sockaddr_match_ipaddr(const struct sockaddr *sa1,
 struct nfs_client *nfs_find_client(const struct sockaddr *addr, u32 nfsversion)
 {
 	struct nfs_client *clp;
+	struct ve_struct *ve = get_exec_env();
 
 	spin_lock(&nfs_client_lock);
 	list_for_each_entry(clp, &nfs_client_list, cl_share_link) {
@@ -272,6 +274,9 @@ struct nfs_client *nfs_find_client(const struct sockaddr *addr, u32 nfsversion)
 
 		if (addr->sa_family != clap->sa_family)
 			continue;
+		if (!ve_accessible_strict(clp->owner_env, ve))
+			continue;
+
 		/* Match only the IP address, not the port number */
 		if (!nfs_sockaddr_match_ipaddr(addr, clap))
 			continue;
@@ -292,6 +297,7 @@ struct nfs_client *nfs_find_client_next(struct nfs_client *clp)
 {
 	struct sockaddr *sap = (struct sockaddr *)&clp->cl_addr;
 	u32 nfsvers = clp->rpc_ops->version;
+	struct ve_struct *ve = get_exec_env();
 
 	spin_lock(&nfs_client_lock);
 	list_for_each_entry_continue(clp, &nfs_client_list, cl_share_link) {
@@ -307,6 +313,9 @@ struct nfs_client *nfs_find_client_next(struct nfs_client *clp)
 
 		if (sap->sa_family != clap->sa_family)
 			continue;
+		if (!ve_accessible_strict(clp->owner_env, ve))
+			continue;
+
 		/* Match only the IP address, not the port number */
 		if (!nfs_sockaddr_match_ipaddr(sap, clap))
 			continue;
@@ -326,7 +335,9 @@ struct nfs_client *nfs_find_client_next(struct nfs_client *clp)
 static struct nfs_client *nfs_match_client(const struct nfs_client_initdata *data)
 {
 	struct nfs_client *clp;
+	struct ve_struct *ve;
 
+	ve = get_exec_env();
 	list_for_each_entry(clp, &nfs_client_list, cl_share_link) {
 		/* Don't match clients that failed to initialise properly */
 		if (clp->cl_cons_state < 0)

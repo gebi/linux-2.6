@@ -617,7 +617,7 @@ static void __rpc_execute(struct rpc_task *task)
 	int		status = 0;
 	struct ve_struct *env;
 
-	env = set_exec_env(get_ve0());
+	env = set_exec_env(task->tk_client->cl_xprt->owner_env);
 	dprintk("RPC: %5u __rpc_execute flags=0x%x\n",
 			task->tk_pid, task->tk_flags);
 
@@ -663,10 +663,14 @@ static void __rpc_execute(struct rpc_task *task)
 		rpc_clear_running(task);
 		if (RPC_IS_ASYNC(task)) {
 			/* Careful! we may have raced... */
-			if (RPC_IS_QUEUED(task))
+			if (RPC_IS_QUEUED(task)) {
+				(void)set_exec_env(env);
 				return;
-			if (rpc_test_and_set_running(task))
+			}
+			if (rpc_test_and_set_running(task)) {
+				(void)set_exec_env(env);
 				return;
+			}
 			continue;
 		}
 

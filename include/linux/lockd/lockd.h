@@ -61,6 +61,7 @@ struct nlm_host {
 	struct list_head	h_granted;	/* Locks in GRANTED state */
 	struct list_head	h_reclaim;	/* Locks in RECLAIM state */
 	struct nsm_handle *	h_nsmhandle;	/* NSM status handle */
+	struct ve_struct *	owner_env;	/* VE owning the host */
 };
 
 struct nsm_handle {
@@ -152,8 +153,11 @@ extern struct svc_procedure	nlmsvc_procedures[];
 #ifdef CONFIG_LOCKD_V4
 extern struct svc_procedure	nlmsvc_procedures4[];
 #endif
-extern int			nlmsvc_grace_period;
-extern unsigned long		nlmsvc_timeout;
+
+#include <linux/ve_nfs.h>
+extern int			_nlmsvc_grace_period;
+extern unsigned long		_nlmsvc_timeout;
+
 extern int			nsm_use_hostnames;
 
 /*

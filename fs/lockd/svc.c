@@ -27,6 +27,7 @@
 #include <linux/mutex.h>
 #include <linux/kthread.h>
 #include <linux/freezer.h>
+#include <linux/ve_proto.h>
 
 #include <linux/sunrpc/types.h>
 #include <linux/sunrpc/stats.h>
@@ -48,11 +49,13 @@ struct nlmsvc_binding *		nlmsvc_ops;
 EXPORT_SYMBOL(nlmsvc_ops);
 
 static DEFINE_MUTEX(nlmsvc_mutex);
-static unsigned int		nlmsvc_users;
-static struct task_struct	*nlmsvc_task;
-static struct svc_serv		*nlmsvc_serv;
-int				nlmsvc_grace_period;
-unsigned long			nlmsvc_timeout;
+#ifndef CONFIG_VE
+static unsigned int		_nlmsvc_users;
+static struct task_struct	*_nlmsvc_task;
+int				_nlmsvc_grace_period;
+unsigned long			_nlmsvc_timeout;
+static struct svc_serv		*_nlmsvc_serv;
+#endif
 
 /*
  * These can be set at insmod time (useful for NFS as root filesystem),
@@ -175,6 +178,10 @@ lockd(void *vrqstp)
 		 */
 		err = svc_recv(rqstp, timeout);
 		if (err == -EAGAIN || err == -EINTR) {
+#ifdef CONFIG_VE
+			if (!get_exec_env()->is_running)
+				break;
+#endif
 			preverr = err;
 			continue;
 		}
@@ -338,12 +345,12 @@ lockd_down(void)
 	} else {
 		printk(KERN_ERR "lockd_down: no users! task=%p\n",
 			nlmsvc_task);
-		BUG();
+		goto out;
 	}
 
 	if (!nlmsvc_task) {
 		printk(KERN_ERR "lockd_down: no lockd running.\n");
-		BUG();
+		goto out;
 	}
 	kthread_stop(nlmsvc_task);
 out:
@@ -485,6 +492,29 @@ static int lockd_authenticate(struct svc_rqst *rqstp)
 	return SVC_DENIED;
 }
 
+#ifdef CONFIG_VE
+extern void ve_nlm_shutdown_hosts(struct ve_struct *ve);
+
+static int ve_lockd_start(void *data)
+{
+	return 0;
+}
+
+static void ve_lockd_stop(void *data)
+{
+	struct ve_struct *ve = (struct ve_struct *)data;
+
+	ve_nlm_shutdown_hosts(ve);
+	flush_scheduled_work();
+}
+
+static struct ve_hook lockd_hook = {
+	.init	  = ve_lockd_start,
+	.fini	  = ve_lockd_stop,
+	.owner	  = THIS_MODULE,
+	.priority = HOOK_PRIO_FS,
+};
+#endif
 
 param_set_min_max(port, int, simple_strtol, 0, 65535)
 param_set_min_max(grace_period, unsigned long, simple_strtoul,
@@ -512,16 +542,20 @@ module_param(nsm_use_hostnames, bool, 0644);
 
 static int __init init_nlm(void)
 {
+	ve_hook_register(VE_SS_CHAIN, &lockd_hook);
 #ifdef CONFIG_SYSCTL
 	nlm_sysctl_table = register_sysctl_table(nlm_sysctl_root);
-	return nlm_sysctl_table ? 0 : -ENOMEM;
-#else
-	return 0;
+	if (nlm_sysctl_table == NULL) {
+		ve_hook_unregister(&lockd_hook);
+		return -ENOMEM;
+	}
 #endif
+	return 0;
 }
 
 static void __exit exit_nlm(void)
 {
+	ve_hook_unregister(&lockd_hook);
 	/* FIXME: delete all NLM clients */
 	nlm_shutdown_hosts();
 #ifdef CONFIG_SYSCTL

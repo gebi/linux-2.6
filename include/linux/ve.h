@@ -139,6 +139,7 @@ struct ve_cpu_stats {
 
 struct ve_ipt_recent;
 struct ve_xt_hashlimit;
+struct svc_serv;
 
 struct cgroup;
 struct css_set;
@@ -182,6 +183,8 @@ struct ve_struct {
 	struct dentry		*devpts_root;
 	struct devpts_config	*devpts_config;
 #endif
+
+	struct ve_nfs_context	*nfs_context;
 
 	struct file_system_type *shmem_fstype;
 	struct vfsmount		*shmem_mnt;
@@ -273,6 +276,15 @@ struct ve_struct {
 	struct ve_monitor	*monitor;
 	struct proc_dir_entry	*monitor_proc;
 	unsigned long		meminfo_val;
+
+#if defined(CONFIG_NFS_FS) || defined(CONFIG_NFS_FS_MODULE) \
+	|| defined(CONFIG_NFSD) || defined(CONFIG_NFSD_MODULE)
+	unsigned int		_nlmsvc_users;
+	struct task_struct*	_nlmsvc_task;
+	int			_nlmsvc_grace_period;
+	unsigned long		_nlmsvc_timeout;
+	struct svc_serv*	_nlmsvc_serv;
+#endif
 
 	struct nsproxy		*ve_ns;
 	struct net		*ve_netns;

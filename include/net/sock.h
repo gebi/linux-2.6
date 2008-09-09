@@ -1334,6 +1334,13 @@ static inline void sk_change_net(struct sock *sk, struct net *net)
 	sock_net_set(sk, hold_net(net));
 }
 
+static inline void sk_change_net_get(struct sock *sk, struct net *net)
+{
+	struct net *old_net = sock_net(sk);
+	sock_net_set(sk, get_net(net));
+	put_net(old_net);
+}
+
 extern void sock_enable_timestamp(struct sock *sk);
 extern int sock_get_timestamp(struct sock *, struct timeval __user *);
 extern int sock_get_timestampns(struct sock *, struct timespec __user *);

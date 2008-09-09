@@ -53,6 +53,7 @@ static struct nlm_host *nlm_lookup_host(int server,
 	struct nlm_host	*host;
 	struct nsm_handle *nsm = NULL;
 	int		hash;
+	struct ve_struct *ve;
 
 	dprintk("lockd: nlm_lookup_host("NIPQUAD_FMT"->"NIPQUAD_FMT
 			", p=%d, v=%u, my role=%s, name=%.*s)\n",
@@ -78,9 +79,13 @@ static struct nlm_host *nlm_lookup_host(int server,
 	 * different NLM rpc_clients into one single nlm_host object.
 	 * This would allow us to have one nlm_host per address.
 	 */
+
+	ve = get_exec_env();
 	chain = &nlm_hosts[hash];
 	hlist_for_each_entry(host, pos, chain, h_hash) {
 		if (!nlm_cmp_addr(&host->h_addr, sin))
+			continue;
+		if (!ve_accessible_strict(host->owner_env, ve))
 			continue;
 
 		/* See if we have an NSM handle for this client */
@@ -141,6 +146,7 @@ static struct nlm_host *nlm_lookup_host(int server,
 	spin_lock_init(&host->h_lock);
 	INIT_LIST_HEAD(&host->h_granted);
 	INIT_LIST_HEAD(&host->h_reclaim);
+	host->owner_env    = ve;
 
 	nrhosts++;
 out:
@@ -454,6 +460,52 @@ nlm_gc_hosts(void)
 	next_gc = jiffies + NLM_HOST_COLLECT;
 }
 
+#ifdef CONFIG_VE
+void ve_nlm_shutdown_hosts(struct ve_struct *ve)
+{
+	envid_t veid = ve->veid;
+	int  i;
+
+	dprintk("lockd: shutting down host module for ve %d\n", veid);
+	mutex_lock(&nlm_host_mutex);
+
+	/* Perform a garbage collection pass */
+	for (i = 0; i < NLM_HOST_NRHASH; i++) {
+		struct nlm_host	*host;
+		struct hlist_node *pos;
+
+		hlist_for_each_entry(host, pos, &nlm_hosts[i], h_hash) {
+			struct rpc_clnt	*clnt;
+
+			if (ve != host->owner_env)
+				continue;
+
+			hlist_del(&host->h_hash);
+			if (host->h_nsmhandle)
+				host->h_nsmhandle->sm_monitored = 0;
+			dprintk("lockd: delete host %s ve %d\n", host->h_name,
+				veid);
+			if ((clnt = host->h_rpcclnt) != NULL) {
+				if (!list_empty(&clnt->cl_tasks)) {
+					struct rpc_xprt *xprt;
+
+					printk(KERN_WARNING
+						"lockd: active RPC handle\n");
+					rpc_killall_tasks(clnt);
+					xprt = clnt->cl_xprt;
+					xprt_disconnect_done(xprt);
+					xprt->ops->close(xprt);
+				} else
+					rpc_shutdown_client(clnt);
+			}
+			kfree(host);
+			nrhosts--;
+		}
+	}
+
+	mutex_unlock(&nlm_host_mutex);
+}
+#endif
 
 /*
  * Manage NSM handles
