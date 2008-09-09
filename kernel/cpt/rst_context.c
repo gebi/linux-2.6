@@ -178,7 +178,7 @@ int rst_open_dumpfile(struct cpt_context *ctx)
 	ctx->start_time.tv_nsec = h.cpt_start_nsec;
 	ctx->kernel_config_flags = h.cpt_kernel_config[0];
 	ctx->iptables_mask = h.cpt_iptables_mask;
-	if (h.cpt_image_version > CPT_VERSION_20 ||
+	if (h.cpt_image_version > CPT_VERSION_26 ||
 			CPT_VERSION_MINOR(h.cpt_image_version) > 1) {
 		eprintk_ctx("Unknown image version: %x. Can't restore.\n",
 				h.cpt_image_version);

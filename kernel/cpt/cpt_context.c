@@ -122,7 +122,7 @@ int cpt_major_hdr_out(struct cpt_context *ctx)
 	hdr.cpt_signature[2] = CPT_SIGNATURE2;
 	hdr.cpt_signature[3] = CPT_SIGNATURE3;
 	hdr.cpt_hdrlen = sizeof(hdr);
-	hdr.cpt_image_version = CPT_VERSION_20;
+	hdr.cpt_image_version = CPT_VERSION_26;
 #ifdef CONFIG_X86_64
 	hdr.cpt_os_arch = CPT_OS_ARCH_EMT64;
 #elif defined(CONFIG_X86_32)
