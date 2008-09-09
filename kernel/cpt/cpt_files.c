@@ -1058,9 +1058,6 @@ int cpt_dump_files(struct cpt_context *ctx)
 		if (fs->pwd.dentry &&
 		    (err = dump_one_inode(NULL, fs->pwd.dentry, fs->pwd.mnt, ctx)) != 0)
 			return err;
-		if (fs->altroot.dentry &&
-		    (err = dump_one_inode(NULL, fs->altroot.dentry, fs->altroot.mnt, ctx)) != 0)
-			return err;
 	}
 	cpt_close_section(ctx);
 
@@ -1214,9 +1211,6 @@ int cpt_collect_fs(cpt_context_t * ctx)
 			if (tsk->fs->root.dentry &&
 			    cpt_object_add(CPT_OBJ_INODE, tsk->fs->root.dentry->d_inode, ctx) == NULL)
 				return -ENOMEM;
-			if (tsk->fs->altroot.dentry &&
-			    cpt_object_add(CPT_OBJ_INODE, tsk->fs->altroot.dentry->d_inode, ctx) == NULL)
-				return -ENOMEM;
 		}
 	}
 	return 0;
@@ -1257,8 +1251,6 @@ static int dump_one_fs(cpt_object_t *obj, struct cpt_context *ctx)
 	err = cpt_dump_dir(fs->root.dentry, fs->root.mnt, ctx);
 	if (!err)
 		err = cpt_dump_dir(fs->pwd.dentry, fs->pwd.mnt, ctx);
-	if (!err && fs->altroot.dentry)
-		err = cpt_dump_dir(fs->altroot.dentry, fs->altroot.mnt, ctx);
 
 	cpt_pop_object(&saved_obj, ctx);
 

@@ -1305,21 +1305,8 @@ int rst_restore_fs(struct cpt_context *ctx)
 			__set_fs_root(fs, m[0], d[0]);
 		if (d[1])
 			__set_fs_pwd(fs, m[1], d[1]);
-		if (d[2]) {
-			struct dentry *olddentry;
-			struct vfsmount *oldmnt;
-			write_lock(&fs->lock);
-			oldmnt = fs->altroot.mnt;
-			olddentry = fs->altroot.dentry;
-			fs->altroot.mnt = m[2];
-			fs->altroot.dentry = d[2];
-			write_unlock(&fs->lock);
-
-			if (olddentry) {
-				dput(olddentry);
-				mntput(oldmnt);
-			}
-		}
+		if (d[2])
+			wprintk_ctx("altroot arrived...\n");
 	}
 	return err;
 }
