@@ -281,7 +281,7 @@ ENTRY(ret_from_fork)
 	call schedule_tail
 ret_from_fork_tail:
 	GET_THREAD_INFO(%rcx)
-	btr $TIF_RESUME,threadinfo_flags(%rcx)
+	btr $TIF_RESUME,TI_flags(%rcx)
 	jc  x86_64_ret_from_resume
 
 ret_from_fork_check:

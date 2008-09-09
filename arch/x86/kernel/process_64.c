@@ -220,21 +220,6 @@ void show_regs(struct pt_regs *regs)
 		printk(" EIP: [<%08lx>]\n", regs->ip);
 }
 
-void smp_show_regs(struct pt_regs *regs, void *data)
-{
-	static DEFINE_SPINLOCK(show_regs_lock);
-
-	if (regs == NULL)
-		return;
-
-	spin_lock(&show_regs_lock);
-	bust_spinlocks(1);
-	printk("----------- IPI show regs -----------\n");
-	show_regs(regs);
-	bust_spinlocks(0);
-	spin_unlock(&show_regs_lock);
- }
-
 /*
  * Free current thread data structures etc..
  */
