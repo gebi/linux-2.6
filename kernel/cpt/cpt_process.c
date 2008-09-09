@@ -601,7 +601,7 @@ static int dump_one_signal_struct(cpt_object_t *obj, struct cpt_context *ctx)
 	}
 	v->cpt_pgrp_type = CPT_PGRP_NORMAL;
 	read_lock(&tasklist_lock);
-	tsk = find_task_by_pid(sig->__pgrp);
+	tsk = find_task_by_pid_ns(sig->__pgrp, &init_pid_ns);
 	if (tsk == NULL)
 		v->cpt_pgrp_type = CPT_PGRP_ORPHAN;
 	read_unlock(&tasklist_lock);
@@ -642,7 +642,7 @@ static int dump_one_signal_struct(cpt_object_t *obj, struct cpt_context *ctx)
 	}
 	v->cpt_session_type = CPT_PGRP_NORMAL;
 	read_lock(&tasklist_lock);
-	tsk = find_task_by_pid(sig->__session);
+	tsk = find_task_by_pid_ns(sig->__session, &init_pid_ns);
 	if (tsk == NULL)
 		v->cpt_session_type = CPT_PGRP_ORPHAN;
 	read_unlock(&tasklist_lock);
