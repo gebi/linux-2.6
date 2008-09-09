@@ -601,7 +601,7 @@ static int make_baby(cpt_object_t *cobj,
 	cpt_obj_setobj(cobj, tsk, ctx);
 	thr_ctx.tobj = cobj;
 	wait_for_completion(&thr_ctx.init_complete);
-	wait_task_inactive(cobj->o_obj);
+	wait_task_inactive(cobj->o_obj, 0);
 	rst_basic_init_task(cobj, ctx);
 
 	/* clone() increases group_stop_count if it was not zero and
@@ -614,7 +614,7 @@ static int make_baby(cpt_object_t *cobj,
 
 	wake_up_process(tsk);
 	wait_for_completion(&thr_ctx.task_done);
-	wait_task_inactive(tsk);
+	wait_task_inactive(tsk, 0);
 
 	return thr_ctx.error;
 }
@@ -715,12 +715,12 @@ static int vps_rst_restore_tree(struct cpt_context *ctx)
 			return err;
 
 		wait_for_completion(&thr_ctx_root.init_complete);
-		wait_task_inactive(obj->o_obj);
+		wait_task_inactive(obj->o_obj, 0);
 		rst_basic_init_task(obj, ctx);
 
 		wake_up_process(obj->o_obj);
 		wait_for_completion(&thr_ctx_root.task_done);
-		wait_task_inactive(obj->o_obj);
+		wait_task_inactive(obj->o_obj, 0);
 		err = thr_ctx_root.error;
 		if (err)
 			return err;

@@ -618,7 +618,7 @@ static int vps_collect_tasks(struct cpt_context *ctx)
 		if (tsk->state == TASK_RUNNING)
 			printk("Holy Crap 2 %ld " CPT_FID "\n", tsk->state, CPT_TID(tsk));
 
-		wait_task_inactive(tsk);
+		wait_task_inactive(tsk, 0);
 
 		err = check_task_state(tsk, ctx);
 		if (err)

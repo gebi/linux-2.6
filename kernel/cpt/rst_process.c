@@ -1220,7 +1220,7 @@ int rst_restore_process(struct cpt_context *ctx)
 			return -EFAULT;
 		}
 
-		wait_task_inactive(tsk);
+		wait_task_inactive(tsk, 0);
 #ifdef CONFIG_BEANCOUNTERS
 		tbc = &tsk->task_bc;
 		new_bc = rst_lookup_ubc(ti->cpt_exec_ub, ctx);
