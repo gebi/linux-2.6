@@ -93,7 +93,7 @@ static int setup_sock_common(struct sock *sk, struct cpt_sock_image *si,
 
 static struct file *sock_mapfile(struct socket *sock)
 {
-	int fd = sock_map_fd(sock);
+	int fd = sock_map_fd(sock, 0);
 
 	if (fd >= 0) {
 		struct file *file = sock->file;
