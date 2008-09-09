@@ -647,7 +647,7 @@ asmlinkage long sys_inotify_add_watch(int fd, const char __user *pathname, u32 m
 	mutex_lock(&dev->up_mutex);
 	ret = inotify_find_update_watch(dev->ih, inode, mask);
 	if (ret == -ENOENT)
-		ret = inotify_create_watch(dev, &nd.path, mask);
+		ret = inotify_create_watch(dev, &path, mask);
 	mutex_unlock(&dev->up_mutex);
 
 	path_put(&path);
