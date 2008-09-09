@@ -30,9 +30,14 @@
 
 int (*platform_notify)(struct device *dev) = NULL;
 int (*platform_notify_remove)(struct device *dev) = NULL;
+#ifndef CONFIG_VE
 static struct kobject *dev_kobj;
+#define ve_dev_kobj	dev_kobj
 struct kobject *sysfs_dev_char_kobj;
 struct kobject *sysfs_dev_block_kobj;
+#else
+#define ve_dev_kobj	(get_exec_env()->dev_kobj)
+#endif
 
 #ifdef CONFIG_BLOCK
 static inline int device_is_not_partition(struct device *dev)
@@ -421,11 +426,8 @@ static ssize_t show_dev(struct device *dev, struct device_attribute *attr,
 static struct device_attribute devt_attr =
 	__ATTR(dev, S_IRUGO, show_dev, NULL);
 
+#ifndef CONFIG_VE
 struct kset *devices_kset;
-
-/* kset to create /sys/devices/  */
-#ifdef CONFIG_VE
-#define ve_devices_kset	(get_exec_env()->devices_kset)
 #endif
 
 /**
@@ -805,7 +807,7 @@ static struct kobject *device_to_dev_kobj(struct device *dev)
 	if (dev->class)
 		kobj = dev->class->dev_kobj;
 	else
-		kobj = sysfs_dev_char_kobj;
+		kobj = ve_sysfs_dev_char_kobj;
 
 	return kobj;
 }
@@ -1150,37 +1152,38 @@ struct device *device_find_child(struct device *parent, void *data,
 
 int devices_init(void)
 {
-	if (!ve_is_super(get_exec_env()))
-		return 0;
-
-	devices_kset = kset_create_and_add("devices", &device_uevent_ops, NULL);
-	if (!devices_kset)
-		return -ENOMEM;
-	dev_kobj = kobject_create_and_add("dev", NULL);
-	if (!dev_kobj)
+	ve_devices_kset = kset_create_and_add("devices", &device_uevent_ops, NULL);
+	if (!ve_devices_kset)
+		goto dev_kset_err;
+	ve_dev_kobj = kobject_create_and_add("dev", NULL);
+	if (!ve_dev_kobj)
 		goto dev_kobj_err;
-	sysfs_dev_block_kobj = kobject_create_and_add("block", dev_kobj);
-	if (!sysfs_dev_block_kobj)
+	ve_sysfs_dev_block_kobj = kobject_create_and_add("block", ve_dev_kobj);
+	if (!ve_sysfs_dev_block_kobj)
 		goto block_kobj_err;
-	sysfs_dev_char_kobj = kobject_create_and_add("char", dev_kobj);
-	if (!sysfs_dev_char_kobj)
+	ve_sysfs_dev_char_kobj = kobject_create_and_add("char", ve_dev_kobj);
+	if (!ve_sysfs_dev_char_kobj)
 		goto char_kobj_err;
 
 	return 0;
 
  char_kobj_err:
-	kobject_put(sysfs_dev_block_kobj);
+	kobject_put(ve_sysfs_dev_block_kobj);
  block_kobj_err:
-	kobject_put(dev_kobj);
+	kobject_put(ve_dev_kobj);
  dev_kobj_err:
-	kset_unregister(devices_kset);
+	kset_unregister(ve_devices_kset);
+dev_kset_err:
 	return -ENOMEM;
 }
 EXPORT_SYMBOL_GPL(devices_init);
 
 void devices_fini(void)
 {
-	kset_unregister(devices_kset);
+	kobject_put(ve_sysfs_dev_char_kobj);
+	kobject_put(ve_sysfs_dev_block_kobj);
+	kobject_put(ve_dev_kobj);
+	kset_unregister(ve_devices_kset);
 }
 EXPORT_SYMBOL_GPL(devices_fini);
 
@@ -1510,7 +1513,12 @@ void device_shutdown(void)
 {
 	struct device *dev, *devn;
 
-	list_for_each_entry_safe_reverse(dev, devn, &devices_kset->list,
+	if (!ve_is_super(get_exec_env())) {
+		printk("BUG: device_shutdown call from inside VE\n");
+		return;
+	}
+
+	list_for_each_entry_safe_reverse(dev, devn, &ve_devices_kset->list,
 				kobj.entry) {
 		if (dev->bus && dev->bus->shutdown) {
 			dev_dbg(dev, "shutdown\n");
@@ -1520,7 +1528,8 @@ void device_shutdown(void)
 			dev->driver->shutdown(dev);
 		}
 	}
-	kobject_put(sysfs_dev_char_kobj);
-	kobject_put(sysfs_dev_block_kobj);
-	kobject_put(dev_kobj);
+
+	kobject_put(ve_sysfs_dev_char_kobj);
+	kobject_put(ve_sysfs_dev_block_kobj);
+	kobject_put(ve_dev_kobj);
 }

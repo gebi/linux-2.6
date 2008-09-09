@@ -199,8 +199,16 @@ struct class {
 	struct class_private *p;
 };
 
+#ifndef CONFIG_VE
 extern struct kobject *sysfs_dev_block_kobj;
 extern struct kobject *sysfs_dev_char_kobj;
+#define ve_sysfs_dev_block_kobj sysfs_dev_block_kobj
+#define ve_sysfs_dev_char_kobj sysfs_dev_char_kobj
+#else
+#define ve_sysfs_dev_block_kobj (get_exec_env()->dev_block_kobj)
+#define ve_sysfs_dev_char_kobj (get_exec_env()->dev_char_kobj)
+#endif
+
 extern int __must_check __class_register(struct class *class,
 					 struct lock_class_key *key);
 extern void class_unregister(struct class *class);

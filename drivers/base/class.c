@@ -165,7 +165,7 @@ int __class_register(struct class *cls, struct lock_class_key *key)
 
 	/* set the default /sys/dev directory for devices of this class */
 	if (!cls->dev_kobj)
-		cls->dev_kobj = sysfs_dev_char_kobj;
+		cls->dev_kobj = ve_sysfs_dev_char_kobj;
 
 #if defined(CONFIG_SYSFS_DEPRECATED) && defined(CONFIG_BLOCK)
 	/* let the block class directory show up in the root of sysfs */

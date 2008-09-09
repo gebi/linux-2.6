@@ -197,6 +197,9 @@ struct ve_struct {
 #endif
 	struct kset		*class_kset;
 	struct kset		*devices_kset;
+	struct kobject		*dev_kobj;
+	struct kobject		*dev_char_kobj;
+	struct kobject		*dev_block_kobj;
 	struct class		*tty_class;
 	struct class		*mem_class;
 

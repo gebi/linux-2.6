@@ -20,6 +20,8 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/pm.h>
+#include <linux/sched.h>
+#include <linux/ve.h>
 #include <linux/device.h>
 #include <linux/mutex.h>
 
@@ -467,7 +469,7 @@ int sysdev_resume(void)
 
 int __init system_bus_init(void)
 {
-	system_kset = kset_create_and_add("system", NULL, &devices_kset->kobj);
+	system_kset = kset_create_and_add("system", NULL, &ve_devices_kset->kobj);
 	if (!system_kset)
 		return -ENOMEM;
 	return 0;
