@@ -139,13 +139,13 @@ static void cpt_dump_tuntap(struct net_device *dev, struct cpt_context * ctx)
 		v.cpt_bindfile = obj->o_pos;
 	}
 
-	v.cpt_if_flags = tun->if_flags;
-	BUG_ON(sizeof(v.cpt_dev_addr) != sizeof(tun->dev_addr));
-	memcpy(v.cpt_dev_addr, tun->dev_addr, sizeof(v.cpt_dev_addr));
-	BUG_ON(sizeof(v.cpt_chr_filter) != sizeof(tun->chr_filter));
-	memcpy(v.cpt_chr_filter, tun->chr_filter, sizeof(v.cpt_chr_filter));
-	BUG_ON(sizeof(v.cpt_net_filter) != sizeof(tun->net_filter));
-	memcpy(v.cpt_net_filter, tun->net_filter, sizeof(v.cpt_net_filter));
+	BUG_ON(tun->txflt.count != 0); /* FIXME (f271b2cc) */
+
+	v.cpt_if_flags = 0;
+	memset(v.cpt_dev_addr, 0, sizeof(v.cpt_dev_addr));
+	memset(v.cpt_chr_filter, 0, sizeof(v.cpt_chr_filter));
+	memset(v.cpt_net_filter, 0, sizeof(v.cpt_net_filter));
+
 	ctx->write(&v, sizeof(v), ctx);
 	cpt_close_object(ctx);
 #endif
