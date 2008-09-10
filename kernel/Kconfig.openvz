@@ -82,7 +82,7 @@ config VZ_CHECKPOINT
 	select TUN
 	select VE_ETHDEV
 	select VE_NETDEV
- 	default n
+ 	default m
  	help
  	  This option adds two modules, "cpt" and "rst", which allow
  	  to save a running Virtual Environment and restore it
