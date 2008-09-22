@@ -372,16 +372,10 @@ int init_nf_ct_l3proto_ipv6(void)
 	if (ret < 0)
 		goto no_mem_icmp;
 #endif /* CONFIG_VE_IPTABLES */
-	ret = nf_ct_frag6_init();
-	if (ret < 0) {
-		printk("nf_conntrack_ipv6: can't initialize frag6.\n");
-		goto cleanup_sys;
-	}
-
 	ret = nf_conntrack_l4proto_register(ve_nf_conntrack_l4proto_tcp6);
 	if (ret < 0) {
 		printk("nf_conntrack_ipv6: can't register tcp.\n");
-		goto cleanup_frag6;
+		goto cleanup_sys;
 	}
 
 	ret = nf_conntrack_l4proto_register(ve_nf_conntrack_l4proto_udp6);
@@ -419,8 +413,6 @@ unreg_udp:
 	nf_conntrack_l4proto_unregister(ve_nf_conntrack_l4proto_udp6);
 unreg_tcp:
 	nf_conntrack_l4proto_unregister(ve_nf_conntrack_l4proto_tcp6);
-cleanup_frag6:
-	nf_ct_frag6_cleanup();
 cleanup_sys:
 #ifdef CONFIG_VE_IPTABLES
 no_mem_icmp:
@@ -438,7 +430,6 @@ void fini_nf_ct_l3proto_ipv6(void)
 	nf_conntrack_l4proto_unregister(ve_nf_conntrack_l4proto_icmpv6);
 	nf_conntrack_l4proto_unregister(ve_nf_conntrack_l4proto_udp6);
 	nf_conntrack_l4proto_unregister(ve_nf_conntrack_l4proto_tcp6);
-	nf_ct_frag6_cleanup();
 
 #ifdef CONFIG_VE_IPTABLES
 	nf_ct_proto_icmpv6_sysctl_cleanup();
@@ -454,15 +445,25 @@ static int __init nf_conntrack_l3proto_ipv6_init(void)
 
 	need_conntrack();
 
+	ret = nf_ct_frag6_init();
+	if (ret < 0) {
+		printk("nf_conntrack_ipv6: can't initialize frag6.\n");
+		return ret;
+	}
+
 	ret = init_nf_ct_l3proto_ipv6();
 	if (ret < 0) {
 		printk(KERN_ERR "Unable to initialize netfilter protocols\n");
-		return ret;
+		goto cleanup_frag6;
 	}
 	KSYMRESOLVE(init_nf_ct_l3proto_ipv6);
 	KSYMRESOLVE(fini_nf_ct_l3proto_ipv6);
 	KSYMMODRESOLVE(nf_conntrack_ipv6);
 	return 0;
+
+cleanup_frag6:
+	nf_ct_frag6_cleanup();
+	return ret;
 }
 
 static void __exit nf_conntrack_l3proto_ipv6_fini(void)
@@ -472,6 +473,7 @@ static void __exit nf_conntrack_l3proto_ipv6_fini(void)
 	KSYMUNRESOLVE(init_nf_ct_l3proto_ipv6);
 	KSYMUNRESOLVE(fini_nf_ct_l3proto_ipv6);
 	fini_nf_ct_l3proto_ipv6();
+	nf_ct_frag6_cleanup();
 }
 
 module_init(nf_conntrack_l3proto_ipv6_init);
