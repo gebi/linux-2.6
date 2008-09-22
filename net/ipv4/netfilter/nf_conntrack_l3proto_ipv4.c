@@ -512,12 +512,6 @@ int init_nf_ct_l3proto_ipv4(void)
 	ret = nf_ct_proto_ipv4_sysctl_init();
 	if (ret < 0)
 		goto no_mem_ipv4;
-	ret = nf_ct_proto_tcp_sysctl_init();
-	if (ret < 0)
-		goto no_mem_tcp;
-	ret = nf_ct_proto_udp_sysctl_init();
-	if (ret < 0)
-		goto no_mem_udp;
 	ret = nf_ct_proto_icmp_sysctl_init();
 	if (ret < 0)
 		goto no_mem_icmp;
@@ -575,10 +569,6 @@ unreg_tcp:
 cleanup_sys:
 #ifdef CONFIG_VE_IPTABLES
 no_mem_icmp:
-	nf_ct_proto_udp_sysctl_cleanup();
-no_mem_udp:
-	nf_ct_proto_tcp_sysctl_cleanup();
-no_mem_tcp:
 	nf_ct_proto_ipv4_sysctl_cleanup();
 no_mem_ipv4:
 	nf_ct_proto_ipv4_fini();
@@ -606,8 +596,6 @@ void fini_nf_ct_l3proto_ipv4(void)
 
 #ifdef CONFIG_VE_IPTABLES 
 	nf_ct_proto_icmp_sysctl_cleanup();
-	nf_ct_proto_udp_sysctl_cleanup();
-	nf_ct_proto_tcp_sysctl_cleanup();
 	nf_ct_proto_ipv4_sysctl_cleanup();
 	nf_ct_proto_ipv4_fini();
 	if (!ve_is_super(get_exec_env()))

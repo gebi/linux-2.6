@@ -510,8 +510,19 @@ static int nf_conntrack_init_ve(void)
 	ret = nf_conntrack_standalone_init_sysctl();
 	if (ret < 0)
 		goto out_sysctl;
+	ret = nf_ct_proto_tcp_sysctl_init();
+	if (ret < 0)
+		goto out_tcp_sysctl;
+	ret = nf_ct_proto_udp_sysctl_init();
+	if (ret < 0)
+		goto out_udp_sysctl;
+
 	return 0;
 
+out_udp_sysctl:
+	nf_ct_proto_tcp_sysctl_cleanup();
+out_tcp_sysctl:
+	nf_conntrack_standalone_fini_sysctl();
 out_sysctl:
 	nf_conntrack_standalone_fini_proc();
 out_proc:
@@ -522,6 +533,8 @@ out:
 
 static void nf_conntrack_cleanup_ve(void)
 {
+	nf_ct_proto_udp_sysctl_cleanup();
+	nf_ct_proto_tcp_sysctl_cleanup();
 	nf_conntrack_standalone_fini_sysctl();
 	nf_conntrack_standalone_fini_proc();
 	nf_conntrack_cleanup();
