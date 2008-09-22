@@ -396,17 +396,8 @@ int init_nf_ct_l3proto_ipv6(void)
 		goto unreg_icmpv6;
 	}
 
-	ret = nf_register_hooks(ipv6_conntrack_ops,
-				ARRAY_SIZE(ipv6_conntrack_ops));
-	if (ret < 0) {
-		printk("nf_conntrack_ipv6: can't register pre-routing defrag "
-		       "hook.\n");
-		goto unreg_ipv6;
-	}
 	return 0;
 
-unreg_ipv6:
-	nf_conntrack_l3proto_unregister(ve_nf_conntrack_l3proto_ipv6);
 unreg_icmpv6:
 	nf_conntrack_l4proto_unregister(ve_nf_conntrack_l4proto_icmpv6);
 unreg_udp:
@@ -425,7 +416,6 @@ EXPORT_SYMBOL(init_nf_ct_l3proto_ipv6);
 
 void fini_nf_ct_l3proto_ipv6(void)
 {
-	nf_unregister_hooks(ipv6_conntrack_ops, ARRAY_SIZE(ipv6_conntrack_ops));
 	nf_conntrack_l3proto_unregister(ve_nf_conntrack_l3proto_ipv6);
 	nf_conntrack_l4proto_unregister(ve_nf_conntrack_l4proto_icmpv6);
 	nf_conntrack_l4proto_unregister(ve_nf_conntrack_l4proto_udp6);
@@ -456,6 +446,14 @@ static int __init nf_conntrack_l3proto_ipv6_init(void)
 		printk(KERN_ERR "Unable to initialize netfilter protocols\n");
 		goto cleanup_frag6;
 	}
+
+	ret = nf_register_hooks(ipv6_conntrack_ops,
+				ARRAY_SIZE(ipv6_conntrack_ops));
+	if (ret < 0) {
+		printk(KERN_ERR "nf_conntrack_ipv6: can't register pre-routing "
+		       "defrag hook.\n");
+		return ret;
+	}
 	KSYMRESOLVE(init_nf_ct_l3proto_ipv6);
 	KSYMRESOLVE(fini_nf_ct_l3proto_ipv6);
 	KSYMMODRESOLVE(nf_conntrack_ipv6);
@@ -472,6 +470,7 @@ static void __exit nf_conntrack_l3proto_ipv6_fini(void)
 	KSYMMODUNRESOLVE(nf_conntrack_ipv6);
 	KSYMUNRESOLVE(init_nf_ct_l3proto_ipv6);
 	KSYMUNRESOLVE(fini_nf_ct_l3proto_ipv6);
+	nf_unregister_hooks(ipv6_conntrack_ops, ARRAY_SIZE(ipv6_conntrack_ops));
 	fini_nf_ct_l3proto_ipv6();
 	nf_ct_frag6_cleanup();
 }
