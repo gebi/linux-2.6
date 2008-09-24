@@ -40,6 +40,7 @@
 #include <net/ndisc.h>
 #include <net/addrconf.h>
 #include <net/netfilter/ipv6/nf_conntrack_ipv6.h>
+#include <net/netfilter/nf_conntrack_l3proto.h>
 #include <linux/sysctl.h>
 #include <linux/netfilter.h>
 #include <linux/netfilter_ipv6.h>
@@ -696,17 +697,39 @@ static int nf_ct_frag6_init_net(struct net *net)
 {
 	struct netns_frags *frags = &net->ipv6.ct_frags;
 
+#ifdef CONFIG_SYSCTL
+	if (net != &init_net) {
+		struct nf_conntrack_l3proto *ipv6 =
+			ve_nf_conntrack_l3proto_ipv6;
+
+		ipv6->ctl_table = kmemdup(nf_ct_ipv6_sysctl_table,
+					  sizeof(nf_ct_ipv6_sysctl_table),
+					  GFP_KERNEL);
+		if (!ipv6->ctl_table)
+			return -ENOMEM;
+
+		ipv6->ctl_table_header = NULL;
+		ipv6->ctl_table_path = nf_net_netfilter_sysctl_path;
+
+		ipv6->ctl_table[0].data = &frags->timeout;
+		ipv6->ctl_table[1].data = &frags->low_thresh;
+		ipv6->ctl_table[2].data = &frags->high_thresh;
+	}
+#endif
 	frags->timeout = IPV6_FRAG_TIMEOUT;
 	frags->high_thresh = 256 * 1024;
 	frags->low_thresh = 192 * 1024;
 	inet_frags_init_net(frags);
 
-	return 0; /* FIXME : sysctls */
+	return 0;
 }
 
 static void nf_ct_frag6_exit_net(struct net *net)
 {
 	inet_frags_exit_net(&net->ipv6.ct_frags, &nf_frags);
+	if (net != &init_net)
+		kfree(ve_nf_conntrack_l3proto_ipv6->ctl_table);
+
 }
 
 static struct pernet_operations nf_ct_frag6_ops = {

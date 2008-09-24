@@ -360,6 +360,33 @@ MODULE_ALIAS("nf_conntrack-" __stringify(AF_INET6));
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Yasuyuki KOZAKAI @USAGI <yasuyuki.kozakai@toshiba.co.jp>");
 
+static int nf_ct_proto_ipv6_init_net(struct net *net)
+{
+	struct nf_conntrack_l3proto *ipv6;
+
+	ipv6 = &nf_conntrack_l3proto_ipv6;
+	if (net != &init_net) {
+		ipv6 = kmemdup(ipv6,
+			       sizeof(struct nf_conntrack_l3proto), GFP_KERNEL);
+		if (!ipv6)
+			return -ENOMEM;
+	}
+
+	ve_nf_conntrack_l3proto_ipv6 = ipv6;
+	return 0;
+}
+
+static void nf_ct_proto_ipv6_exit_net(struct net *net)
+{
+	if (net != &init_net)
+		kfree(ve_nf_conntrack_l3proto_ipv6);
+}
+
+static struct pernet_operations nf_ct_ipv6_ops = {
+	.init = nf_ct_proto_ipv6_init_net,
+	.exit = nf_ct_proto_ipv6_exit_net,
+};
+
 int init_nf_ct_l3proto_ipv6(void)
 {
 	int ret = -ENOMEM;
@@ -435,10 +462,12 @@ static int __init nf_conntrack_l3proto_ipv6_init(void)
 
 	need_conntrack();
 
+	register_pernet_subsys(&nf_ct_ipv6_ops);
+
 	ret = nf_ct_frag6_init();
 	if (ret < 0) {
 		printk("nf_conntrack_ipv6: can't initialize frag6.\n");
-		return ret;
+		goto unreg_subsys;
 	}
 
 	ret = init_nf_ct_l3proto_ipv6();
@@ -461,6 +490,8 @@ static int __init nf_conntrack_l3proto_ipv6_init(void)
 
 cleanup_frag6:
 	nf_ct_frag6_cleanup();
+unreg_subsys:
+	unregister_pernet_subsys(&nf_ct_ipv6_ops);
 	return ret;
 }
 
@@ -473,6 +504,7 @@ static void __exit nf_conntrack_l3proto_ipv6_fini(void)
 	nf_unregister_hooks(ipv6_conntrack_ops, ARRAY_SIZE(ipv6_conntrack_ops));
 	fini_nf_ct_l3proto_ipv6();
 	nf_ct_frag6_cleanup();
+	unregister_pernet_subsys(&nf_ct_ipv6_ops);
 }
 
 module_init(nf_conntrack_l3proto_ipv6_init);
