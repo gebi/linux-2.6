@@ -33,6 +33,10 @@ struct netns_ipv6 {
 	struct ipv6_devconf	*devconf_dflt;
 	struct netns_frags	frags;
 	struct netns_frags	ct_frags;
+
+#ifdef CONFIG_SYSCTL
+	struct nf_conntrack_l3proto *nf_conntrack_l3proto_ipv6;
+#endif
 #ifdef CONFIG_NETFILTER
 	struct xt_table		*ip6table_filter;
 	struct xt_table		*ip6table_mangle;

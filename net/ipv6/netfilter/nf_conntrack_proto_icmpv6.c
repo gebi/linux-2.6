@@ -132,6 +132,7 @@ icmpv6_error_message(struct sk_buff *skb,
 	struct nf_conntrack_tuple intuple, origtuple;
 	const struct nf_conntrack_tuple_hash *h;
 	const struct nf_conntrack_l4proto *inproto;
+	struct net *net = get_exec_env()->ve_netns;
 
 	NF_CT_ASSERT(skb->nfct == NULL);
 
@@ -151,7 +152,7 @@ icmpv6_error_message(struct sk_buff *skb,
 	/* Ordinarily, we'd expect the inverted tupleproto, but it's
 	   been preserved inside the ICMP. */
 	if (!nf_ct_invert_tuple(&intuple, &origtuple,
-				ve_nf_conntrack_l3proto_ipv6, inproto)) {
+				net->ipv6.nf_conntrack_l3proto_ipv6, inproto)) {
 		pr_debug("icmpv6_error: Can't invert tuple\n");
 		return -NF_ACCEPT;
 	}

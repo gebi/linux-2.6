@@ -107,7 +107,6 @@ struct ve_nf_conntrack {
 	struct nf_conntrack_l4proto	**_nf_ct_protos[PF_MAX];
 	/* l3 protocols sysctl tables: */
 	struct nf_conntrack_l3proto	*_nf_conntrack_l3proto_ipv4;
-	struct nf_conntrack_l3proto	*_nf_conntrack_l3proto_ipv6;
 	struct nf_conntrack_l3proto	*_nf_ct_l3protos[AF_MAX];
 	/* sysctl standalone stuff: */
 	struct ctl_table_header		*_nf_ct_sysctl_header;

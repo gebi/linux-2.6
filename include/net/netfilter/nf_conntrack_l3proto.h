@@ -79,14 +79,12 @@ struct nf_conntrack_l3proto
 #if defined(CONFIG_VE_IPTABLES) && defined(CONFIG_SYSCTL)
 #define ve_nf_ct_l3protos		ve_nf_ct3->_nf_ct_l3protos
 #define ve_nf_conntrack_l3proto_ipv4	(ve_nf_ct3->_nf_conntrack_l3proto_ipv4)
-#define	ve_nf_conntrack_l3proto_ipv6	(ve_nf_ct3->_nf_conntrack_l3proto_ipv6)
 #define ve_nf_conntrack_max		(ve_nf_ct3->_nf_conntrack_max)
 #define ve_nf_conntrack_count		(ve_nf_ct3->_nf_conntrack_count)
 #define ve_nf_conntrack_checksum	(ve_nf_ct3->_nf_conntrack_checksum)
 #else /* !CONFIG_VE_IPTABLES || !CONFIG_SYSCTL: */
 #define ve_nf_ct_l3protos		nf_ct_l3protos
 #define ve_nf_conntrack_l3proto_ipv4	&nf_conntrack_l3proto_ipv4
-#define ve_nf_conntrack_l3proto_ipv6	&nf_conntrack_l3proto_ipv6
 #define ve_nf_conntrack_max		nf_conntrack_max
 #define ve_nf_conntrack_count		nf_conntrack_count
 #define ve_nf_conntrack_checksum	nf_conntrack_checksum

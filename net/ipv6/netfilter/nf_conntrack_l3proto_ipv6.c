@@ -372,14 +372,14 @@ static int nf_ct_proto_ipv6_init_net(struct net *net)
 			return -ENOMEM;
 	}
 
-	ve_nf_conntrack_l3proto_ipv6 = ipv6;
+	net->ipv6.nf_conntrack_l3proto_ipv6 = ipv6;
 	return 0;
 }
 
 static void nf_ct_proto_ipv6_exit_net(struct net *net)
 {
 	if (net != &init_net)
-		kfree(ve_nf_conntrack_l3proto_ipv6);
+		kfree(net->ipv6.nf_conntrack_l3proto_ipv6);
 }
 
 static struct pernet_operations nf_ct_ipv6_ops = {
@@ -389,6 +389,8 @@ static struct pernet_operations nf_ct_ipv6_ops = {
 
 int init_nf_ct_l3proto_ipv6(void)
 {
+	struct net *net = get_exec_env()->ve_netns;
+
 	int ret = -ENOMEM;
 
 #ifdef CONFIG_VE_IPTABLES
@@ -417,7 +419,7 @@ int init_nf_ct_l3proto_ipv6(void)
 		goto unreg_udp;
 	}
 
-	ret = nf_conntrack_l3proto_register(ve_nf_conntrack_l3proto_ipv6);
+	ret = nf_conntrack_l3proto_register(net->ipv6.nf_conntrack_l3proto_ipv6);
 	if (ret < 0) {
 		printk("nf_conntrack_ipv6: can't register ipv6\n");
 		goto unreg_icmpv6;
@@ -443,7 +445,9 @@ EXPORT_SYMBOL(init_nf_ct_l3proto_ipv6);
 
 void fini_nf_ct_l3proto_ipv6(void)
 {
-	nf_conntrack_l3proto_unregister(ve_nf_conntrack_l3proto_ipv6);
+	struct net *net = get_exec_env()->ve_netns;
+
+	nf_conntrack_l3proto_unregister(net->ipv6.nf_conntrack_l3proto_ipv6);
 	nf_conntrack_l4proto_unregister(ve_nf_conntrack_l4proto_icmpv6);
 	nf_conntrack_l4proto_unregister(ve_nf_conntrack_l4proto_udp6);
 	nf_conntrack_l4proto_unregister(ve_nf_conntrack_l4proto_tcp6);

@@ -700,7 +700,7 @@ static int nf_ct_frag6_init_net(struct net *net)
 #ifdef CONFIG_SYSCTL
 	if (net != &init_net) {
 		struct nf_conntrack_l3proto *ipv6 =
-			ve_nf_conntrack_l3proto_ipv6;
+			net->ipv6.nf_conntrack_l3proto_ipv6;
 
 		ipv6->ctl_table = kmemdup(nf_ct_ipv6_sysctl_table,
 					  sizeof(nf_ct_ipv6_sysctl_table),
@@ -728,7 +728,7 @@ static void nf_ct_frag6_exit_net(struct net *net)
 {
 	inet_frags_exit_net(&net->ipv6.ct_frags, &nf_frags);
 	if (net != &init_net)
-		kfree(ve_nf_conntrack_l3proto_ipv6->ctl_table);
+		kfree(net->ipv6.nf_conntrack_l3proto_ipv6->ctl_table);
 
 }
 
