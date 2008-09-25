@@ -1089,7 +1089,7 @@ EXPORT_SYMBOL_GPL(devices_init);
 
 void devices_fini(void)
 {
-	kset_unregister(devices_kset);
+	kset_unregister(ve_devices_kset);
 }
 EXPORT_SYMBOL_GPL(devices_fini);
 
