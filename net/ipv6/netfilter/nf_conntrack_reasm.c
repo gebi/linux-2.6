@@ -593,7 +593,8 @@ find_prev_fhdr(struct sk_buff *skb, u8 *prevhdrp, int *prevhoff, int *fhoff)
 	return 0;
 }
 
-struct sk_buff *nf_ct_frag6_gather(struct sk_buff *skb)
+struct sk_buff *nf_ct_frag6_gather(struct net *net,
+				   struct sk_buff *skb)
 {
 	struct sk_buff *clone;
 	struct net_device *dev = skb->dev;
@@ -603,7 +604,6 @@ struct sk_buff *nf_ct_frag6_gather(struct sk_buff *skb)
 	int fhoff, nhoff;
 	u8 prevhdr;
 	struct sk_buff *ret_skb = NULL;
-	struct net *net = dev_net(dev);
 
 	/* Jumbo payload inhibits frag. header */
 	if (ipv6_hdr(skb)->payload_len == 0) {
