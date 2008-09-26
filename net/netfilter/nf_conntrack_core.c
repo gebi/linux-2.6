@@ -539,10 +539,16 @@ EXPORT_SYMBOL_GPL(nf_conntrack_alloc);
 static void nf_conntrack_free_rcu(struct rcu_head *head)
 {
 	struct nf_conn *ct = container_of(head, struct nf_conn, rcu);
+#ifdef CONFIG_VE_IPTABLES
+	struct ve_struct *ve = set_exec_env(ct->ct_owner_env);
+#endif
 
 	nf_ct_ext_free(ct);
 	kmem_cache_free(nf_conntrack_cachep, ct);
 	atomic_dec(&ve_nf_conntrack_count);
+#ifdef CONFIG_VE_IPTABLES
+	set_exec_env(ve);
+#endif
 }
 
 void nf_conntrack_free(struct nf_conn *ct)
