@@ -689,7 +689,7 @@ static void tcp_v4_send_ack(struct tcp_timewait_sock *twsk,
 	if (twsk)
 		arg.bound_dev_if = twsk->tw_sk.tw_bound_dev_if;
 
-	ip_send_reply(dev_net(skb->dev)->ipv4.tcp_sock, skb,
+	ip_send_reply(dev_net(skb->dst->dev)->ipv4.tcp_sock, skb,
 		      &arg, arg.iov[0].iov_len);
 
 	TCP_INC_STATS_BH(TCP_MIB_OUTSEGS);
