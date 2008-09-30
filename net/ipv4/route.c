@@ -2919,7 +2919,6 @@ void ip_rt_multicast_event(struct in_device *in_dev)
 }
 
 #ifdef CONFIG_SYSCTL
-#warning "Rework this shit via ro net sysctls"
 
 static int ipv4_sysctl_rtcache_flush(ctl_table *ctl, int write,
 					struct file *filp, void __user *buffer,
