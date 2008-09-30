@@ -36,6 +36,7 @@
 #include <linux/devpts_fs.h>
 
 #include <linux/nfcalls.h>
+#include <linux/vzcalluser.h>
 
 unsigned long vz_rstamp = 0x37e0f59d;
 
@@ -105,6 +106,7 @@ struct ve_struct ve0 = {
 #ifdef CONFIG_VE_IPTABLES
 	.ipt_mask 		= ~0ULL,
 #endif
+	.features		= VE_FEATURE_SIT | VE_FEATURE_IPIP,
 };
 
 EXPORT_SYMBOL(ve0);

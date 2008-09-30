@@ -108,6 +108,7 @@
 #include <linux/init.h>
 #include <linux/netfilter_ipv4.h>
 #include <linux/if_ether.h>
+#include <linux/vzcalluser.h>
 
 #include <net/sock.h>
 #include <net/ip.h>
@@ -145,6 +146,9 @@ static struct ip_tunnel * ipip_tunnel_lookup(struct net *net,
 	unsigned h1 = HASH(local);
 	struct ip_tunnel *t;
 	struct ipip_net *ipn = net_generic(net, ipip_net_id);
+
+	if (ipn == NULL)
+		return NULL;
 
 	for (t = ipn->tunnels_r_l[h0^h1]; t; t = t->next) {
 		if (local == t->parms.iph.saddr &&
@@ -779,6 +783,9 @@ static int ipip_init_net(struct net *net)
 	int err;
 	struct ipip_net *ipn;
 
+	if (!(get_exec_env()->features & VE_FEATURE_IPIP))
+		return 0;
+
 	err = -ENOMEM;
 	ipn = kzalloc(sizeof(struct ipip_net), GFP_KERNEL);
 	if (ipn == NULL)
@@ -824,6 +831,9 @@ static void ipip_exit_net(struct net *net)
 	struct ipip_net *ipn;
 
 	ipn = net_generic(net, ipip_net_id);
+	if (ipn == NULL) /* no VE_FEATURE_IPIP */
+		return;
+
 	rtnl_lock();
 	ipip_destroy_tunnels(ipn);
 	unregister_netdevice(ipn->fb_tunnel_dev);
