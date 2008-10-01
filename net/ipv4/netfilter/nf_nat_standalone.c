@@ -295,10 +295,13 @@ int init_nftable_nat(void)
 		printk("nf_nat_init: can't setup rules.\n");
 		goto out_modput;
 	}
-	ret = nf_register_hooks(nf_nat_ops, ARRAY_SIZE(nf_nat_ops));
-	if (ret < 0) {
-		printk("nf_nat_init: can't register hooks.\n");
-		goto cleanup_rule_init;
+
+	if (ve_is_super(get_exec_env())) {
+		ret = nf_register_hooks(nf_nat_ops, ARRAY_SIZE(nf_nat_ops));
+		if (ret < 0) {
+			printk("nf_nat_init: can't register hooks.\n");
+			goto cleanup_rule_init;
+		}
 	}
 	return 0;
 
@@ -312,7 +315,8 @@ out_modput:
 
 void fini_nftable_nat(void)
 {
-	nf_unregister_hooks(nf_nat_ops, ARRAY_SIZE(nf_nat_ops));
+	if (ve_is_super(get_exec_env()))
+		nf_unregister_hooks(nf_nat_ops, ARRAY_SIZE(nf_nat_ops));
 	nf_nat_rule_cleanup();
 	if (!ve_is_super(get_exec_env()))
 		module_put(THIS_MODULE);
