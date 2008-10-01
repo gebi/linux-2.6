@@ -645,12 +645,12 @@ int nf_nat_init(void)
 	if (ve_is_super(get_exec_env())) {
 		/* Initialize fake conntrack so that NAT will skip it */
 		nf_conntrack_untracked.status |= IPS_NAT_DONE_MASK;
+		BUG_ON(nf_nat_seq_adjust_hook != NULL);
+		rcu_assign_pointer(nf_nat_seq_adjust_hook, nf_nat_seq_adjust);
 	}
 
 	ve_nf_nat_l3proto = nf_ct_l3proto_find_get((u_int16_t)AF_INET);
 
-	BUG_ON(nf_nat_seq_adjust_hook != NULL);
-	rcu_assign_pointer(nf_nat_seq_adjust_hook, nf_nat_seq_adjust);
 	return 0;
 
 #ifdef CONFIG_VE_IPTABLES
@@ -683,9 +683,10 @@ void nf_nat_cleanup(void)
 #ifdef CONFIG_VE_IPTABLES
 	kfree(ve_nf_nat_protos);
 #endif
-	if (ve_is_super(get_exec_env()))
+	if (ve_is_super(get_exec_env())) {
 		nf_ct_extend_unregister(&nat_extend);
-	rcu_assign_pointer(nf_nat_seq_adjust_hook, NULL);
+		rcu_assign_pointer(nf_nat_seq_adjust_hook, NULL);
+	}
 	synchronize_net();
 }
 
