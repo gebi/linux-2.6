@@ -355,11 +355,11 @@ static int rst_restore_tuntap(loff_t start, struct cpt_netdev_image *di,
 	tun->attached = ti.cpt_attached;
 	tun->if_flags = ti.cpt_if_flags;
 	tun_net_init(dev);
-	BUG_ON(sizeof(ti.cpt_dev_addr) != sizeof(tun->dev_addr));
+	BUILD_BUG_ON(sizeof(ti.cpt_dev_addr) != sizeof(tun->dev_addr));
 	memcpy(tun->dev_addr, ti.cpt_dev_addr, sizeof(ti.cpt_dev_addr));
-	BUG_ON(sizeof(ti.cpt_chr_filter) != sizeof(tun->chr_filter));
+	BUILD_BUG_ON(sizeof(ti.cpt_chr_filter) != sizeof(tun->chr_filter));
 	memcpy(tun->chr_filter, ti.cpt_chr_filter, sizeof(ti.cpt_chr_filter));
-	BUG_ON(sizeof(ti.cpt_net_filter) != sizeof(tun->net_filter));
+	BUILD_BUG_ON(sizeof(ti.cpt_net_filter) != sizeof(tun->net_filter));
 	memcpy(tun->net_filter, ti.cpt_net_filter, sizeof(ti.cpt_net_filter));
 
 	err = register_netdevice(dev);
@@ -375,7 +375,7 @@ static int rst_restore_tuntap(loff_t start, struct cpt_netdev_image *di,
 				&hw, ctx);
 		if (err)
 			goto out;
-		BUG_ON(sizeof(hw.cpt_dev_addr) != sizeof(dev->dev_addr));
+		BUILD_BUG_ON(sizeof(hw.cpt_dev_addr) != sizeof(dev->dev_addr));
 		memcpy(dev->dev_addr, hw.cpt_dev_addr,
 				sizeof(hw.cpt_dev_addr));
 	}
@@ -586,8 +586,8 @@ int rst_restore_netdev(struct cpt_context *ctx)
 							pos, &hw, ctx);
 					if (err)
 						goto out;
-				BUG_ON(sizeof(hw.cpt_dev_addr) !=
-						sizeof(dev->dev_addr));
+					BUILD_BUG_ON(sizeof(hw.cpt_dev_addr) !=
+							sizeof(dev->dev_addr));
 					memcpy(dev->dev_addr, hw.cpt_dev_addr,
 							sizeof(hw.cpt_dev_addr));
 				} else if (hdr.cpt_object == CPT_OBJ_NET_STATS) {

@@ -140,11 +140,11 @@ static void cpt_dump_tuntap(struct net_device *dev, struct cpt_context * ctx)
 	}
 
 	v.cpt_if_flags = tun->if_flags;
-	BUG_ON(sizeof(v.cpt_dev_addr) != sizeof(tun->dev_addr));
+	BUILD_BUG_ON(sizeof(v.cpt_dev_addr) != sizeof(tun->dev_addr));
 	memcpy(v.cpt_dev_addr, tun->dev_addr, sizeof(v.cpt_dev_addr));
-	BUG_ON(sizeof(v.cpt_chr_filter) != sizeof(tun->chr_filter));
+	BUILD_BUG_ON(sizeof(v.cpt_chr_filter) != sizeof(tun->chr_filter));
 	memcpy(v.cpt_chr_filter, tun->chr_filter, sizeof(v.cpt_chr_filter));
-	BUG_ON(sizeof(v.cpt_net_filter) != sizeof(tun->net_filter));
+	BUILD_BUG_ON(sizeof(v.cpt_net_filter) != sizeof(tun->net_filter));
 	memcpy(v.cpt_net_filter, tun->net_filter, sizeof(v.cpt_net_filter));
 	ctx->write(&v, sizeof(v), ctx);
 	cpt_close_object(ctx);
@@ -187,7 +187,7 @@ int cpt_dump_link(struct cpt_context * ctx)
 		hw.cpt_object = CPT_OBJ_NET_HWADDR;
 		hw.cpt_hdrlen = sizeof(hw);
 		hw.cpt_content = CPT_CONTENT_VOID;
-		BUG_ON(sizeof(hw.cpt_dev_addr) != sizeof(dev->dev_addr));
+		BUILD_BUG_ON(sizeof(hw.cpt_dev_addr) != sizeof(dev->dev_addr));
 		memcpy(hw.cpt_dev_addr, dev->dev_addr, sizeof(hw.cpt_dev_addr));
 		ctx->write(&hw, sizeof(hw), ctx);
 		cpt_close_object(ctx);
