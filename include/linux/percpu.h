@@ -74,11 +74,20 @@ struct percpu_data {
         (__typeof__(ptr))__p->ptrs[(cpu)];	          \
 })
 
-#define static_percpu_ptr(sptr, sptrs) ({		\
+struct percpu_data_static {
+	void *ptrs[NR_CPUS];
+};
+
+#define DEFINE_PER_CPU_STATIC(type, name) \
+	static struct percpu_data_static per_cpu_data__##name; \
+	static __typeof__(type) per_cpu__##name[NR_CPUS]
+
+#define percpu_static_init(name) ({			\
 		int i;					\
 		for (i = 0; i < NR_CPUS; i++)		\
-			(sptr)->ptrs[i] = &(sptrs)[i];	\
-		(__typeof__(&sptrs[0]))__percpu_disguise(sptr);\
+			(per_cpu_data__##name).ptrs[i] = &(per_cpu__##name)[i];\
+		(__typeof__(&(per_cpu__##name)[0]))	\
+			__percpu_disguise(&(per_cpu_data__##name));\
 	})
 
 extern void *percpu_populate(void *__pdata, size_t size, gfp_t gfp, int cpu);
@@ -92,7 +101,11 @@ extern void percpu_free(void *__pdata);
 #else /* CONFIG_SMP */
 
 #define percpu_ptr(ptr, cpu) ({ (void)(cpu); (ptr); })
-#define static_percpu_ptr(sptr, sptrs)	(&sptrs[0])
+
+#define DEFINE_PER_CPU_STATIC(type, name) \
+	static __typeof__(type) per_cpu__##name[NR_CPUS]
+
+#define percpu_static_init(name)	(&(per_cpu__##name)[0])
 
 static inline void percpu_depopulate(void *__pdata, int cpu)
 {
