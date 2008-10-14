@@ -146,6 +146,8 @@ int inet_csk_get_port(struct sock *sk, unsigned short snum)
 	goto tb_not_found;
 tb_found:
 	if (!hlist_empty(&tb->owners)) {
+		if (sk->sk_reuse > 1)
+			goto success;
 		if (tb->fastreuse > 0 &&
 		    sk->sk_reuse && sk->sk_state != TCP_LISTEN) {
 			goto success;
