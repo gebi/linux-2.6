@@ -486,13 +486,15 @@ static int __init nf_conntrack_l3proto_ipv6_init(void)
 	if (ret < 0) {
 		printk(KERN_ERR "nf_conntrack_ipv6: can't register pre-routing "
 		       "defrag hook.\n");
-		return ret;
+		goto cleanup_l3proto;
 	}
 	KSYMRESOLVE(init_nf_ct_l3proto_ipv6);
 	KSYMRESOLVE(fini_nf_ct_l3proto_ipv6);
 	KSYMMODRESOLVE(nf_conntrack_ipv6);
 	return 0;
 
+cleanup_l3proto:
+	fini_nf_ct_l3proto_ipv6();
 cleanup_frag6:
 	nf_ct_frag6_cleanup();
 unreg_subsys:
