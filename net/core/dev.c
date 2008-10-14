@@ -4207,14 +4207,17 @@ EXPORT_SYMBOL(unregister_netdev);
  */
 
 int __dev_change_net_namespace(struct net_device *dev, struct net *net, const char *pat,
-		struct ve_struct *src_ve, struct ve_struct *dst_ve,
 		struct user_beancounter *exec_ub)
 {
 	char buf[IFNAMSIZ];
 	const char *destname;
 	int err;
-	struct ve_struct *cur_ve;
 	struct user_beancounter *tmp_ub;
+#ifdef CONFIG_VE
+	struct ve_struct *cur_ve = get_exec_env();
+	struct ve_struct *src_ve = dev->owner_env;
+	struct ve_struct *dst_ve = net->owner_ve;
+#endif
 
 	ASSERT_RTNL();
 
@@ -4278,7 +4281,7 @@ int __dev_change_net_namespace(struct net_device *dev, struct net *net, const ch
 	/* Notify protocols, that we are about to destroy
 	   this device. They should clean all the things.
 	*/
-	cur_ve = set_exec_env(src_ve);
+	set_exec_env(src_ve);
 	call_netdevice_notifiers(NETDEV_UNREGISTER, dev);
 	(void)set_exec_env(cur_ve);
 
@@ -4311,7 +4314,7 @@ int __dev_change_net_namespace(struct net_device *dev, struct net *net, const ch
 	list_netdevice(dev);
 
 	/* Notify protocols, that a new device appeared. */
-	cur_ve = set_exec_env(dst_ve);
+	set_exec_env(dst_ve);
 	call_netdevice_notifiers(NETDEV_REGISTER, dev);
 	(void)set_exec_env(cur_ve);
 
@@ -4323,10 +4326,9 @@ out:
 
 int dev_change_net_namespace(struct net_device *dev, struct net *net, const char *pat)
 {
-	struct ve_struct *ve = get_exec_env();
 	struct user_beancounter *ub = get_exec_ub();
 
-	return __dev_change_net_namespace(dev, net, pat, ve, ve, ub);
+	return __dev_change_net_namespace(dev, net, pat, ub);
 }
 
 static int dev_cpu_callback(struct notifier_block *nfb,
