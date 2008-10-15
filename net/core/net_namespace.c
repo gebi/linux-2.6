@@ -102,7 +102,7 @@ static void net_free(struct net *net)
 		return;
 	}
 #endif
-
+	kfree(net->gen);
 	sysfs_completion = net->sysfs_completion;
 	kmem_cache_free(net_cachep, net);
 	if (sysfs_completion)
