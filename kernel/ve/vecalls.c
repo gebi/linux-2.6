@@ -939,27 +939,8 @@ EXPORT_SYMBOL(ve_move_task);
 static int do_ve_iptables(struct ve_struct *ve, __u64 init_mask,
 		int init_or_cleanup)
 {
-	int err;
+	int err = 0;
 
-	/* Remove when userspace will start supplying IPv6-related bits. */
-	init_mask &= ~VE_IP_IPTABLES6;
-	init_mask &= ~VE_IP_FILTER6;
-	init_mask &= ~VE_IP_MANGLE6;
-	init_mask &= ~VE_IP_IPTABLE_NAT_MOD;
-	init_mask &= ~VE_NF_CONNTRACK_MOD;
-	if ((init_mask & VE_IP_IPTABLES) == VE_IP_IPTABLES)
-		init_mask |= VE_IP_IPTABLES6;
-	if ((init_mask & VE_IP_FILTER) == VE_IP_FILTER)
-		init_mask |= VE_IP_FILTER6;
-	if ((init_mask & VE_IP_MANGLE) == VE_IP_MANGLE)
-		init_mask |= VE_IP_MANGLE6;
-	if ((init_mask & VE_IP_NAT) == VE_IP_NAT)
-		init_mask |= VE_IP_IPTABLE_NAT;
-
-	if ((init_mask & VE_IP_CONNTRACK) == VE_IP_CONNTRACK)
-		init_mask |= VE_NF_CONNTRACK;
-
-	err = 0;
 	if (!init_or_cleanup)
 		goto cleanup;
 
@@ -1024,6 +1005,29 @@ static inline int init_ve_iptables(struct ve_struct *ve, __u64 init_mask)
 static inline void fini_ve_iptables(struct ve_struct *ve, __u64 init_mask)
 {
 	(void)do_ve_iptables(ve, init_mask, 0);
+}
+
+static __u64 setup_iptables_mask(__u64 init_mask)
+{
+	/* Remove when userspace will start supplying IPv6-related bits. */
+	init_mask &= ~VE_IP_IPTABLES6;
+	init_mask &= ~VE_IP_FILTER6;
+	init_mask &= ~VE_IP_MANGLE6;
+	init_mask &= ~VE_IP_IPTABLE_NAT_MOD;
+	init_mask &= ~VE_NF_CONNTRACK_MOD;
+	if ((init_mask & VE_IP_IPTABLES) == VE_IP_IPTABLES)
+		init_mask |= VE_IP_IPTABLES6;
+	if ((init_mask & VE_IP_FILTER) == VE_IP_FILTER)
+		init_mask |= VE_IP_FILTER6;
+	if ((init_mask & VE_IP_MANGLE) == VE_IP_MANGLE)
+		init_mask |= VE_IP_MANGLE6;
+	if ((init_mask & VE_IP_NAT) == VE_IP_NAT)
+		init_mask |= VE_IP_IPTABLE_NAT;
+
+	if ((init_mask & VE_IP_CONNTRACK) == VE_IP_CONNTRACK)
+		init_mask |= VE_NF_CONNTRACK;
+
+	return init_mask;
 }
 
 #else
@@ -1162,6 +1166,7 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 	/* Set up ipt_mask as it will be used during
 	 * net namespace initialization
 	 */
+	init_mask = setup_iptables_mask(init_mask);
 	ve->ipt_mask = init_mask;
 #endif
 
