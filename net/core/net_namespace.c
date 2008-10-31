@@ -232,6 +232,16 @@ static int __init net_ns_init(void)
 pure_initcall(net_ns_init);
 
 #ifdef CONFIG_NET_NS
+
+#include <linux/netdevice.h>
+
+static inline void set_net_context(struct net *net)
+{
+	set_exec_env(net->owner_ve);
+	if (net->loopback_dev)
+		set_exec_ub(netdev_bc(net->loopback_dev)->exec_ub);
+}
+
 static int register_pernet_operations(struct list_head *list,
 				      struct pernet_operations *ops)
 {
@@ -241,7 +251,9 @@ static int register_pernet_operations(struct list_head *list,
 	list_add_tail(&ops->list, list);
 	if (ops->init) {
 		for_each_net(net) {
+			set_net_context(net);
 			error = ops->init(net);
+			set_net_context(&init_net);
 			if (error)
 				goto out_undo;
 		}
@@ -255,7 +267,10 @@ out_undo:
 		for_each_net(undo_net) {
 			if (undo_net == net)
 				goto undone;
+
+			set_net_context(undo_net);
 			ops->exit(undo_net);
+			set_net_context(&init_net);
 		}
 	}
 undone:
@@ -268,8 +283,11 @@ static void unregister_pernet_operations(struct pernet_operations *ops)
 
 	list_del(&ops->list);
 	if (ops->exit)
-		for_each_net(net)
+		for_each_net(net) {
+			set_net_context(net);
 			ops->exit(net);
+			set_net_context(&init_net);
+		}
 }
 
 #else
