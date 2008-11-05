@@ -24,7 +24,8 @@ static DEFINE_MUTEX(block_class_lock);
 struct kobject *block_depr;
 #endif
 
-static struct device_type disk_type;
+struct device_type disk_type;
+EXPORT_SYMBOL(disk_type);
 
 /*
  * Can be deleted altogether. Later.
@@ -515,7 +516,7 @@ struct class block_class = {
 };
 EXPORT_SYMBOL(block_class);
 
-static struct device_type disk_type = {
+struct device_type disk_type = {
 	.name		= "disk",
 	.groups		= disk_attr_groups,
 	.release	= disk_release,

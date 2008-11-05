@@ -21,6 +21,7 @@
 extern struct device_type part_type;
 extern struct kobject *block_depr;
 extern struct class block_class;
+extern struct device_type disk_type;
 
 extern const struct seq_operations partitions_op;
 extern const struct seq_operations diskstats_op;

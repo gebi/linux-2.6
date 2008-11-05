@@ -184,8 +184,12 @@ static void show_diskio(void)
 
 	list_for_each_entry(dev, &block_class.devices, node) {
 		char *name;
-		struct gendisk *gd = dev_to_disk(dev);
+		struct gendisk *gd;
+		
+		if (dev->type != &disk_type)
+			continue;
 
+		gd = dev_to_disk(dev);
 		name = disk_name(gd, 0, buf);
 		if ((strlen(name) > 4) && (strncmp(name, "loop", 4) == 0) &&
 		    isdigit(name[4]))
