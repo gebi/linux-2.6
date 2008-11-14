@@ -869,6 +869,7 @@ static void set_task_ve_caps(struct task_struct *tsk, struct ve_struct *ve)
 	tsk->cap_effective = cap_intersect(tsk->cap_effective, bset);
 	tsk->cap_inheritable = cap_intersect(tsk->cap_inheritable, bset);
 	tsk->cap_permitted = cap_intersect(tsk->cap_permitted, bset);
+	tsk->cap_bset = cap_intersect(tsk->cap_bset, bset);
 	spin_unlock(&task_capability_lock);
 }
 
