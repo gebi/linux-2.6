@@ -157,6 +157,19 @@ nf_nat_fn(unsigned int hooknum,
 }
 
 static unsigned int
+nf_nat_local_in(unsigned int hooknum,
+		struct sk_buff *skb,
+		const struct net_device *in,
+		const struct net_device *out,
+		int (*okfn)(struct sk_buff *))
+{
+	if (!dev_net(in)->ipv4.iptable_nat)
+		return NF_ACCEPT;
+
+	return nf_nat_fn(hooknum, skb, in, out, okfn);
+}
+
+static unsigned int
 nf_nat_in(unsigned int hooknum,
 	  struct sk_buff *skb,
 	  const struct net_device *in,
@@ -165,6 +178,9 @@ nf_nat_in(unsigned int hooknum,
 {
 	unsigned int ret;
 	__be32 daddr = ip_hdr(skb)->daddr;
+
+	if (!dev_net(in)->ipv4.iptable_nat)
+		return NF_ACCEPT;
 
 	ret = nf_nat_fn(hooknum, skb, in, out, okfn);
 	if (ret != NF_DROP && ret != NF_STOLEN &&
@@ -187,6 +203,9 @@ nf_nat_out(unsigned int hooknum,
 	enum ip_conntrack_info ctinfo;
 #endif
 	unsigned int ret;
+
+	if (!dev_net(out)->ipv4.iptable_nat)
+		return NF_ACCEPT;
 
 	/* root is playing with raw sockets. */
 	if (skb->len < sizeof(struct iphdr) ||
@@ -220,6 +239,9 @@ nf_nat_local_fn(unsigned int hooknum,
 	const struct nf_conn *ct;
 	enum ip_conntrack_info ctinfo;
 	unsigned int ret;
+
+	if (!dev_net(out)->ipv4.iptable_nat)
+		return NF_ACCEPT;
 
 	/* root is playing with raw sockets. */
 	if (skb->len < sizeof(struct iphdr) ||
@@ -275,7 +297,7 @@ static struct nf_hook_ops nf_nat_ops[] __read_mostly = {
 	},
 	/* After packet filtering, change source */
 	{
-		.hook		= nf_nat_fn,
+		.hook		= nf_nat_local_in,
 		.owner		= THIS_MODULE,
 		.pf		= PF_INET,
 		.hooknum	= NF_INET_LOCAL_IN,
