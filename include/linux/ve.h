@@ -56,7 +56,6 @@ struct ve_nf_conntrack {
 	struct hlist_head		*_bysource;
 	struct nf_nat_protocol		**_nf_nat_protos;
 	int				_nf_nat_vmalloced;
-	struct xt_table			*_nf_nat_table;
 	struct nf_conntrack_l3proto	*_nf_nat_l3proto;
 	atomic_t			_nf_conntrack_count;
 	int				_nf_conntrack_max;

@@ -394,6 +394,21 @@ static inline struct net *nf_post_routing_net(const struct net_device *in,
 #endif
 }
 
+static inline struct net *nf_net(unsigned hook,
+				 const struct net_device *in,
+				 const struct net_device *out)
+{
+	switch (hook) {
+		case NF_INET_PRE_ROUTING:
+		case NF_INET_LOCAL_IN:
+		case NF_INET_FORWARD:
+			return dev_net(in);
+		case NF_INET_POST_ROUTING:
+		case NF_INET_LOCAL_OUT:
+			return dev_net(out);
+	}
+}
+
 #ifdef CONFIG_VE_IPTABLES
 #include <linux/vziptable_defs.h>
 

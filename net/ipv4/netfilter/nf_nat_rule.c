@@ -66,12 +66,6 @@ static struct xt_table __nat_table = {
 	.me		= THIS_MODULE,
 	.af		= AF_INET,
 };
-#ifdef CONFIG_VE_IPTABLES
-#define nat_table			\
-	(get_exec_env()->_nf_conntrack->_nf_nat_table)
-#else
-static struct xt_table *nat_table;
-#endif
 
 /* Source NAT */
 static unsigned int ipt_snat_target(struct sk_buff *skb,
@@ -202,7 +196,8 @@ int nf_nat_rule_find(struct sk_buff *skb,
 {
 	int ret;
 
-	ret = ipt_do_table(skb, hooknum, in, out, nat_table);
+	ret = ipt_do_table(skb, hooknum, in, out,
+			   nf_net(hooknum, in, out)->ipv4.iptable_nat);
 
 	if (ret == NF_ACCEPT) {
 		if (!nf_nat_initialized(ct, HOOK2MANIP(hooknum)))
@@ -237,10 +232,10 @@ int nf_nat_rule_init(void)
 	int ret;
 	struct net *net = get_exec_env()->ve_netns;
 
-	nat_table = ipt_register_table(net, &__nat_table,
+	net->ipv4.iptable_nat = ipt_register_table(net, &__nat_table,
 				       &nat_initial_table.repl);
-	if (IS_ERR(nat_table))
-		return PTR_ERR(nat_table);
+	if (IS_ERR(net->ipv4.iptable_nat))
+		return PTR_ERR(net->ipv4.iptable_nat);
 
 	ret = 0;
 	if (!ve_is_super(get_exec_env()))
@@ -260,20 +255,22 @@ done:
  unregister_snat:
 	xt_unregister_target(&ipt_snat_reg);
  unregister_table:
-	ipt_unregister_table(nat_table);
-	nat_table = NULL;
+	ipt_unregister_table(net->ipv4.iptable_nat);
+	net->ipv4.iptable_nat = NULL;
 
 	return ret;
 }
 
 void nf_nat_rule_cleanup(void)
 {
+	struct net *net = get_exec_env()->ve_netns;
+
 	if (!ve_is_super(get_exec_env()))
 		goto skip;
 
 	xt_unregister_target(&ipt_dnat_reg);
 	xt_unregister_target(&ipt_snat_reg);
 skip:
-	ipt_unregister_table(nat_table);
-	nat_table = NULL;
+	ipt_unregister_table(net->ipv4.iptable_nat);
+	net->ipv4.iptable_nat = NULL;
 }
