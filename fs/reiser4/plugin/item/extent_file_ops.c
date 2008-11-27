@@ -1060,8 +1060,8 @@ ssize_t reiser4_write_extent(struct file *file, struct inode * inode,
 		lock_page(page);
 		if (!PageUptodate(page) && to_page != PAGE_CACHE_SIZE)
 			zero_user_segments(page, 0, page_off,
-			                   page_off + to_page,
-			                   PAGE_CACHE_SIZE);
+					   page_off + to_page,
+					   PAGE_CACHE_SIZE);
 
 		written = filemap_copy_from_user(page, page_off, buf, to_page);
 		if (unlikely(written != to_page)) {
