@@ -790,6 +790,9 @@ ctnetlink_del_conntrack(struct sock *ctnl, struct sk_buff *skb,
 	u_int8_t u3 = nfmsg->nfgen_family;
 	int err = 0;
 
+	if (!ve_nf_ct_initialized())
+		return -ENOPROTOOPT;
+
 	if (cda[CTA_TUPLE_ORIG])
 		err = ctnetlink_parse_tuple(cda, &tuple, CTA_TUPLE_ORIG, u3);
 	else if (cda[CTA_TUPLE_REPLY])
@@ -835,6 +838,9 @@ ctnetlink_get_conntrack(struct sock *ctnl, struct sk_buff *skb,
 	struct nfgenmsg *nfmsg = NLMSG_DATA(nlh);
 	u_int8_t u3 = nfmsg->nfgen_family;
 	int err = 0;
+
+	if (!ve_nf_ct_initialized())
+		return -ENOPROTOOPT;
 
 	if (nlh->nlmsg_flags & NLM_F_DUMP) {
 #ifndef CONFIG_NF_CT_ACCT
@@ -1203,6 +1209,9 @@ ctnetlink_new_conntrack(struct sock *ctnl, struct sk_buff *skb,
 	u_int8_t u3 = nfmsg->nfgen_family;
 	int err = 0;
 
+	if (!ve_nf_ct_initialized())
+		return -ENOPROTOOPT;
+
 	if (cda[CTA_TUPLE_ORIG]) {
 		err = ctnetlink_parse_tuple(cda, &otuple, CTA_TUPLE_ORIG, u3);
 		if (err < 0)
@@ -1527,6 +1536,9 @@ ctnetlink_get_expect(struct sock *ctnl, struct sk_buff *skb,
 	u_int8_t u3 = nfmsg->nfgen_family;
 	int err = 0;
 
+	if (!ve_nf_ct_initialized())
+		return -ENOPROTOOPT;
+
 	if (nlh->nlmsg_flags & NLM_F_DUMP) {
 		return netlink_dump_start(ctnl, skb, nlh,
 					  ctnetlink_exp_dump_table,
@@ -1587,6 +1599,9 @@ ctnetlink_del_expect(struct sock *ctnl, struct sk_buff *skb,
 	u_int8_t u3 = nfmsg->nfgen_family;
 	unsigned int i;
 	int err;
+
+	if (!ve_nf_ct_initialized())
+		return -ENOPROTOOPT;
 
 	if (cda[CTA_EXPECT_TUPLE]) {
 		/* delete a single expect by tuple */
@@ -1725,6 +1740,9 @@ ctnetlink_new_expect(struct sock *ctnl, struct sk_buff *skb,
 	struct nfgenmsg *nfmsg = NLMSG_DATA(nlh);
 	u_int8_t u3 = nfmsg->nfgen_family;
 	int err = 0;
+
+	if (!ve_nf_ct_initialized())
+		return -ENOPROTOOPT;
 
 	if (!cda[CTA_EXPECT_TUPLE]
 	    || !cda[CTA_EXPECT_MASK]

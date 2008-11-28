@@ -126,6 +126,9 @@ extern unsigned int nf_ct_log_invalid;
 #ifdef CONFIG_VE_IPTABLES
 #include <linux/sched.h>
 #define ve_nf_ct4			(get_exec_env()->_nf_conntrack)
+#define ve_nf_ct_initialized()		(get_exec_env()->_nf_conntrack != NULL)
+#else
+#define ve_nf_ct_initialized()		1
 #endif
 
 #if defined(CONFIG_VE_IPTABLES) && defined(CONFIG_SYSCTL)

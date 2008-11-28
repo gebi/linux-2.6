@@ -304,6 +304,9 @@ getorigdst(struct sock *sk, int optval, void __user *user, int *len)
 	const struct nf_conntrack_tuple_hash *h;
 	struct nf_conntrack_tuple tuple;
 
+	if (!ve_nf_ct_initialized())
+		return -ENOPROTOOPT;
+
 	memset(&tuple, 0, sizeof(tuple));
 	tuple.src.u3.ip = inet->rcv_saddr;
 	tuple.src.u.tcp.port = inet->sport;
