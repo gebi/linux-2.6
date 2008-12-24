@@ -324,7 +324,6 @@ struct rpc_clnt *rpc_create(struct rpc_create_args *args)
 	xprt = xprt_create_transport(&xprtargs);
 	if (IS_ERR(xprt))
 		return (struct rpc_clnt *)xprt;
-	xprt->owner_env = get_ve(get_exec_env());
 
 	/*
 	 * By default, kernel RPC client connects from a reserved port.
@@ -346,7 +345,6 @@ struct rpc_clnt *rpc_create(struct rpc_create_args *args)
 		int err = rpc_ping(clnt, RPC_TASK_SOFT);
 		if (err != 0) {
 			rpc_shutdown_client(clnt);
-			put_ve(xprt->owner_env);
 			return ERR_PTR(err);
 		}
 	}

@@ -1056,7 +1056,7 @@ found:
 	xprt->last_used = jiffies;
 	xprt->cwnd = RPC_INITCWND;
 	xprt->bind_index = 0;
-	xprt->owner_env = get_exec_env();
+	xprt->owner_env = get_ve(get_exec_env());
 
 	rpc_init_wait_queue(&xprt->binding, "xprt_binding");
 	rpc_init_wait_queue(&xprt->pending, "xprt_pending");

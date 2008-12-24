@@ -816,6 +816,7 @@ static void xs_destroy(struct rpc_xprt *xprt)
 	xs_close(xprt);
 	xs_free_peer_addresses(xprt);
 	kfree(xprt->slot);
+	put_ve(xprt->owner_env);
 	kfree(xprt);
 	module_put(THIS_MODULE);
 }
