@@ -814,8 +814,7 @@ static void rst_restart_sys(void)
 		}
 	}
 
-	if (!signal_pending(current) &&
-	    !current_thread_info()->status & TS_RESTORE_SIGMASK) {
+	if (!signal_pending(current)) {
 		if (SYSCALL_ERRNO(regs) == ERESTARTSYS ||
 		    SYSCALL_ERRNO(regs) == ERESTARTNOINTR ||
 		    SYSCALL_ERRNO(regs) == ERESTARTNOHAND) {
