@@ -347,24 +347,6 @@ int reiser4_writepages(struct address_space *mapping,
 	return inode_file_plugin(mapping->host)->writepages(mapping, wbc);
 }
 
-int reiser4_prepare_write(struct file *file, struct page *page,
-			  unsigned from, unsigned to)
-{
-	return inode_file_plugin(file->f_dentry->d_inode)->prepare_write(file,
-									 page,
-									 from,
-									 to);
-}
-
-int reiser4_commit_write(struct file *file, struct page *page,
-			 unsigned from, unsigned to)
-{
-	return inode_file_plugin(file->f_dentry->d_inode)->commit_write(file,
-									page,
-									from,
-									to);
-}
-
 /* Make Linus happy.
    Local variables:
    c-indentation-style: "K&R"

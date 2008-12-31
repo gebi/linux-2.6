@@ -889,36 +889,12 @@ static int capture_page_and_create_extent(struct page *page)
 	return result;
 }
 
-/* this is implementation of method commit_write of struct
-   address_space_operations for unix file plugin */
-int
-commit_write_unix_file(struct file *file, struct page *page,
-		       unsigned from, unsigned to)
+/* plugin->write_end() */
+int write_end_unix_file(struct file *file, struct page *page,
+			unsigned from, unsigned to)
 {
-	reiser4_context *ctx;
-	struct inode *inode;
-	int result;
-
-	assert("umka-3101", file != NULL);
-	assert("umka-3102", page != NULL);
-	assert("umka-3093", PageLocked(page));
-
-	SetPageUptodate(page);
-
-	inode = page->mapping->host;
-	ctx = reiser4_init_context(page->mapping->host->i_sb);
-	if (IS_ERR(ctx))
-		return PTR_ERR(ctx);
-	page_cache_get(page);
 	unlock_page(page);
-	result = capture_page_and_create_extent(page);
-	lock_page(page);
-	page_cache_release(page);
-
-	/* don't commit transaction under inode semaphore */
-	context_set_commit_async(ctx);
-	reiser4_exit_context(ctx);
-	return result;
+	return capture_page_and_create_extent(page);
 }
 
 /*
@@ -2687,32 +2663,23 @@ int delete_object_unix_file(struct inode *inode)
 	return reiser4_delete_object_common(inode);
 }
 
-int
-prepare_write_unix_file(struct file *file, struct page *page,
-			unsigned from, unsigned to)
+/* plugin->write_begin() */
+int write_begin_unix_file(struct file *file, struct page *page,
+			  unsigned from, unsigned to)
 {
-	reiser4_context *ctx;
-	struct unix_file_info *uf_info;
 	int ret;
+	struct unix_file_info *info;
 
-	ctx = reiser4_init_context(file->f_dentry->d_inode->i_sb);
-	if (IS_ERR(ctx))
-		return PTR_ERR(ctx);
-
-	uf_info = unix_file_inode_data(file->f_dentry->d_inode);
-	get_exclusive_access(uf_info);
-	ret = find_file_state(file->f_dentry->d_inode, uf_info);
-	if (ret == 0) {
-		if (uf_info->container == UF_CONTAINER_TAILS)
+	info = unix_file_inode_data(file->f_dentry->d_inode);
+	get_exclusive_access(info);
+	ret = find_file_state(file->f_dentry->d_inode, info);
+	if (likely(ret == 0)) {
+		if (info->container == UF_CONTAINER_TAILS)
 			ret = -EINVAL;
 		else
 			ret = do_prepare_write(file, page, from, to);
 	}
-	drop_exclusive_access(uf_info);
-
-	/* don't commit transaction under inode semaphore */
-	context_set_commit_async(ctx);
-	reiser4_exit_context(ctx);
+	drop_exclusive_access(info);
 	return ret;
 }
 

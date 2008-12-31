@@ -59,10 +59,14 @@ int reiser4_readpage(struct file *, struct page *);
 int reiser4_readpages(struct file*, struct address_space*, struct list_head*,
 		      unsigned);
 int reiser4_writepages(struct address_space *, struct writeback_control *);
-int reiser4_prepare_write(struct file *, struct page *, unsigned from,
-			  unsigned to);
-int reiser4_commit_write(struct file *, struct page *, unsigned from,
-			 unsigned to);
+int reiser4_write_begin_careful(struct file *file,
+				struct address_space *mapping,
+				loff_t pos, unsigned len, unsigned flags,
+				struct page **pagep, void **fsdata);
+int reiser4_write_end_careful(struct file *file,
+			      struct address_space *mapping,
+			      loff_t pos, unsigned len, unsigned copied,
+			      struct page *page, void *fsdata);
 sector_t reiser4_bmap_careful(struct address_space *, sector_t lblock);
 
 /*
@@ -87,12 +91,13 @@ int release_unix_file(struct inode *, struct file *);
 
 /* private address space operations */
 int readpage_unix_file(struct file *, struct page *);
-int readpages_unix_file(struct file*, struct address_space*, struct list_head*, unsigned);
+int readpages_unix_file(struct file*, struct address_space*, struct list_head*,
+			unsigned);
 int writepages_unix_file(struct address_space *, struct writeback_control *);
-int prepare_write_unix_file(struct file *, struct page *, unsigned from,
-			    unsigned to);
-int commit_write_unix_file(struct file *, struct page *, unsigned from,
-			   unsigned to);
+int write_begin_unix_file(struct file *file, struct page *page,
+			  unsigned from, unsigned to);
+int write_end_unix_file(struct file *file, struct page *page,
+			unsigned from, unsigned to);
 sector_t bmap_unix_file(struct address_space *, sector_t lblock);
 
 /* other private methods */
@@ -129,10 +134,10 @@ int readpages_cryptcompress(struct file*, struct address_space*,
 			    struct list_head*, unsigned);
 int writepages_cryptcompress(struct address_space *,
 			     struct writeback_control *);
-int prepare_write_cryptcompress(struct file *, struct page *, unsigned from,
-				unsigned to);
-int commit_write_cryptcompress(struct file *, struct page *, unsigned from,
-			       unsigned to);
+int write_begin_cryptcompress(struct file *file, struct page *page,
+			      unsigned from, unsigned to);
+int write_end_cryptcompress(struct file *file, struct page *page,
+			    unsigned from, unsigned to);
 sector_t bmap_cryptcompress(struct address_space *, sector_t lblock);
 
 /* other private methods */

@@ -248,10 +248,10 @@ typedef struct file_plugin {
 			  struct list_head *pages, unsigned nr_pages);
 	int (*writepages)(struct address_space *mapping,
 			  struct writeback_control *wbc);
-	int (*prepare_write)(struct file *file, struct page *page,
-			     unsigned from, unsigned to);
-	int (*commit_write)(struct file *file, struct page *page,
-			    unsigned from, unsigned to);
+	int (*write_begin)(struct file *file, struct page *page,
+			  unsigned from, unsigned to);
+	int (*write_end)(struct file *file, struct page *page,
+			  unsigned from, unsigned to);
 	sector_t (*bmap) (struct address_space * mapping, sector_t lblock);
 	/* other private methods */
 	/* save inode cached stat-data onto disk. It was called

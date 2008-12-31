@@ -3405,11 +3405,12 @@ static int cryptcompress_truncate(struct inode *inode,	/* old size */
 	return result;
 }
 
-/* Capture an anonymous pager cluster. (Page cluser is
- * anonymous if it contains at least one anonymous page
+/**
+ * Capture a pager cluster.
+ * @clust must be set up by a caller.
  */
-static int capture_anon_page_cluster(struct cluster_handle * clust,
-				     struct inode * inode)
+static int capture_page_cluster(struct cluster_handle * clust,
+				struct inode * inode)
 {
 	int result;
 
@@ -3420,6 +3421,7 @@ static int capture_anon_page_cluster(struct cluster_handle * clust,
 	result = prepare_logical_cluster(inode, 0, 0, clust, LC_APPOV);
 	if (result)
 		return result;
+
 	set_cluster_pages_dirty(clust, inode);
 	result = checkin_logical_cluster(clust, inode);
 	put_hint_cluster(clust, inode, ZNODE_WRITE_LOCK);
@@ -3502,7 +3504,7 @@ static int capture_anon_pages(struct address_space * mapping, pgoff_t * index,
 			break;
 		}
 		move_cluster_forward(&clust, inode, pages[0]->index);
-		result = capture_anon_page_cluster(&clust, inode);
+		result = capture_page_cluster(&clust, inode);
 
 		put_found_pages(pages, found); /* find_anon_page_cluster */
 		if (result)
@@ -3743,18 +3745,48 @@ int release_cryptcompress(struct inode *inode, struct file *file)
 }
 
 /* plugin->prepare_write */
-int prepare_write_cryptcompress(struct file *file, struct page *page,
-				unsigned from, unsigned to)
+int write_begin_cryptcompress(struct file *file, struct page *page,
+			  unsigned from, unsigned to)
 {
-	return -EINVAL;
+	return do_prepare_write(file, page, from, to);
 }
 
 /* plugin->commit_write */
-int commit_write_cryptcompress(struct file *file, struct page *page,
-			       unsigned from, unsigned to)
+int write_end_cryptcompress(struct file *file, struct page *page,
+			  unsigned from, unsigned to)
 {
-	BUG();
-	return 0;
+	int ret;
+	hint_t *hint;
+	lock_handle *lh;
+	struct inode * inode;
+	struct cluster_handle clust;
+
+	unlock_page(page);
+
+	inode = page->mapping->host;
+	hint = kmalloc(sizeof(*hint), reiser4_ctx_gfp_mask_get());
+	if (hint == NULL)
+		return RETERR(-ENOMEM);
+	hint_init_zero(hint);
+	lh = &hint->lh;
+
+	cluster_init_read(&clust, NULL);
+	clust.hint = hint;
+
+	ret = alloc_cluster_pgset(&clust, cluster_nrpages(inode));
+	if (ret)
+		goto out;
+	clust.index = pg_to_clust(page->index, inode);
+	ret = capture_page_cluster(&clust, inode);
+	if (ret)
+		warning("edward-1557",
+			"Capture failed (inode %llu, result=%i)",
+			(unsigned long long)get_inode_oid(inode), ret);
+ out:
+	done_lh(lh);
+	kfree(hint);
+	put_cluster_handle(&clust);
+	return ret;
 }
 
 /* plugin->bmap */

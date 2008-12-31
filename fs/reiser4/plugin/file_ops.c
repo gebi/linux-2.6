@@ -95,55 +95,12 @@ int reiser4_sync_file_common(struct file *file,
 	return 0;
 }
 
-/* this is common implementation of vfs's sendfile method of struct
-   file_operations
-
-   Reads @count bytes from @file and calls @actor for every page read. This is
-   needed for loop back devices support.
-*/
-#if 0
-ssize_t
-sendfile_common(struct file *file, loff_t *ppos, size_t count,
-		read_actor_t actor, void *target)
-{
-	reiser4_context *ctx;
-	ssize_t result;
-
-	ctx = reiser4_init_context(file->f_dentry->d_inode->i_sb);
-	if (IS_ERR(ctx))
-		return PTR_ERR(ctx);
-	result = generic_file_sendfile(file, ppos, count, actor, target);
-	reiser4_exit_context(ctx);
-	return result;
-}
-#endif  /*  0  */
 
 /* address space operations */
 
-/* this is common implementation of vfs's prepare_write method of struct
-   address_space_operations
-*/
-int
-prepare_write_common(struct file *file, struct page *page, unsigned from,
-		     unsigned to)
-{
-	reiser4_context *ctx;
-	int result;
 
-	ctx = reiser4_init_context(page->mapping->host->i_sb);
-	result = do_prepare_write(file, page, from, to);
-
-	/* don't commit transaction under inode semaphore */
-	context_set_commit_async(ctx);
-	reiser4_exit_context(ctx);
-
-	return result;
-}
-
-/* this is helper for prepare_write_common and prepare_write_unix_file
- */
-int
-do_prepare_write(struct file *file, struct page *page, unsigned from,
+/* this is helper for plugin->write_begin() */
+int do_prepare_write(struct file *file, struct page *page, unsigned from,
 		 unsigned to)
 {
 	int result;

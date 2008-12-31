@@ -36,9 +36,6 @@ int reiser4_readdir_common(struct file *, void *dirent, filldir_t);
 int reiser4_release_dir_common(struct inode *, struct file *);
 int reiser4_sync_common(struct file *, struct dentry *, int datasync);
 
-/* common implementations of address space operations */
-int prepare_write_common(struct file *, struct page *, unsigned from,
-			 unsigned to);
 
 /* file plugin operations: common implementations */
 int write_sd_by_inode_common(struct inode *);

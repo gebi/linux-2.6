@@ -114,8 +114,8 @@ static struct address_space_operations regular_file_a_ops = {
 	.writepages = reiser4_writepages,
 	.set_page_dirty = reiser4_set_page_dirty,
 	.readpages = reiser4_readpages,
-	.prepare_write = reiser4_prepare_write,
-	.commit_write =	reiser4_commit_write,
+	.write_begin = reiser4_write_begin_careful,
+	.write_end = reiser4_write_end_careful,
 	.bmap = reiser4_bmap_careful,
 	.invalidatepage = reiser4_invalidatepage,
 	.releasepage = reiser4_releasepage
@@ -165,8 +165,8 @@ static struct address_space_operations directory_a_ops = {
 	.writepages = dummyop,
 	.set_page_dirty = bugop,
 	.readpages = bugop,
-	.prepare_write = bugop,
-	.commit_write = bugop,
+	.write_begin = bugop,
+	.write_end = bugop,
 	.bmap = bugop,
 	.invalidatepage = bugop,
 	.releasepage = bugop
@@ -209,8 +209,8 @@ file_plugin file_plugins[LAST_FILE_PLUGIN_ID] = {
 		.readpage = readpage_unix_file,
 		.readpages = readpages_unix_file,
 		.writepages = writepages_unix_file,
-		.prepare_write = prepare_write_unix_file,
-		.commit_write = commit_write_unix_file,
+		.write_begin = write_begin_unix_file,
+		.write_end = write_end_unix_file,
 		/*
 		 * private a_ops
 		 */
@@ -403,8 +403,8 @@ file_plugin file_plugins[LAST_FILE_PLUGIN_ID] = {
 		.readpage = readpage_cryptcompress,
 		.readpages = readpages_cryptcompress,
 		.writepages = writepages_cryptcompress,
-		.prepare_write = prepare_write_cryptcompress,
-		.commit_write = commit_write_cryptcompress,
+		.write_begin = write_begin_cryptcompress,
+		.write_end = write_end_cryptcompress,
 
 		.bmap = bmap_cryptcompress,
 

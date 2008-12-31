@@ -560,8 +560,8 @@ static struct address_space_operations formatted_fake_as_ops = {
 	.set_page_dirty = formatted_set_page_dirty,
 	/* used for read-ahead. Not applicable */
 	.readpages = NULL,
-	.prepare_write = NULL,
-	.commit_write = NULL,
+	.write_begin = NULL,
+	.write_end = NULL,
 	.bmap = NULL,
 	/* called just before page is being detached from inode mapping and
 	   removed from memory. Called on truncate, cut/squeeze, and

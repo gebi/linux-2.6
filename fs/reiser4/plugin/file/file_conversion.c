@@ -667,6 +667,89 @@ sector_t reiser4_bmap_careful(struct address_space * mapping, sector_t lblock)
 	return PROT_PASSIVE(sector_t, bmap, (mapping, lblock));
 }
 
+int reiser4_write_begin_careful(struct file *file,
+				struct address_space *mapping,
+				loff_t pos,
+				unsigned len,
+				unsigned flags,
+				struct page **pagep,
+				void **fsdata)
+{
+	int ret = 0;
+	unsigned start, end;
+	struct page *page;
+	pgoff_t index;
+	reiser4_context *ctx;
+	struct inode * inode = file->f_dentry->d_inode;
+
+	index = pos >> PAGE_CACHE_SHIFT;
+	start = pos & (PAGE_CACHE_SIZE - 1);
+	end = start + len;
+
+	page = __grab_cache_page(mapping, index);
+	*pagep = page;
+	if (!page)
+		return -ENOMEM;
+
+	ctx = reiser4_init_context(file->f_dentry->d_inode->i_sb);
+	if (IS_ERR(ctx)) {
+		ret = PTR_ERR(ctx);
+		goto out;
+	}
+	ret = PROT_PASSIVE(int, write_begin, (file, page, start, end));
+
+	/* don't commit transaction under inode semaphore */
+	context_set_commit_async(ctx);
+	reiser4_exit_context(ctx);
+ out:
+	if (unlikely(ret)) {
+		unlock_page(page);
+		page_cache_release(page);
+	}
+	return ret;
+}
+
+int reiser4_write_end_careful(struct file *file,
+			      struct address_space *mapping,
+			      loff_t pos,
+			      unsigned len,
+			      unsigned copied,
+			      struct page *page,
+			      void *fsdata)
+{
+	int ret;
+	reiser4_context *ctx;
+	unsigned start, end;
+	struct inode *inode = page->mapping->host;
+
+	assert("umka-3101", file != NULL);
+	assert("umka-3102", page != NULL);
+	assert("umka-3093", PageLocked(page));
+
+	start = pos & (PAGE_CACHE_SIZE - 1);
+	end = start + len;
+
+	flush_dcache_page(page);
+	SetPageUptodate(page);
+
+	ctx = reiser4_init_context(page->mapping->host->i_sb);
+	if (IS_ERR(ctx)){
+		unlock_page(page);
+		ret = PTR_ERR(ctx);
+		goto out;
+	}
+	ret = PROT_PASSIVE(int, write_end, (file, page, start, end));
+
+	/* don't commit transaction under inode semaphore */
+	context_set_commit_async(ctx);
+	reiser4_exit_context(ctx);
+ out:
+	page_cache_release(page);
+	if (!ret)
+		ret = copied;
+	return ret;
+}
+
 /*
  * Wrappers without protection for:
  *
