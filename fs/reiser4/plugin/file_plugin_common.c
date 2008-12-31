@@ -476,10 +476,7 @@ struct dentry *wire_get_common(struct super_block *sb,
 	if (!IS_ERR(inode)) {
 		reiser4_iget_complete(inode);
 		dentry = d_obtain_alias(inode);
-		if (dentry == NULL) {
-			iput(inode);
-			dentry = ERR_PTR(-ENOMEM);
-		} else
+		if (!IS_ERR(dentry))
 			dentry->d_op = &get_super_private(sb)->ops.dentry;
 	} else if (PTR_ERR(inode) == -ENOENT)
 		/*

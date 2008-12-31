@@ -56,10 +56,7 @@ struct dentry *get_parent_common(struct inode *child)
 		check_light_weight(parent, child);
 		reiser4_iget_complete(parent);
 		dentry = d_obtain_alias(parent);
-		if (dentry == NULL) {
-			iput(parent);
-			dentry = ERR_PTR(RETERR(-ENOMEM));
-		} else
+		if (!IS_ERR(dentry))
 			dentry->d_op = &get_super_private(s)->ops.dentry;
 	} else if (PTR_ERR(parent) == -ENOENT)
 		dentry = ERR_PTR(RETERR(-ESTALE));
@@ -353,11 +350,6 @@ int reiser4_dir_done_common(struct inode *object/* object being deleted */)
 	result = reiser4_rem_entry_common(object, &goodby_dots, &entry);
 	reiser4_free_dentry_fsdata(&goodby_dots);
 	if (unlikely(result != 0 && result != -ENOMEM && result != -ENOENT))
-		/* only worth a warning
-
-		   "values of B will give rise to dom!\n"
-		   -- v6src/s2/mv.c:89
-		 */
 		warning("nikita-2252", "Cannot remove dot of %lli: %i",
 			(unsigned long long)get_inode_oid(object), result);
 	return 0;
