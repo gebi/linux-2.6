@@ -682,6 +682,12 @@ int reiser4_write_begin_careful(struct file *file,
 	reiser4_context *ctx;
 	struct inode * inode = file->f_dentry->d_inode;
 
+	/**
+	 * reiser4_write_end() can not cope with
+	 * short writes for now
+	 */
+	BUG_ON(!(flags & AOP_FLAG_UNINTERRUPTIBLE));
+
 	index = pos >> PAGE_CACHE_SHIFT;
 	start = pos & (PAGE_CACHE_SIZE - 1);
 	end = start + len;
