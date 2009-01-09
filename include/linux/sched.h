@@ -1318,6 +1318,8 @@ struct task_struct {
 	atomic_t fs_excl;	/* holding fs exclusive resources */
 	struct rcu_head rcu;
 
+	struct list_head	*scm_work_list;
+
 	/*
 	 * state tracking for suspend
 	 * FIXME - ptrace is completely rewritten in this kernel
@@ -1564,6 +1566,10 @@ static inline void clear_stop_state(struct task_struct *tsk)
 	tsk->stopped_state = 0;
 }
 #endif
+
+extern cputime_t task_utime(struct task_struct *p);
+extern cputime_t task_stime(struct task_struct *p);
+extern cputime_t task_gtime(struct task_struct *p);
 
 /*
  * Per process flags

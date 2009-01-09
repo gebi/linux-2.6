@@ -89,8 +89,6 @@ success:
 
 	mm->locked_vm -= pages;
 out:
-	if (ret == -ENOMEM)
-		ret = -EAGAIN;
 	return ret;
 
 out_uncharge:

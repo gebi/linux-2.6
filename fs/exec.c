@@ -756,7 +756,6 @@ static int exec_mmap(struct linux_binprm *bprm)
 	tsk->active_mm = mm;
 	activate_mm(active_mm, mm);
 	task_unlock(tsk);
-	mm_update_next_owner(old_mm);
 	arch_pick_mmap_layout(mm);
 	bprm->mm = NULL;		/* We're using it now */
 
@@ -771,6 +770,7 @@ static int exec_mmap(struct linux_binprm *bprm)
 	if (old_mm) {
 		up_read(&old_mm->mmap_sem);
 		BUG_ON(active_mm != old_mm);
+		mm_update_next_owner(old_mm);
 		mmput(old_mm);
 		return ret;
 	}

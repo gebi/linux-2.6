@@ -163,7 +163,7 @@ int xfpregs_get(struct task_struct *target, const struct user_regset *regset,
 	int ret;
 
 	if (!cpu_has_fxsr)
-		return -EIO;
+		return -ENODEV;
 
 	ret = init_fpu(target);
 	if (ret)
@@ -180,7 +180,7 @@ int xfpregs_set(struct task_struct *target, const struct user_regset *regset,
 	int ret;
 
 	if (!cpu_has_fxsr)
-		return -EIO;
+		return -ENODEV;
 
 	ret = init_fpu(target);
 	if (ret)
