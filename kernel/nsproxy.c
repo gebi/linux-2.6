@@ -127,7 +127,8 @@ out_ns:
  * called from clone.  This now handles copy for nsproxy and all
  * namespaces therein.
  */
-int copy_namespaces(unsigned long flags, struct task_struct *tsk)
+int copy_namespaces(unsigned long flags, struct task_struct *tsk,
+		int force_admin)
 {
 	struct nsproxy *old_ns = tsk->nsproxy;
 	struct nsproxy *new_ns;
@@ -142,12 +143,10 @@ int copy_namespaces(unsigned long flags, struct task_struct *tsk)
 				CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNET)))
 		return 0;
 
-#ifndef CONFIG_VE
-	if (!capable(CAP_SYS_ADMIN)) {
+	if (!capable(CAP_SYS_ADMIN) && !force_admin) {
 		err = -EPERM;
 		goto out;
 	}
-#endif
 
 	/*
 	 * CLONE_NEWIPC must detach from the undolist: after switching

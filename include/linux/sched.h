@@ -29,10 +29,6 @@
 #define CLONE_NEWNET		0x40000000	/* New network namespace */
 #define CLONE_IO		0x80000000	/* Clone io context */
 
-/* mask of clones which are disabled in OpenVZ VEs */
-#define CLONE_NAMESPACES_MASK	(CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWUSER | \
-				 CLONE_NEWPID | CLONE_NEWNET)
-
 /*
  * Scheduling policies
  */
