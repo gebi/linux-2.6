@@ -343,6 +343,9 @@ static struct nfs_client *nfs_match_client(const struct nfs_client_initdata *dat
 		if (clp->cl_cons_state < 0)
 			continue;
 
+		if (!ve_accessible_strict(clp->owner_env, ve))
+				continue;
+
 		/* Different NFS versions cannot share the same nfs_client */
 		if (clp->rpc_ops != data->rpc_ops)
 			continue;
