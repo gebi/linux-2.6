@@ -13,6 +13,7 @@
 #include <linux/file.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/nsproxy.h>
 
 #define KTHREAD_NICE_LEVEL (-5)
 
@@ -26,6 +27,7 @@ struct kthread_create_info
 	int (*threadfn)(void *data);
 	void *data;
 	struct completion started;
+	struct ve_struct *ve;
 
 	/* Result passed back to kthread_create() from kthreadd. */
 	struct task_struct *result;
@@ -66,6 +68,18 @@ static int kthread(void *_create)
 	void *data;
 	int ret = -EINTR;
 
+	if (do_ve_enter_hook && create->ve != get_ve0()) {
+		ret = do_ve_enter_hook(create->ve, 0);
+		if (ret < 0) {
+			create->result = ERR_PTR(ret);
+			complete(&create->started);
+			return ret;
+		}
+	} else if (create->ve != get_ve0())
+		BUG();
+
+	create->result = current;
+
 	/* Copy data: it's on kthread's stack */
 	threadfn = create->threadfn;
 	data = create->data;
@@ -97,9 +111,10 @@ static void create_kthread(struct kthread_create_info *create)
 	} else {
 		struct sched_param param = { .sched_priority = 0 };
 		wait_for_completion(&create->started);
-		read_lock(&tasklist_lock);
-		create->result = find_task_by_pid_ns(pid, &init_pid_ns);
-		read_unlock(&tasklist_lock);
+
+		if (IS_ERR(create->result))
+			goto end;
+
 		/*
 		 * root may have changed our (kthreadd's) priority or CPU mask.
 		 * The kernel thread should not inherit these properties.
@@ -108,11 +123,12 @@ static void create_kthread(struct kthread_create_info *create)
 		set_user_nice(create->result, KTHREAD_NICE_LEVEL);
 		set_cpus_allowed(create->result, CPU_MASK_ALL);
 	}
+end:
 	complete(&create->done);
 }
 
 /**
- * kthread_create - create a kthread.
+ * kthread_create_ve - create a kthread.
  * @threadfn: the function to run until signal_pending(current).
  * @data: data ptr for @threadfn.
  * @namefmt: printf-style name for the thread.
@@ -130,7 +146,8 @@ static void create_kthread(struct kthread_create_info *create)
  *
  * Returns a task_struct or ERR_PTR(-ENOMEM).
  */
-struct task_struct *kthread_create(int (*threadfn)(void *data),
+struct task_struct *kthread_create_ve(struct ve_struct *ve,
+				   int (*threadfn)(void *data),
 				   void *data,
 				   const char namefmt[],
 				   ...)
@@ -139,6 +156,7 @@ struct task_struct *kthread_create(int (*threadfn)(void *data),
 
 	create.threadfn = threadfn;
 	create.data = data;
+	create.ve = ve;
 	init_completion(&create.started);
 	init_completion(&create.done);
 
@@ -158,7 +176,7 @@ struct task_struct *kthread_create(int (*threadfn)(void *data),
 	}
 	return create.result;
 }
-EXPORT_SYMBOL(kthread_create);
+EXPORT_SYMBOL(kthread_create_ve);
 
 /**
  * kthread_bind - bind a just-created kthread to a cpu.

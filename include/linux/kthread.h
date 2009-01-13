@@ -4,9 +4,19 @@
 #include <linux/err.h>
 #include <linux/sched.h>
 
-struct task_struct *kthread_create(int (*threadfn)(void *data),
+struct task_struct *kthread_create_ve(struct ve_struct *ve,
+				   int (*threadfn)(void *data),
 				   void *data,
 				   const char namefmt[], ...);
+
+
+#define kthread_create(threadfn, data, namefmt, ...)			\
+({									\
+	struct task_struct *__k						\
+		= kthread_create_ve(get_ve0(), threadfn, data, namefmt,	\
+				 ## __VA_ARGS__);			\
+	__k;								\
+})
 
 /**
  * kthread_run - create and wake a thread.
@@ -21,6 +31,17 @@ struct task_struct *kthread_create(int (*threadfn)(void *data),
 ({									   \
 	struct task_struct *__k						   \
 		= kthread_create(threadfn, data, namefmt, ## __VA_ARGS__); \
+	if (!IS_ERR(__k))						   \
+		wake_up_process(__k);					   \
+	__k;								   \
+})
+
+/* Like kthread_run() but run a thread in VE context */
+#define kthread_run_ve(ve, threadfn, data, namefmt, ...)		   \
+({									   \
+	struct task_struct *__k						   \
+		= kthread_create_ve(ve, threadfn, data, namefmt,	   \
+				    ## __VA_ARGS__);			   \
 	if (!IS_ERR(__k))						   \
 		wake_up_process(__k);					   \
 	__k;								   \
