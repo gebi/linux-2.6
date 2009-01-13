@@ -883,7 +883,8 @@ void ve_move_task(struct task_struct *tsk, struct ve_struct *new)
 	BUG_ON(!(thread_group_leader(tsk) && thread_group_empty(tsk)));
 
 	/* this probihibts ptracing of task entered to VE from host system */
-	tsk->mm->vps_dumpable = 0;
+	if (tsk->mm)
+		tsk->mm->vps_dumpable = 0;
 	/* setup capabilities before enter */
 	set_task_ve_caps(tsk, new);
 
