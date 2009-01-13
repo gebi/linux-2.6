@@ -2397,6 +2397,12 @@ static int __init vecalls_init(void)
 	if (err < 0)
 		goto out_ioctls;
 
+	/* We can easy dereference this hook if VE is running
+	 * because in this case vzmon refcount > 0
+	 */
+	do_ve_enter_hook = do_env_enter;
+
+
 	return 0;
 
 out_ioctls:
@@ -2413,6 +2419,7 @@ out_vzmond:
 
 static void vecalls_exit(void)
 {
+	do_ve_enter_hook = NULL;
 	fini_vecalls_ioctls();
 	fini_vecalls_proc();
 	fini_vecalls_symbols();

@@ -336,6 +336,8 @@ extern spinlock_t ve_cleanup_lock;
 extern struct list_head ve_cleanup_list;
 extern struct task_struct *ve_cleanup_thread;
 
+extern int (*do_ve_enter_hook)(struct ve_struct *ve, unsigned int flags);
+
 extern unsigned long long ve_relative_clock(struct timespec * ts);
 
 #ifdef CONFIG_FAIRSCHED

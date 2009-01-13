@@ -85,6 +85,9 @@ void do_env_free(struct ve_struct *env)
 EXPORT_SYMBOL(do_env_free);
 #endif
 
+int (*do_ve_enter_hook)(struct ve_struct *ve, unsigned int flags);
+EXPORT_SYMBOL(do_ve_enter_hook);
+
 #if defined(CONFIG_VE_ETHDEV) || defined(CONFIG_VE_ETHDEV_MODULE)
 INIT_KSYM_MODULE(vzethdev);
 INIT_KSYM_CALL(int, veth_open, (struct net_device *dev));
