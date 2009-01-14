@@ -468,7 +468,7 @@ void tun_setup(struct net_device *dev)
 	dev->stop = tun_net_close;
 	dev->ethtool_ops = &tun_ethtool_ops;
 	dev->destructor = free_netdev;
-	dev->features |= NETIF_F_NETNS_LOCAL;
+	dev->features |= NETIF_F_NETNS_LOCAL | NETIF_F_VIRTUAL;
 }
 EXPORT_SYMBOL(tun_setup);
 
