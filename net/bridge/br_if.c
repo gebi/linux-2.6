@@ -406,7 +406,7 @@ int br_add_if(struct net_bridge *br, struct net_device *dev)
 	if ((dev->flags & IFF_UP) && netif_carrier_ok(dev) &&
 	    (br->dev->flags & IFF_UP))
 		br_stp_enable_port(p);
-	if (!(dev->features & NETIF_F_VIRTUAL)) {
+	if (!(dev->features & NETIF_F_VIRTUAL) && !br->master_dev) {
 		dev_hold(dev);
 		br->master_dev = dev;
 	}
