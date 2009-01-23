@@ -88,7 +88,7 @@ static int devcgroup_can_attach(struct cgroup_subsys *ss,
 #ifdef CONFIG_VE
 static struct dev_whitelist_item default_whitelist_items[] = {
 	{ ~0,                     ~0, DEV_ALL,  ACC_MKNOD },
-	{ UNIX98_PTY_SLAVE_MAJOR, ~0, DEV_CHAR, ACC_READ | ACC_WRITE },
+	{ UNIX98_PTY_MASTER_MAJOR, ~0, DEV_CHAR, ACC_READ | ACC_WRITE },
 	{ UNIX98_PTY_SLAVE_MAJOR, ~0, DEV_CHAR, ACC_READ | ACC_WRITE },
 	{ PTY_MASTER_MAJOR,       ~0, DEV_CHAR, ACC_READ | ACC_WRITE },
 	{ PTY_SLAVE_MAJOR,        ~0, DEV_CHAR, ACC_READ | ACC_WRITE },
