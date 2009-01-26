@@ -311,10 +311,7 @@ out:
 
 	dst_release(skb->dst);
 	skb->dst = NULL;
-#if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
-	nf_conntrack_put(skb->nfct);
-	skb->nfct = NULL;
-#endif
+	nf_reset(skb);
 	length = skb->len;
 
 	netif_rx(skb);
