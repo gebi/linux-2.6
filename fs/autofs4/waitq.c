@@ -143,7 +143,7 @@ static void autofs4_notify_daemon(struct autofs_sb_info *sbi,
 		 *
 		 * reduce size if work in 32-bit mode to satisfy userspace hope
 		 */
-		if (test_thread_flag(TIF_IA32))
+		if (sbi->is32bit)
 			pktsz -= 4;
 #endif
 

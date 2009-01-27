@@ -337,6 +337,10 @@ int autofs4_fill_super(struct super_block *s, void *data, int silent)
 	sbi->type = 0;
 	sbi->min_proto = 0;
 	sbi->max_proto = 0;
+#if defined CONFIG_X86_64 && defined CONFIG_IA32_EMULATION
+	if (test_thread_flag(TIF_IA32))
+		sbi->is32bit = 1;
+#endif
 	mutex_init(&sbi->wq_mutex);
 	spin_lock_init(&sbi->fs_lock);
 	sbi->queues = NULL;

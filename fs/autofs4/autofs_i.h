@@ -114,6 +114,7 @@ struct autofs_sb_info {
 	struct autofs_wait_queue *queues; /* Wait queue pointer */
 	spinlock_t rehash_lock;
 	struct list_head rehash_list;
+	unsigned is32bit:1;
 };
 
 static inline struct autofs_sb_info *autofs4_sbi(struct super_block *sb)
