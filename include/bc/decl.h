@@ -1,10 +1,10 @@
 /*
  *  include/bc/decl.h
  *
- *  Copyright (C) 2005  SWsoft
+ *  Copyright (C) 2005-2009 Parallels Holdings, Ltd.
  *  All rights reserved.
  *  
- *  Licensing governed by "linux/COPYING.SWsoft" file.
+ *  Licensing governed by "linux/COPYING.Parallels" file.
  *
  */
 

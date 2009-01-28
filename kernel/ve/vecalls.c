@@ -1,7 +1,7 @@
 /*
  *  linux/kernel/ve/vecalls.c
  *
- *  Copyright (C) 2000-2005  SWsoft
+ *  Copyright (C) 2000-2009 Parallels Holdings, Ltd.
  *  All rights reserved.
  *
  */
@@ -2428,7 +2428,7 @@ static void vecalls_exit(void)
 	fini_vecalls_sysctl();
 }
 
-MODULE_AUTHOR("SWsoft <info@sw-soft.com>");
+MODULE_AUTHOR("Parallels <info@parallels.com>");
 MODULE_DESCRIPTION("Virtuozzo Control");
 MODULE_LICENSE("GPL v2");
 

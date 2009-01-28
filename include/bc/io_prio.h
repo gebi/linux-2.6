@@ -1,10 +1,10 @@
 /*
  *  include/bc/io_prio.h
  *
- *  Copyright (C) 2007 SWsoft
+ *  Copyright (C) 2007-2009 Parallels Holdings, Ltd.
  *  All rights reserved.
  *
- *  Licensing governed by "linux/COPYING.SWsoft" file.
+ *  Licensing governed by "linux/COPYING.Parallels" file.
  *
  *  Vasily Tarasov <vtaras@openvz.org>
  *

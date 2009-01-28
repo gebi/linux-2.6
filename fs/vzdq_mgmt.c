@@ -1,8 +1,8 @@
 /*
- * Copyright (C) 2001, 2002, 2004, 2005  SWsoft
+ * Copyright (C) 2001-2009 Parallels Holdings, Ltd.
  * All rights reserved.
  * 
- * Licensing governed by "linux/COPYING.SWsoft" file.
+ * Licensing governed by "linux/COPYING.Parallels" file.
  */
 
 #include <linux/kernel.h>

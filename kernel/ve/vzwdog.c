@@ -1,10 +1,10 @@
 /*
  *  kernel/ve/vzwdog.c
  *
- *  Copyright (C) 2000-2005  SWsoft
+ *  Copyright (C) 2000-2009 Parallels Holdings, Ltd.
  *  All rights reserved.
  *  
- *  Licensing governed by "linux/COPYING.SWsoft" file.
+ *  Licensing governed by "linux/COPYING.Parallels" file.
  *
  */
 
@@ -279,7 +279,7 @@ static void __exit wdog_exit(void)
 }
 
 module_param(sleep_timeout, int, 0660);
-MODULE_AUTHOR("SWsoft <info@sw-soft.com>");
+MODULE_AUTHOR("Parallels <info@parallels.com>");
 MODULE_DESCRIPTION("Virtuozzo WDOG");
 MODULE_LICENSE("GPL v2");
 

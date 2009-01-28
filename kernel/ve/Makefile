@@ -2,10 +2,10 @@
 #
 #  kernel/ve/Makefile
 #
-#  Copyright (C) 2000-2005  SWsoft
+#  Copyright (C) 2000-2009 Parallels Holdings, Ltd.
 #  All rights reserved.
 #
-#  Licensing governed by "linux/COPYING.SWsoft" file.
+#  Licensing governed by "linux/COPYING.Parallels" file.
 
 obj-$(CONFIG_VE) = ve.o veowner.o hooks.o
 obj-$(CONFIG_VZ_WDOG) += vzwdog.o

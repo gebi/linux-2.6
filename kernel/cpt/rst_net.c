@@ -2,10 +2,10 @@
  *
  *  kernel/cpt/rst_net.c
  *
- *  Copyright (C) 2000-2005  SWsoft
+ *  Copyright (C) 2000-2009 Parallels Holdings, Ltd.
  *  All rights reserved.
  *
- *  Licensing governed by "linux/COPYING.SWsoft" file.
+ *  Licensing governed by "linux/COPYING.Parallels" file.
  *
  */
 

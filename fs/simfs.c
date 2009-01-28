@@ -1,10 +1,10 @@
 /*
  *  fs/simfs.c
  *
- *  Copyright (C) 2005  SWsoft
+ *  Copyright (C) 2005-2009 Parallels Holdings, Ltd.
  *  All rights reserved.
  *  
- *  Licensing governed by "linux/COPYING.SWsoft" file.
+ *  Licensing governed by "linux/COPYING.Parallels" file.
  *
  */
 
@@ -324,7 +324,7 @@ static void __exit exit_simfs(void)
 	unregister_filesystem(&sim_fs_type);
 }
 
-MODULE_AUTHOR("SWsoft <info@sw-soft.com>");
+MODULE_AUTHOR("Parallels <info@parallels.com>");
 MODULE_DESCRIPTION("Open Virtuozzo Simulation of File System");
 MODULE_LICENSE("GPL v2");
 

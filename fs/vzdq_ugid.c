@@ -1,8 +1,8 @@
 /*
- * Copyright (C) 2002 SWsoft
+ * Copyright (C) 2002-2009 Parallels Holdings, Ltd.
  * All rights reserved.
  * 
- * Licensing governed by "linux/COPYING.SWsoft" file.
+ * Licensing governed by "linux/COPYING.Parallels" file.
  *
  * This file contains Virtuozzo UID/GID disk quota implementation
  */

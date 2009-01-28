@@ -1,8 +1,8 @@
 /*
- * Copyright (C) 2001, 2002, 2004, 2005  SWsoft
+ * Copyright (C) 2001-2009 Parallels Holdings, Ltd.
  * All rights reserved.
  * 
- * Licensing governed by "linux/COPYING.SWsoft" file.
+ * Licensing governed by "linux/COPYING.Parallels" file.
  *
  * This file contains the core of Virtuozzo disk quota implementation:
  * maintenance of VZDQ information in inodes,
@@ -1945,7 +1945,7 @@ static void __exit vzquota_release(void)
 }
 #endif
 
-MODULE_AUTHOR("SWsoft <info@sw-soft.com>");
+MODULE_AUTHOR("Parallels <info@parallels.com>");
 MODULE_DESCRIPTION("Virtuozzo Disk Quota");
 MODULE_LICENSE("GPL v2");
 

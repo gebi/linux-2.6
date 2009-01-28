@@ -3,10 +3,10 @@
  *
  *  Copyright (C) 1998  Alan Cox
  *                1998-2000  Andrey V. Savochkin <saw@saw.sw.com.sg>
- *  Copyright (C) 2000-2005 SWsoft
+ *  Copyright (C) 2000-2009 Parallels Holdings, Ltd.
  *  All rights reserved.
  *  
- *  Licensing governed by "linux/COPYING.SWsoft" file.
+ *  Licensing governed by "linux/COPYING.Parallels" file.
  *
  * TODO:
  *   - more intelligent limit check in mremap(): currently the new size is

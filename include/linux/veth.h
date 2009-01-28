@@ -1,10 +1,10 @@
 /*
  *  include/linux/veth.h
  *
- *  Copyright (C) 2007  SWsoft
+ *  Copyright (C) 2007-2009 Parallels Holdings, Ltd.
  *  All rights reserved.
  *  
- *  Licensing governed by "linux/COPYING.SWsoft" file.
+ *  Licensing governed by "linux/COPYING.Parallels" file.
  *
  */
 #ifndef __NET_VETH_H_

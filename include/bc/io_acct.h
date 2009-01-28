@@ -1,10 +1,10 @@
 /*
  *  include/bc/io_acct.h
  *
- *  Copyright (C) 2006 SWsoft
+ *  Copyright (C) 2006-2009 Parallels Holdings, Ltd.
  *  All rights reserved.
  *  
- *  Licensing governed by "linux/COPYING.SWsoft" file.
+ *  Licensing governed by "linux/COPYING.Parallels" file.
  *
  *  Pavel Emelianov <xemul@openvz.org>
  *
