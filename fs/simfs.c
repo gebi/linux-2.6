@@ -55,6 +55,8 @@ static int sim_getattr(struct vfsmount *mnt, struct dentry *dentry,
 			return err;
 	}
 
+	if (!mnt)
+		return 0;
 	sb = mnt->mnt_sb;
 	if (sb->s_op == &sim_super_ops)
 		stat->dev = sb->s_dev;
