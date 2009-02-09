@@ -692,7 +692,8 @@ int reiser4_write_begin_careful(struct file *file,
 	start = pos & (PAGE_CACHE_SIZE - 1);
 	end = start + len;
 
-	page = __grab_cache_page(mapping, index);
+	page = grab_cache_page_write_begin(mapping, index,
+					   flags & AOP_FLAG_NOFS);
 	*pagep = page;
 	if (!page)
 		return -ENOMEM;
