@@ -944,8 +944,8 @@ common_object_delete_no_reserve(struct inode *inode/* object to remove */)
 	if (!reiser4_inode_get_flag(inode, REISER4_NO_SD)) {
 		reiser4_key sd_key;
 
-		DQUOT_FREE_INODE(inode);
-		DQUOT_DROP(inode);
+		vfs_dq_free_inode(inode);
+		vfs_dq_drop(inode);
 
 		build_sd_key(inode, &sd_key);
 		result =

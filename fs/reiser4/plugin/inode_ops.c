@@ -453,7 +453,7 @@ int reiser4_setattr_common(struct dentry *dentry, struct iattr *attr)
 		if ((attr->ia_valid & ATTR_UID && attr->ia_uid != inode->i_uid)
 		    || (attr->ia_valid & ATTR_GID
 			&& attr->ia_gid != inode->i_gid)) {
-			result = DQUOT_TRANSFER(inode, attr) ? -EDQUOT : 0;
+			result = vfs_dq_transfer(inode, attr) ? -EDQUOT : 0;
 			if (result) {
 				context_set_commit_async(ctx);
 				reiser4_exit_context(ctx);
@@ -593,8 +593,8 @@ static int do_create_vfs_child(reiser4_object_create_data * data,/* parameters
 	/* So that on error iput will be called. */
 	*retobj = object;
 
-	if (DQUOT_ALLOC_INODE(object)) {
-		DQUOT_DROP(object);
+	if (vfs_dq_alloc_inode(object)) {
+		vfs_dq_drop(object);
 		object->i_flags |= S_NOQUOTA;
 		return RETERR(-EDQUOT);
 	}
@@ -608,7 +608,7 @@ static int do_create_vfs_child(reiser4_object_create_data * data,/* parameters
 	if (result) {
 		warning("nikita-431", "Cannot install plugin %i on %llx",
 			data->id, (unsigned long long)get_inode_oid(object));
-		DQUOT_FREE_INODE(object);
+		vfs_dq_free_inode(object);
 		object->i_flags |= S_NOQUOTA;
 		return result;
 	}
@@ -617,7 +617,7 @@ static int do_create_vfs_child(reiser4_object_create_data * data,/* parameters
 	obj_plug = inode_file_plugin(object);
 
 	if (obj_plug->create_object == NULL) {
-		DQUOT_FREE_INODE(object);
+		vfs_dq_free_inode(object);
 		object->i_flags |= S_NOQUOTA;
 		return RETERR(-EPERM);
 	}
@@ -636,7 +636,7 @@ static int do_create_vfs_child(reiser4_object_create_data * data,/* parameters
 		warning("nikita-432", "Cannot inherit from %llx to %llx",
 			(unsigned long long)get_inode_oid(parent),
 			(unsigned long long)get_inode_oid(object));
-		DQUOT_FREE_INODE(object);
+		vfs_dq_free_inode(object);
 		object->i_flags |= S_NOQUOTA;
 		return result;
 	}
@@ -652,7 +652,7 @@ static int do_create_vfs_child(reiser4_object_create_data * data,/* parameters
 	/* obtain directory plugin (if any) for new object. */
 	obj_dir = inode_dir_plugin(object);
 	if (obj_dir != NULL && obj_dir->init == NULL) {
-		DQUOT_FREE_INODE(object);
+		vfs_dq_free_inode(object);
 		object->i_flags |= S_NOQUOTA;
 		return RETERR(-EPERM);
 	}
@@ -661,7 +661,7 @@ static int do_create_vfs_child(reiser4_object_create_data * data,/* parameters
 
 	reserve = estimate_create_vfs_object(parent, object);
 	if (reiser4_grab_space(reserve, BA_CAN_COMMIT)) {
-		DQUOT_FREE_INODE(object);
+		vfs_dq_free_inode(object);
 		object->i_flags |= S_NOQUOTA;
 		return RETERR(-ENOSPC);
 	}
@@ -692,7 +692,7 @@ static int do_create_vfs_child(reiser4_object_create_data * data,/* parameters
 			warning("nikita-2219",
 				"Failed to create sd for %llu",
 				(unsigned long long)get_inode_oid(object));
-		DQUOT_FREE_INODE(object);
+		vfs_dq_free_inode(object);
 		object->i_flags |= S_NOQUOTA;
 		return result;
 	}
@@ -735,7 +735,7 @@ static int do_create_vfs_child(reiser4_object_create_data * data,/* parameters
 	 */
 	reiser4_update_sd(object);
 	if (result != 0) {
-		DQUOT_FREE_INODE(object);
+		vfs_dq_free_inode(object);
 		object->i_flags |= S_NOQUOTA;
 		/* if everything was ok (result == 0), parent stat-data is
 		 * already updated above (update_parent_dir()) */

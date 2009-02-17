@@ -932,7 +932,7 @@ int add_entry_cde(struct inode *dir /* directory object */ ,
 	data.length = estimate_cde(result ? coord : NULL, &data);
 
 	/* NOTE-NIKITA quota plugin? */
-	if (DQUOT_ALLOC_SPACE_NODIRTY(dir, cde_bytes(result, &data)))
+	if (vfs_dq_alloc_space_nodirty(dir, cde_bytes(result, &data)))
 		return RETERR(-EDQUOT);
 
 	if (result)
@@ -983,7 +983,7 @@ int rem_entry_cde(struct inode *dir /* directory of item */ ,
 	    kill_node_content(coord, &shadow, NULL, NULL, NULL, NULL, NULL, 0);
 	if (result == 0) {
 		/* NOTE-NIKITA quota plugin? */
-		DQUOT_FREE_SPACE_NODIRTY(dir, length);
+		vfs_dq_free_space_nodirty(dir, length);
 	}
 	return result;
 }

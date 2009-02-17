@@ -260,8 +260,8 @@ static int append_last_extent(uf_coord_t *uf_coord, const reiser4_key *key,
 
 	assert("", get_key_offset(key) == (loff_t)index_jnode(jnodes[0]) * PAGE_CACHE_SIZE);
 
-	result = DQUOT_ALLOC_BLOCK_NODIRTY(mapping_jnode(jnodes[0])->host,
-					   count);
+	result = vfs_dq_alloc_block_nodirty(mapping_jnode(jnodes[0])->host,
+					    count);
 	BUG_ON(result != 0);
 
 	switch (state_of_extent(ext)) {
@@ -408,7 +408,8 @@ static int insert_first_extent(uf_coord_t *uf_coord, const reiser4_key *key,
 	if (count == 0)
 		return 0;
 
-	result = DQUOT_ALLOC_BLOCK_NODIRTY(mapping_jnode(jnodes[0])->host, count);
+	result = vfs_dq_alloc_block_nodirty(mapping_jnode(jnodes[0])->host,
+					    count);
 	BUG_ON(result != 0);
 
 	/*
@@ -622,7 +623,8 @@ static int overwrite_one_block(uf_coord_t *uf_coord, const reiser4_key *key,
 		break;
 
 	case HOLE_EXTENT:
-		result = DQUOT_ALLOC_BLOCK_NODIRTY(mapping_jnode(node)->host, 1);
+		result = vfs_dq_alloc_block_nodirty(mapping_jnode(node)->host,
+						    1);
 		BUG_ON(result != 0);
 		result = plug_hole(uf_coord, key, &how);
 		if (result)

@@ -494,11 +494,11 @@ static ssize_t insert_first_tail(struct inode *inode, flow_t *flow,
 		 * were real data which are all zeros. Therefore we have to
 		 * allocate quota here as well
 		 */
-		if (DQUOT_ALLOC_SPACE_NODIRTY(inode, flow->length))
+		if (vfs_dq_alloc_space_nodirty(inode, flow->length))
 			return RETERR(-EDQUOT);
 		result = reiser4_insert_flow(coord, lh, flow);
 		if (flow->length)
-			DQUOT_FREE_SPACE_NODIRTY(inode, flow->length);
+			vfs_dq_free_space_nodirty(inode, flow->length);
 
 		uf_info = unix_file_inode_data(inode);
 
@@ -518,13 +518,13 @@ static ssize_t insert_first_tail(struct inode *inode, flow_t *flow,
 	}
 
 	/* check quota before appending data */
-	if (DQUOT_ALLOC_SPACE_NODIRTY(inode, flow->length))
+	if (vfs_dq_alloc_space_nodirty(inode, flow->length))
 		return RETERR(-EDQUOT);
 
 	to_write = flow->length;
 	result = reiser4_insert_flow(coord, lh, flow);
 	if (flow->length)
-		DQUOT_FREE_SPACE_NODIRTY(inode, flow->length);
+		vfs_dq_free_space_nodirty(inode, flow->length);
 	return (to_write - flow->length) ? (to_write - flow->length) : result;
 }
 
@@ -553,22 +553,22 @@ static ssize_t append_tail(struct inode *inode,
 		 * were real data which are all zeros. Therefore we have to
 		 * allocate quota here as well
 		 */
-		if (DQUOT_ALLOC_SPACE_NODIRTY(inode, flow->length))
+		if (vfs_dq_alloc_space_nodirty(inode, flow->length))
 			return RETERR(-EDQUOT);
 		result = reiser4_insert_flow(coord, lh, flow);
 		if (flow->length)
-			DQUOT_FREE_SPACE_NODIRTY(inode, flow->length);
+			vfs_dq_free_space_nodirty(inode, flow->length);
 		return result;
 	}
 
 	/* check quota before appending data */
-	if (DQUOT_ALLOC_SPACE_NODIRTY(inode, flow->length))
+	if (vfs_dq_alloc_space_nodirty(inode, flow->length))
 		return RETERR(-EDQUOT);
 
 	to_write = flow->length;
 	result = reiser4_insert_flow(coord, lh, flow);
 	if (flow->length)
-		DQUOT_FREE_SPACE_NODIRTY(inode, flow->length);
+		vfs_dq_free_space_nodirty(inode, flow->length);
 	return (to_write - flow->length) ? (to_write - flow->length) : result;
 }
 
