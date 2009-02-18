@@ -18,8 +18,6 @@ extern void reiser4_done_formatted_fake(struct super_block *);
 
 extern reiser4_tree *reiser4_tree_by_page(const struct page *);
 
-extern int reiser4_set_page_dirty_internal(struct page *);
-
 #define reiser4_submit_bio(rw, bio) submit_bio((rw), (bio))
 
 extern void reiser4_wait_page_writeback(struct page *);

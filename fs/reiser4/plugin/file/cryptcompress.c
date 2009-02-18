@@ -1260,7 +1260,7 @@ static void set_cluster_pages_dirty(struct cluster_handle * clust,
 		assert("edward-968", pg != NULL);
 		lock_page(pg);
 		assert("edward-1065", PageUptodate(pg));
-		reiser4_set_page_dirty_internal(pg);
+		set_page_dirty_notag(pg);
 		unlock_page(pg);
 		mark_page_accessed(pg);
 	}
@@ -2027,7 +2027,7 @@ static int write_hole(struct inode *inode, struct cluster_handle * clust,
 		lock_page(page);
 		zero_user(page, pg_off, to_pg);
 		SetPageUptodate(page);
-		reiser4_set_page_dirty_internal(page);
+		set_page_dirty_notag(page);
 		mark_page_accessed(page);
 		unlock_page(page);
 
@@ -2747,7 +2747,7 @@ static loff_t do_write_cryptcompress(struct file *file, struct inode *inode,
 				goto err2;
 			}
 			SetPageUptodate(clust.pages[i]);
-			reiser4_set_page_dirty_internal(clust.pages[i]);
+			set_page_dirty_notag(clust.pages[i]);
 			flush_dcache_page(clust.pages[i]);
 			mark_page_accessed(clust.pages[i]);
 			unlock_page(clust.pages[i]);

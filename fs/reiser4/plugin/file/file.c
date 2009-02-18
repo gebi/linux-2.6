@@ -912,12 +912,9 @@ int write_end_unix_file(struct file *file, struct page *page,
  *
  * As a result of (3) ->writepage may be called on a dirty page without
  * jnode. Such page is called "anonymous" in reiser4. Certain work-loads
- * (iozone) generate huge number of anonymous pages. Emergency flush handles
- * this situation by creating jnode for anonymous page, starting IO on the
- * page, and marking jnode with JNODE_KEEPME bit so that it's not thrown out of
- * memory. Such jnode is also called anonymous.
+ * (iozone) generate huge number of anonymous pages.
  *
- * reiser4_sync_sb() method tries to insert anonymous pages and jnodes into
+ * reiser4_sync_sb() method tries to insert anonymous pages into
  * tree. This is done by capture_anonymous_*() functions below.
  */
 
@@ -996,11 +993,6 @@ capture_anonymous_pages(struct address_space *mapping, pgoff_t *index,
 	*index = pvec.pages[i - 1]->index + 1;
 
 	for (i = 0; i < pagevec_count(&pvec); i++) {
-		/*
-		 * tag PAGECACHE_TAG_REISER4_MOVED will be cleared by
-		 * reiser4_set_page_dirty_internal which is called when jnode is
-		 * captured
-		 */
 		result = capture_anonymous_page(pvec.pages[i]);
 		if (result == 1)
 			nr++;

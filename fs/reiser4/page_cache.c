@@ -458,27 +458,6 @@ static struct bio *page_bio(struct page *page, jnode * node, int rw, gfp_t gfp)
 		return ERR_PTR(RETERR(-ENOMEM));
 }
 
-/* this function is internally called by jnode_make_dirty() */
-int reiser4_set_page_dirty_internal(struct page *page)
-{
-	struct address_space *mapping;
-
-	mapping = page->mapping;
-	BUG_ON(mapping == NULL);
-
-	if (!TestSetPageDirty(page)) {
-		if (mapping_cap_account_dirty(mapping))
-			inc_zone_page_state(page, NR_FILE_DIRTY);
-
-		__mark_inode_dirty(mapping->host, I_DIRTY_PAGES);
-	}
-
-	/* znode must be dirty ? */
-	if (mapping->host == reiser4_get_super_fake(mapping->host->i_sb))
-		assert("", JF_ISSET(jprivate(page), JNODE_DIRTY));
-	return 0;
-}
-
 #if 0
 static int can_hit_entd(reiser4_context *ctx, struct super_block *s)
 {

@@ -1073,7 +1073,7 @@ ssize_t reiser4_write_extent(struct file *file, struct inode * inode,
 		}
 
 		flush_dcache_page(page);
-		reiser4_set_page_dirty_internal(page);
+		set_page_dirty_notag(page);
 		unlock_page(page);
 		nr_dirty++;
 

@@ -16,10 +16,11 @@
    This code guarantees that those blocks that are defined to be part of an
    atom either all take effect or none of them take effect.
 
-   Relocate set nodes are submitted to write by the jnode_flush() routine, and
-   the overwrite set is submitted by reiser4_write_log().  This is because with
-   the overwrite set we seek to optimize writes, and with the relocate set we
-   seek to cause disk order to correlate with the parent first pre-order.
+   The "relocate set" of nodes are submitted to write by the jnode_flush()
+   routine, and the "overwrite set" is submitted by reiser4_write_log().
+   This is because with the overwrite set we seek to optimize writes, and
+   with the relocate set we seek to cause disk order to correlate with the
+   "parent first order" (preorder).
 
    reiser4_write_log() allocates and writes wandered blocks and maintains
    additional on-disk structures of the atom as wander records (each wander

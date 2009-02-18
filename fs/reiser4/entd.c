@@ -277,7 +277,7 @@ int write_page_by_ent(struct page *page, struct writeback_control *wbc)
 	 * page. Re-dirty page before unlocking so that if ent thread fails to
 	 * write it - it will remain dirty
 	 */
-	reiser4_set_page_dirty_internal(page);
+	set_page_dirty_notag(page);
 
 	/*
 	 * pin inode in memory, unlock page, entd_flush will iput. We can not

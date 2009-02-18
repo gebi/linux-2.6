@@ -67,33 +67,12 @@ int reiser4_set_page_dirty(struct page *page)
 	assert("vs-1734", (page->mapping &&
 			   page->mapping->host &&
 			   reiser4_get_super_fake(page->mapping->host->i_sb) !=
-			   page->mapping->host
-			   && reiser4_get_cc_fake(page->mapping->host->i_sb) !=
-			   page->mapping->host
-			   && reiser4_get_bitmap_fake(page->mapping->host->i_sb) !=
+			   page->mapping->host &&
+			   reiser4_get_cc_fake(page->mapping->host->i_sb) !=
+			   page->mapping->host &&
+			   reiser4_get_bitmap_fake(page->mapping->host->i_sb) !=
 			   page->mapping->host));
-
-	if (!TestSetPageDirty(page)) {
-		struct address_space *mapping = page->mapping;
-
-		if (mapping) {
-			spin_lock_irq(&mapping->tree_lock);
-
-			/* check for race with truncate */
-			if (page->mapping) {
-				assert("vs-1652", page->mapping == mapping);
-				if (mapping_cap_account_dirty(mapping))
-					inc_zone_page_state(page,
-							NR_FILE_DIRTY);
-				radix_tree_tag_set(&mapping->page_tree,
-						   page->index,
-						   PAGECACHE_TAG_REISER4_MOVED);
-			}
-			spin_unlock_irq(&mapping->tree_lock);
-			__mark_inode_dirty(mapping->host, I_DIRTY_PAGES);
-		}
-	}
-	return 0;
+	return __set_page_dirty_nobuffers(page);
 }
 
 /* ->invalidatepage method for reiser4 */
