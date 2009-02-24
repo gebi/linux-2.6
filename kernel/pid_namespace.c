@@ -209,6 +209,7 @@ static int __pid_ns_attach_task(struct pid_namespace *ns,
 	set_task_session(tsk, pid_nr(pid));
 	reattach_pid(tsk, PIDTYPE_PGID, pid);
 	tsk->signal->__pgrp = pid_nr(pid);
+	tsk->signal->leader_pid = pid;
 	current->signal->tty_old_pgrp = NULL;
 
 	reattach_pid(tsk, PIDTYPE_PID, pid);
