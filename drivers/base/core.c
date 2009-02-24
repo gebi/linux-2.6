@@ -566,10 +566,15 @@ static inline void cleanup_device_parent(struct device *dev) {}
 static inline void cleanup_glue_dir(struct device *dev,
 				    struct kobject *glue_dir) {}
 #else
+
+#ifndef CONFIG_VE
+static struct kobject *virtual_dir = NULL;
+#else
+# define virtual_dir (get_exec_env()->_virtual_dir)
+#endif
+
 static struct kobject *virtual_device_parent(struct device *dev)
 {
-	static struct kobject *virtual_dir = NULL;
-
 	if (!virtual_dir)
 		virtual_dir = kobject_create_and_add("virtual",
 						     &ve_devices_kset->kobj);
