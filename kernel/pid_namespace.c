@@ -250,13 +250,10 @@ EXPORT_SYMBOL_GPL(pid_ns_attach_init);
 #ifdef CONFIG_VE
 static noinline void show_lost_task(struct task_struct *p)
 {
-	char buf[512] = "N/A";
-#ifdef CONFIG_PROC_FS
-	extern char * task_sig(struct task_struct *p, char *buffer);
-
-	task_sig(p, buf);
-#endif
-	printk("Lost task: %d/%s/%p\nSignals:%s\n", p->pid, p->comm, p, buf);
+	printk("Lost task: %d/%s/%p blocked: %lx pending: %lx\n",
+			p->pid, p->comm, p,
+			p->blocked.sig[0],
+			p->pending.signal.sig[0]);
 }
 
 static void zap_ve_processes(struct ve_struct *env)
