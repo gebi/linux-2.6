@@ -339,7 +339,8 @@ void zap_pid_ns_processes(struct pid_namespace *pid_ns)
 
 
 #ifdef CONFIG_VE
-	zap_ve_processes(get_exec_env());
+	if (get_exec_env()->ve_ns->pid_ns == pid_ns)
+		zap_ve_processes(get_exec_env());
 #endif
 	/* Child reaper for the pid namespace is going away */
 	pid_ns->child_reaper = NULL;
