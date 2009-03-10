@@ -971,8 +971,10 @@ static inline int do_one_broadcast(struct sock *sk,
 	if (!ve_accessible_strict(get_exec_env(), sk->owner_env))
 		goto out;
 
+#ifndef CONFIG_VE
 	if (!net_eq(sock_net(sk), p->net))
 		goto out;
+#endif
 
 	if (p->failure) {
 		netlink_overrun(sk);
