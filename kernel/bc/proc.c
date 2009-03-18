@@ -423,7 +423,7 @@ static int bc_lookset(struct inode *ino, void *data)
 	ino->i_ino = bc_make_ino(ub);
 	ino->i_fop = &bc_entry_fops;
 	ino->i_op = &bc_entry_iops;
-	ino->i_mode = S_IFDIR | S_IRUSR | S_IXUGO;
+	ino->i_mode = S_IFDIR | S_IRUSR | S_IXUSR;
 	/* subbeancounters are not included, but who cares? */
 	ino->i_nlink = num_entries + 2;
 	ino->i_gid = 0;
@@ -661,7 +661,7 @@ static int __init ub_init_proc(void)
 	struct proc_dir_entry *entry;
 
 	bc_proc_root = create_proc_entry("bc",
-			S_IFDIR | S_IRUGO | S_IXUGO, NULL);
+			S_IFDIR | S_IRUSR | S_IXUSR, NULL);
 	if (bc_proc_root == NULL)
 		panic("Can't create /proc/bc entry");
 
@@ -675,7 +675,7 @@ static int __init ub_init_proc(void)
 	bc_register_proc_root_entry(&bc_all_resources_entry);
 
 	entry = proc_create("user_beancounters",
-			S_IRUGO, &glob_proc_root, &ub_file_operations);
+			S_IRUSR, &glob_proc_root, &ub_file_operations);
 	return 0;
 }
 
