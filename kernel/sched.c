@@ -1026,7 +1026,7 @@ cycles_t ve_sched_get_idle_time(struct ve_struct *ve, int cpu)
 		v = read_seqcount_begin(&ve_stat->stat_lock);
 		ret = ve_stat->idle_time;
 		strt = ve_stat->strt_idle_time;
-		if (strt && nr_uninterruptible_ve(ve) == 0) {
+		if (strt && nr_iowait_ve(ve) == 0) {
 			cycles = get_cycles();
 			if (cycles_after(cycles, strt))
 				ret += cycles - strt;
