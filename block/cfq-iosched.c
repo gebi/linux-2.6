@@ -2163,6 +2163,8 @@ static void *cfq_init_queue(struct request_queue *q)
 	INIT_LIST_HEAD(&cfqd->act_cfq_bc_head);
 #ifndef CONFIG_BC_IO_SCHED
 	cfq_init_cfq_bc(&cfqd->cfq_bc);
+	cfqd->cfq_bc.cfqd = cfqd;
+	cfqd->cfq_bc.ub_iopriv = &ub0.iopriv;
 	/*
 	 *  Adding ub0 to active list in order to serve force dispatching
 	 *  case uniformally. Note, that nobody removes ub0 from this list.
