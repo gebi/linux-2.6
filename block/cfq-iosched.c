@@ -2038,6 +2038,14 @@ cfq_set_request(struct request_queue *q, struct request *rq, gfp_t gfp_mask)
 		cic_set_cfqq(cic, cfqq, is_sync);
 	}
 
+	if (!is_sync && cfqq->cfq_bc != cfq_bc) {
+		cfq_put_queue(cfqq);
+		cfqq = cfq_get_queue(cfqd, is_sync, cic->ioc, gfp_mask);
+		cic_set_cfqq(cic, cfqq, is_sync);
+		if (!cfqq)
+			goto queue_fail;
+	}
+
 	cfqq->allocated[rw]++;
 	cfq_clear_cfqq_must_alloc(cfqq);
 	atomic_inc(&cfqq->ref);
