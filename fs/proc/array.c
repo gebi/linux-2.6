@@ -159,19 +159,33 @@ static inline const char *get_task_state(struct task_struct *tsk)
 	return *p;
 }
 
+static int task_virtual_pid(struct task_struct *t)
+{
+	struct pid *pid;
+
+	pid = task_pid(t);
+	/*
+	 * this will give wrong result for tasks,
+	 * that failed to enter VE, but that's OK
+	 */
+	return pid ? pid->numbers[pid->level].nr : 0;
+}
+
 static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
 				struct pid *pid, struct task_struct *p)
 {
 	struct group_info *group_info;
 	int g;
 	struct fdtable *fdt = NULL;
-	pid_t ppid, tpid;
+	pid_t ppid, tpid, vpid;
 
 	rcu_read_lock();
 	ppid = pid_alive(p) ?
 		task_tgid_nr_ns(rcu_dereference(p->real_parent), ns) : 0;
 	tpid = pid_alive(p) && p->ptrace ?
 		task_pid_nr_ns(rcu_dereference(p->parent), ns) : 0;
+	vpid = task_virtual_pid(p);
+
 	seq_printf(m,
 		"State:\t%s\n"
 		"Tgid:\t%d\n"
@@ -206,14 +220,10 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
 
 	seq_printf(m, "\n");
 
-#ifdef CONFIG_VE
-	if (ve_is_super(get_exec_env())) {
-		seq_printf(m, "envID:\t%d\nVPid:\t%d\n",
-			p->ve_task_info.owner_env->veid, task_pid_vnr(p));
-		seq_printf(m, "PNState:\t%u\nStopState:\t%u\n",
+	seq_printf(m, "envID:\t%d\nVPid:\t%d\n",
+			p->ve_task_info.owner_env->veid, vpid);
+	seq_printf(m, "PNState:\t%u\nStopState:\t%u\n",
 			p->pn_state, p->stopped_state);
-	}
-#endif
 }
 
 static void render_sigset_t(struct seq_file *m, const char *header,
