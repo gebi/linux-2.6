@@ -2,7 +2,7 @@ VERSION = 2
 PATCHLEVEL = 6
 SUBLEVEL = 26
 EXTRAVERSION = .8
-VZVERSION = chekhov
+VZVERSION = dostoevsky
 NAME = Rotary Wombat
 
 # *DOCUMENTATION*
