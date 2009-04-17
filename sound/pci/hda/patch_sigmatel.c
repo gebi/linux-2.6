@@ -139,6 +139,7 @@ enum {
 	/* for backward compatibility */
 	STAC_MACMINI,
 	STAC_MACBOOK,
+	STAC_MACBOOK_V2,
 	STAC_MACBOOK_PRO_V1,
 	STAC_MACBOOK_PRO_V2,
 	STAC_IMAC_INTEL,
@@ -1891,6 +1892,7 @@ static const char *stac922x_models[STAC_922X_MODELS] = {
 	/* for backward compatibility */
 	[STAC_MACMINI]	= "macmini",
 	[STAC_MACBOOK]	= "macbook",
+	[STAC_MACBOOK_V2]	= "macbook-v2",
 	[STAC_MACBOOK_PRO_V1]	= "macbook-pro-v1",
 	[STAC_MACBOOK_PRO_V2]	= "macbook-pro",
 	[STAC_IMAC_INTEL] = "imac-intel",
@@ -5685,10 +5687,12 @@ static int patch_stac922x(struct hda_codec *codec)
 		case 0x106b1700:
 		case 0x106b0200:
 		case 0x106b1e00:
+		case 0x100: /* Invalid subsystem ID, happens randomly on
+			     * MacBook Pro 1st generation
+			     */
 			spec->board_config = STAC_INTEL_MAC_V3;
 			break;
 		case 0x106b1a00:
-		case 0x00000100:
 			spec->board_config = STAC_INTEL_MAC_V4;
 			break;
 		case 0x106b0a00:
