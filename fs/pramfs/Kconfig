@@ -1,0 +1,51 @@
+config PRAMFS
+       tristate "Persistent and Protected RAM file system support"
+       select PRAMFS_NOWP if PRAMFS=m
+       help
+          If your system has a block of fast (comparable in access speed to
+          system memory) and non-volatile RAM and you wish to mount a
+          light-weight, full-featured, and space-efficient filesystem over it,
+          say Y here, and read <file:Documentation/filesystems/pramfs.txt>.
+
+          To compile this as a module,  choose M here: the module will be
+          called pramfs.
+
+config PRAMFS_XIP
+       bool "Enable Execute-in-place in PRAMFS"
+       depends on PRAMFS
+       select PRAMFS_NOWP
+       help
+          Say Y here to enable xip feature of PRAMFS.
+
+config PRAMFS_NOWP
+       bool "Disable PRAMFS write protection"
+       depends on PRAMFS
+       default n
+       help
+          Say Y here to disable the write protect feature of PRAMFS.
+
+config ROOT_PRAMFS
+       bool "Root file system on PRAMFS"
+       depends on PRAMFS && !ROOT_NFS
+       help
+         Say Y if you have enabled PRAMFS, and you want to be
+         able to use PRAMFS as the root filesystem.  To actually
+         have the kernel mount PRAMFS as a root file system, you
+         must also pass the command line parameter
+         "root=/dev/null rootflags=physaddr=0x********" to the kernel
+         (replace 0x******** with the physical address location of the
+         previously initialized PRAMFS memory to boot with).
+
+config PRAMFS_TEST
+       boolean
+       depends on PRAMFS
+       default n
+
+config TEST_MODULE
+       tristate "PRAMFS Test"
+       depends on PRAMFS && m && !PRAMFS_NOWP
+       select PRAMFS_TEST
+       default n
+       help
+         Say Y here to build a simple module to test the protection of
+         PRAMFS. The module will be called pramfs_test.ko.
