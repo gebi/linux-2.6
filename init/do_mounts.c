@@ -300,6 +300,17 @@ static int __init mount_nfs_root(void)
 }
 #endif
 
+#ifdef CONFIG_ROOT_PRAMFS
+static int __init mount_pramfs_root(void)
+{
+       create_dev("/dev/root", ROOT_DEV);
+       if (do_mount_root("/dev/root", "pramfs",
+                               root_mountflags, root_mount_data) == 0)
+               return 1;
+        return 0;
+}
+#endif
+
 #if defined(CONFIG_BLK_DEV_RAM) || defined(CONFIG_BLK_DEV_FD)
 void __init change_floppy(char *fmt, ...)
 {
@@ -332,6 +343,15 @@ void __init change_floppy(char *fmt, ...)
 
 void __init mount_root(void)
 {
+#ifdef CONFIG_ROOT_PRAMFS
+       if (MAJOR(ROOT_DEV) == MEM_MAJOR) {
+               if (mount_pramfs_root())
+                       return;
+
+               printk(KERN_ERR "VFS: Unable to mount root fs via PRAMFS, trying floppy.\n");
+               ROOT_DEV = Root_FD0;
+       }
+#endif
 #ifdef CONFIG_ROOT_NFS
 	if (MAJOR(ROOT_DEV) == UNNAMED_MAJOR) {
 		if (mount_nfs_root())
