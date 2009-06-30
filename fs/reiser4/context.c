@@ -151,8 +151,7 @@ static void balance_dirty_pages_at(reiser4_context *context)
 	 */
 	if (sbinfo != NULL && sbinfo->fake != NULL &&
 	    context->nr_marked_dirty != 0 &&
-	    !(current->flags & PF_MEMALLOC) &&
-	    !current_is_pdflush())
+	    !(current->flags & PF_MEMALLOC))
 		balance_dirty_pages_ratelimited(sbinfo->fake->i_mapping);
 }
 

@@ -1410,7 +1410,7 @@ flush_some_atom(jnode * start, long *nr_submitted, const struct writeback_contro
 		 * Write throttling is case of no one atom can be
 		 * flushed/committed.
 		 */
-		if (!current_is_pdflush() && !wbc->nonblocking) {
+		if (!wbc->nonblocking) {
 			list_for_each_entry(atom, &tmgr->atoms_list, atom_link) {
 				spin_lock_atom(atom);
 				/* Repeat the check from the above. */
