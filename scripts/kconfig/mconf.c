@@ -862,7 +862,7 @@ static void conf_save(void)
 int main(int ac, char **av)
 {
 	int saved_x, saved_y;
-	char *mode;
+	char *message, *mode;
 	int res;
 
 	setlocale(LC_ALL, "");
@@ -888,10 +888,13 @@ int main(int ac, char **av)
 	}
 
 	dialog_clear();
-	char *message = read_readme("README.zen");
-	show_helptext(_("Zen Notes"), message);
-	free(message);
-	dialog_clear();
+
+	message = read_readme("README.zen");
+	if (message) {
+		show_helptext(_("Zen Notes"), message);
+		free(message);
+		dialog_clear();
+	}
 
 	set_config_filename(conf_get_configname());
 	do {
