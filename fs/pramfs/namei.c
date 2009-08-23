@@ -15,7 +15,7 @@
  */
 #include <linux/fs.h>
 #include <linux/pagemap.h>
-#include "pram_fs.h"
+#include "pram.h"
 
 /*
  * Couple of helper functions - make the code slightly cleaner.
@@ -23,30 +23,30 @@
 
 static inline void pram_inc_count(struct inode *inode)
 {
-       inode->i_nlink++;
-       pram_write_inode(inode, 0);
+	inode->i_nlink++;
+	pram_write_inode(inode, 0);
 }
 
 static inline void pram_dec_count(struct inode *inode)
 {
-       if (inode->i_nlink) {
-               inode->i_nlink--;
-               pram_write_inode(inode, 0);
-       }
+	if (inode->i_nlink) {
+		inode->i_nlink--;
+		pram_write_inode(inode, 0);
+	}
 }
 
 static inline int pram_add_nondir(struct inode *dir,
-                                  struct dentry *dentry,
-                                  struct inode *inode)
+				   struct dentry *dentry,
+				   struct inode *inode)
 {
-       int err = pram_add_link(dentry, inode);
-       if (!err) {
-               d_instantiate(dentry, inode);
-               return 0;
-       }
-       pram_dec_count(inode);
-       iput(inode);
-       return err;
+	int err = pram_add_link(dentry, inode);
+	if (!err) {
+		d_instantiate(dentry, inode);
+		return 0;
+	}
+	pram_dec_count(inode);
+	iput(inode);
+	return err;
 }
 
 /*
@@ -55,52 +55,52 @@ static inline int pram_add_nondir(struct inode *dir,
 
 static ino_t
 pram_inode_by_name(struct inode *dir,
-                  struct dentry *dentry)
+		   struct dentry *dentry)
 {
-       struct pram_inode *pi;
-       ino_t ino;
-       int namelen;
+	struct pram_inode *pi;
+	ino_t ino;
+	int namelen;
 
-       pi = pram_get_inode(dir->i_sb, dir->i_ino);
-       ino = pi->i_type.dir.head;
+	pi = pram_get_inode(dir->i_sb, dir->i_ino);
+	ino = be64_to_cpu(pi->i_type.dir.head);
 
-       while (ino) {
-               pi = pram_get_inode(dir->i_sb, ino);
+	while (ino) {
+		pi = pram_get_inode(dir->i_sb, ino);
 
-               if (pi->i_links_count) {
-                       namelen = strlen(pi->i_d.d_name);
+		if (pi->i_links_count) {
+			namelen = strlen(pi->i_d.d_name);
 
-                       if (namelen == dentry->d_name.len &&
-                           !memcmp(dentry->d_name.name,
-                                   pi->i_d.d_name, namelen))
-                               break;
-               }
+			if (namelen == dentry->d_name.len &&
+			    !memcmp(dentry->d_name.name,
+				    pi->i_d.d_name, namelen))
+				break;
+		}
 
-               ino = pi->i_d.d_next;
-       }
+		ino = be64_to_cpu(pi->i_d.d_next);
+	}
 
-       return ino;
+	return ino;
 }
 
 static struct dentry *
 pram_lookup(struct inode *dir, struct dentry *dentry, struct nameidata *nd)
 {
-       struct inode *inode = NULL;
-       ino_t ino;
+	struct inode *inode = NULL;
+	ino_t ino;
 
-       if (dentry->d_name.len > PRAM_NAME_LEN)
-               return ERR_PTR(-ENAMETOOLONG);
+	if (dentry->d_name.len > PRAM_NAME_LEN)
+		return ERR_PTR(-ENAMETOOLONG);
 
-       ino = pram_inode_by_name(dir, dentry);
-       if (ino) {
-               struct pram_inode *pi = pram_get_inode(dir->i_sb, ino);
-               inode = pram_fill_new_inode(dir->i_sb, pi);
-               if (!inode)
-                       return ERR_PTR(-EACCES);
-       }
+	ino = pram_inode_by_name(dir, dentry);
+	if (ino) {
+		struct pram_inode *pi = pram_get_inode(dir->i_sb, ino);
+		inode = pram_fill_new_inode(dir->i_sb, pi);
+		if (!inode)
+			return ERR_PTR(-EACCES);
+	}
 
-       d_add(dentry, inode);
-       return NULL;
+	d_add(dentry, inode);
+	return NULL;
 }
 
 
@@ -113,216 +113,213 @@ pram_lookup(struct inode *dir, struct dentry *dentry, struct nameidata *nd)
  * with d_instantiate().
  */
 static int pram_create(struct inode *dir, struct dentry *dentry,
-                       int mode, struct nameidata *nd)
+			int mode, struct nameidata *nd)
 {
-       struct inode *inode = pram_new_inode(dir, mode);
-       int err = PTR_ERR(inode);
-       if (!IS_ERR(inode)) {
+	struct inode *inode = pram_new_inode(dir, mode);
+	int err = PTR_ERR(inode);
+	if (!IS_ERR(inode)) {
 
-               inode->i_op = &pram_file_inode_operations;
-               inode->i_fop = &pram_file_operations;
-               inode->i_mapping->a_ops = &pram_aops;
-               err = pram_add_nondir(dir, dentry, inode);
-       }
-       return err;
+		inode->i_op = &pram_file_inode_operations;
+		inode->i_fop = &pram_file_operations;
+		inode->i_mapping->a_ops = &pram_aops;
+		err = pram_add_nondir(dir, dentry, inode);
+	}
+	return err;
 }
 
 static int pram_mknod(struct inode *dir, struct dentry *dentry, int mode,
-                      dev_t rdev)
+		       dev_t rdev)
 {
-       struct inode *inode = pram_new_inode(dir, mode);
-       int err = PTR_ERR(inode);
-       if (!IS_ERR(inode)) {
-               init_special_inode(inode, mode, rdev);
-               pram_write_inode(inode, 0); /* update rdev */
-               err = pram_add_nondir(dir, dentry, inode);
-       }
-       return err;
+	struct inode *inode = pram_new_inode(dir, mode);
+	int err = PTR_ERR(inode);
+	if (!IS_ERR(inode)) {
+		init_special_inode(inode, mode, rdev);
+		pram_write_inode(inode, 0); /* update rdev */
+		err = pram_add_nondir(dir, dentry, inode);
+	}
+	return err;
 }
 
 static int pram_symlink(struct inode *dir,
-                         struct dentry *dentry,
-                         const char *symname)
+			  struct dentry *dentry,
+			  const char *symname)
 {
-       struct super_block *sb = dir->i_sb;
-       int err = -ENAMETOOLONG;
-       unsigned len = strlen(symname);
-       struct inode *inode;
+	struct super_block *sb = dir->i_sb;
+	int err = -ENAMETOOLONG;
+	unsigned len = strlen(symname);
+	struct inode *inode;
 
-       if (len+1 > sb->s_blocksize)
-               goto out;
+	if (len+1 > sb->s_blocksize)
+		goto out;
 
-       inode = pram_new_inode(dir, S_IFLNK | S_IRWXUGO);
-       err = PTR_ERR(inode);
-       if (IS_ERR(inode))
-               goto out;
+	inode = pram_new_inode(dir, S_IFLNK | S_IRWXUGO);
+	err = PTR_ERR(inode);
+	if (IS_ERR(inode))
+		goto out;
 
-       inode->i_op = &pram_symlink_inode_operations;
-       inode->i_mapping->a_ops = &pram_aops;
+	inode->i_op = &pram_symlink_inode_operations;
+	inode->i_mapping->a_ops = &pram_aops;
 
-       err = pram_block_symlink(inode, symname, len);
-       if (err)
-               goto out_fail;
+	err = pram_block_symlink(inode, symname, len);
+	if (err)
+		goto out_fail;
 
-       inode->i_size = len;
-       pram_write_inode(inode, 0);
+	inode->i_size = len;
+	pram_write_inode(inode, 0);
 
-       err = pram_add_nondir(dir, dentry, inode);
+	err = pram_add_nondir(dir, dentry, inode);
 out:
-       return err;
+	return err;
 
 out_fail:
-       pram_dec_count(inode);
-       iput(inode);
-       goto out;
+	pram_dec_count(inode);
+	iput(inode);
+	goto out;
 }
 
 static int pram_link(struct dentry *dest_dentry,
-                      struct inode *dir,
-                      struct dentry *dentry)
+		       struct inode *dir,
+		       struct dentry *dentry)
 {
-       pram_dbg("hard links not supported\n");
-       return -ENOSYS;
+	pram_dbg("hard links not supported\n");
+	return -ENOSYS;
 }
 
 static int pram_unlink(struct inode *dir, struct dentry *dentry)
 {
-       struct inode *inode = dentry->d_inode;
-       inode->i_ctime = dir->i_ctime;
-       pram_dec_count(inode);
+	struct inode *inode = dentry->d_inode;
+	inode->i_ctime = dir->i_ctime;
+	pram_dec_count(inode);
 
-       return 0;
+	return 0;
 }
 
 static int pram_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 {
-       struct inode *inode;
-       struct pram_inode *pi;
-       int err = -EMLINK;
-       unsigned long flags;
+	struct inode *inode;
+	struct pram_inode *pi;
+	int err = -EMLINK;
 
-       flags = 0;
+	if (dir->i_nlink >= PRAM_LINK_MAX)
+		goto out;
 
-       if (dir->i_nlink >= PRAM_LINK_MAX)
-               goto out;
+	pram_inc_count(dir);
 
-       pram_inc_count(dir);
+	inode = pram_new_inode(dir, S_IFDIR | mode);
+	err = PTR_ERR(inode);
+	if (IS_ERR(inode))
+		goto out_dir;
 
-       inode = pram_new_inode(dir, S_IFDIR | mode);
-       err = PTR_ERR(inode);
-       if (IS_ERR(inode))
-               goto out_dir;
+	inode->i_op = &pram_dir_inode_operations;
+	inode->i_fop = &pram_dir_operations;
+	inode->i_mapping->a_ops = &pram_aops;
 
-       inode->i_op = &pram_dir_inode_operations;
-       inode->i_fop = &pram_dir_operations;
-       inode->i_mapping->a_ops = &pram_aops;
+	pram_inc_count(inode);
 
-       pram_inc_count(inode);
+	/* make the new directory empty */
+	pi = pram_get_inode(dir->i_sb, inode->i_ino);
+	pram_lock_inode(pi);
+	pi->i_type.dir.head = pi->i_type.dir.tail = 0;
+	pram_unlock_inode(pi);
 
-       /* make the new directory empty */
-       pi = pram_get_inode(dir->i_sb, inode->i_ino);
-       pram_lock_inode(pi, flags);
-       pi->i_type.dir.head = pi->i_type.dir.tail = 0;
-       pram_unlock_inode(pi, flags);
+	err = pram_add_link(dentry, inode);
+	if (err)
+		goto out_fail;
 
-       err = pram_add_link(dentry, inode);
-       if (err)
-               goto out_fail;
-
-       d_instantiate(dentry, inode);
+	d_instantiate(dentry, inode);
 out:
-       return err;
+	return err;
 
 out_fail:
-       pram_dec_count(inode);
-       pram_dec_count(inode);
-       iput(inode);
+	pram_dec_count(inode);
+	pram_dec_count(inode);
+	iput(inode);
 out_dir:
-       pram_dec_count(dir);
-       goto out;
+	pram_dec_count(dir);
+	goto out;
 }
 
 static int pram_rmdir(struct inode *dir, struct dentry *dentry)
 {
-       struct inode *inode = dentry->d_inode;
-       struct pram_inode *pi;
-       int err = -ENOTEMPTY;
+	struct inode *inode = dentry->d_inode;
+	struct pram_inode *pi;
+	int err = -ENOTEMPTY;
 
-       if (!inode)
-               return -ENOENT;
+	if (!inode)
+		return -ENOENT;
 
-       pi = pram_get_inode(dir->i_sb, inode->i_ino);
+	pi = pram_get_inode(dir->i_sb, inode->i_ino);
 
-       /* directory to delete is empty? */
-       if (pi->i_type.dir.tail == 0) {
-               inode->i_ctime = dir->i_ctime;
-               inode->i_size = 0;
-               inode->i_nlink = 0;
-               pram_write_inode(inode, 0);
-               pram_dec_count(dir);
-               err = 0;
-       } else {
-               pram_dbg("dir not empty\n");
-       }
+	/* directory to delete is empty? */
+	if (be64_to_cpu(pi->i_type.dir.tail) == 0) {
+		inode->i_ctime = dir->i_ctime;
+		inode->i_size = 0;
+		inode->i_nlink = 0;
+		pram_write_inode(inode, 0);
+		pram_dec_count(dir);
+		err = 0;
+	} else {
+		pram_dbg("dir not empty\n");
+	}
 
-       return err;
+	return err;
 }
 
 static int pram_rename(struct inode  *old_dir,
-                       struct dentry *old_dentry,
-                       struct inode  *new_dir,
-                       struct dentry *new_dentry)
+			struct dentry *old_dentry,
+			struct inode  *new_dir,
+			struct dentry *new_dentry)
 {
-       struct inode *old_inode = old_dentry->d_inode;
-       struct inode *new_inode = new_dentry->d_inode;
-       struct pram_inode *pi_new;
-       int err = -ENOENT;
+	struct inode *old_inode = old_dentry->d_inode;
+	struct inode *new_inode = new_dentry->d_inode;
+	struct pram_inode *pi_new;
+	int err = -ENOENT;
 
-       if (new_inode) {
-               err = -ENOTEMPTY;
-               pi_new = pram_get_inode(new_dir->i_sb, new_inode->i_ino);
-               if (S_ISDIR(old_inode->i_mode)) {
-                       if (pi_new->i_type.dir.tail != 0)
-                               goto out;
-                       if (new_inode->i_nlink)
-                               new_inode->i_nlink--;
-               }
+	if (new_inode) {
+		err = -ENOTEMPTY;
+		pi_new = pram_get_inode(new_dir->i_sb, new_inode->i_ino);
+		if (S_ISDIR(old_inode->i_mode)) {
+			if (be64_to_cpu(pi_new->i_type.dir.tail) != 0)
+				goto out;
+			if (new_inode->i_nlink)
+				new_inode->i_nlink--;
+		}
 
-               new_inode->i_ctime = CURRENT_TIME;
-               pram_dec_count(new_inode);
-       } else {
-               if (S_ISDIR(old_inode->i_mode)) {
-                       err = -EMLINK;
-                       if (new_dir->i_nlink >= PRAM_LINK_MAX)
-                               goto out;
-                       pram_dec_count(old_dir);
-                       pram_inc_count(new_dir);
-               }
-       }
+		new_inode->i_ctime = CURRENT_TIME;
+		pram_dec_count(new_inode);
+	} else {
+		if (S_ISDIR(old_inode->i_mode)) {
+			err = -EMLINK;
+			if (new_dir->i_nlink >= PRAM_LINK_MAX)
+				goto out;
+			pram_dec_count(old_dir);
+			pram_inc_count(new_dir);
+		}
+	}
 
-       /* unlink the inode from the old directory ... */
-       err = pram_remove_link(old_inode);
-       if (err)
-               goto out;
+	/* unlink the inode from the old directory ... */
+	err = pram_remove_link(old_inode);
+	if (err)
+		goto out;
 
-       /* and link it into the new directory. */
-       err = pram_add_link(new_dentry, old_inode);
-       if (err)
-               goto out;
+	/* and link it into the new directory. */
+	err = pram_add_link(new_dentry, old_inode);
+	if (err)
+		goto out;
 
-       err = 0;
+	err = 0;
  out:
-       return err;
+	return err;
 }
 
 struct inode_operations pram_dir_inode_operations = {
-       .create         = pram_create,
-       .lookup         = pram_lookup,
-       .link           = pram_link,
-       .unlink         = pram_unlink,
-       .symlink        = pram_symlink,
-       .mkdir          = pram_mkdir,
-       .rmdir          = pram_rmdir,
-       .mknod          = pram_mknod,
-       .rename         = pram_rename,
+	.create		= pram_create,
+	.lookup		= pram_lookup,
+	.link		= pram_link,
+	.unlink		= pram_unlink,
+	.symlink	= pram_symlink,
+	.mkdir		= pram_mkdir,
+	.rmdir		= pram_rmdir,
+	.mknod		= pram_mknod,
+	.rename		= pram_rename,
 };

@@ -15,7 +15,7 @@
 #ifdef CONFIG_PRAMFS_XIP
 
 int pram_get_xip_mem(struct address_space *, pgoff_t, int, void **,
-                                                             unsigned long *);
+							      unsigned long *);
 
 #else
 

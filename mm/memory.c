@@ -3402,3 +3402,44 @@ void might_fault(void)
 }
 EXPORT_SYMBOL(might_fault);
 #endif
+
+int follow_pte(unsigned long addr, int rw)
+{
+	pgd_t *pgdp;
+	pud_t *pudp;
+	pmd_t *pmdp;
+	pte_t *ptep, pte;
+	unsigned long flags;
+	int ret = -EINVAL;
+
+	/* Align to page boundary */
+	addr &= PAGE_MASK;
+
+	spin_lock_irqsave(init_mm.page_table_lock, flags);
+
+	pgdp = pgd_offset_k(addr);
+	if (pgd_none(*pgdp) || unlikely(pgd_bad(*pgdp)))
+		goto out;
+
+	pudp = pud_offset(pgdp, addr);
+	if (pud_none(*pudp) || unlikely(pud_bad(*pudp)))
+		goto out;
+
+	pmdp = pmd_offset(pudp, addr);
+	if (pmd_none(*pmdp) || unlikely(pmd_bad(*pmdp)))
+		goto out;
+
+	ptep = pte_offset_kernel(pmdp, addr);
+	pte = *ptep;
+	if (pte_present(pte)) {
+		pte = rw ? pte_mkwrite(pte) : pte_wrprotect(pte);
+		set_pte(ptep, pte);
+		ret = 0;
+	}
+
+out:
+	spin_unlock_irqrestore(init_mm.page_table_lock, flags);
+	return ret;
+
+}
+EXPORT_SYMBOL(follow_pte);

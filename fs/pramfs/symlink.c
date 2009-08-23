@@ -15,59 +15,56 @@
  */
 
 #include <linux/fs.h>
-#include "pram_fs.h"
+#include "pram.h"
 
 int pram_block_symlink(struct inode *inode, const char *symname, int len)
 {
-       struct super_block *sb = inode->i_sb;
-       off_t block;
-       char *blockp;
-       int err;
-       unsigned long flags;
+	struct super_block *sb = inode->i_sb;
+	u64 block;
+	char *blockp;
+	int err;
 
-       flags = 0;
+	err = pram_alloc_blocks(inode, 0, 1);
+	if (err)
+		return err;
 
-       err = pram_alloc_blocks(inode, 0, 1);
-       if (err)
-               return err;
+	block = pram_find_data_block(inode, 0);
+	blockp = pram_get_block(sb, block);
 
-       block = pram_find_data_block(inode, 0);
-       blockp = pram_get_block(sb, block);
-
-       pram_lock_block(sb, blockp, flags);
-       memcpy(blockp, symname, len);
-       blockp[len] = '\0';
-       pram_unlock_block(sb, blockp, flags);
-       return 0;
+	pram_lock_block(sb, blockp);
+	memcpy(blockp, symname, len);
+	blockp[len] = '\0';
+	pram_unlock_block(sb, blockp);
+	return 0;
 }
 
 static int pram_readlink(struct dentry *dentry, char *buffer, int buflen)
 {
-       struct inode *inode = dentry->d_inode;
-       struct super_block *sb = inode->i_sb;
-       off_t block;
-       char *blockp;
+	struct inode *inode = dentry->d_inode;
+	struct super_block *sb = inode->i_sb;
+	u64 block;
+	char *blockp;
 
-       block = pram_find_data_block(inode, 0);
-       blockp = pram_get_block(sb, block);
-       return vfs_readlink(dentry, buffer, buflen, blockp);
+	block = pram_find_data_block(inode, 0);
+	blockp = pram_get_block(sb, block);
+	return vfs_readlink(dentry, buffer, buflen, blockp);
 }
 
 static void *pram_follow_link(struct dentry *dentry, struct nameidata *nd)
 {
-       struct inode *inode = dentry->d_inode;
-       struct super_block *sb = inode->i_sb;
-       off_t block;
-       int status;
-       char *blockp;
+	struct inode *inode = dentry->d_inode;
+	struct super_block *sb = inode->i_sb;
+	off_t block;
+	int status;
+	char *blockp;
 
-       block = pram_find_data_block(inode, 0);
-       blockp = pram_get_block(sb, block);
-       status = vfs_follow_link(nd, blockp);
-       return ERR_PTR(status);
+	block = pram_find_data_block(inode, 0);
+	blockp = pram_get_block(sb, block);
+	status = vfs_follow_link(nd, blockp);
+	return ERR_PTR(status);
 }
 
 struct inode_operations pram_symlink_inode_operations = {
-       .readlink       = pram_readlink,
-       .follow_link    = pram_follow_link,
+	.readlink	= pram_readlink,
+	.follow_link	= pram_follow_link,
 };

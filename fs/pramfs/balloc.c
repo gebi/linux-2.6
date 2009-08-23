@@ -17,7 +17,7 @@
 #include <linux/fs.h>
 #include <linux/quotaops.h>
 #include <linux/bitops.h>
-#include "pram_fs.h"
+#include "pram.h"
 
 /*
  * This just marks in-use the blocks that make up the bitmap.
@@ -25,58 +25,55 @@
  */
 void pram_init_bitmap(struct super_block *sb)
 {
-       struct pram_super_block *ps = pram_get_super(sb);
-       u32 *bitmap = pram_get_bitmap(sb);
-       int blocks = ps->s_bitmap_blocks;
+	struct pram_super_block *ps = pram_get_super(sb);
+	u64 *bitmap = pram_get_bitmap(sb);
+	int blocks = be32_to_cpu(ps->s_bitmap_blocks);
 
-       memset(bitmap, 0, blocks<<sb->s_blocksize_bits);
+	memset(bitmap, 0, blocks<<sb->s_blocksize_bits);
 
-       while (blocks >= 32) {
-               *bitmap++ = 0xffffffff;
-               blocks -= 32;
-       }
+	while (blocks >= 64) {
+		*bitmap++ = (u64)ULLONG_MAX;
+		blocks -= 64;
+	}
 
-       if (blocks)
-               *bitmap = (1<<blocks) - 1;
+	if (blocks)
+		*bitmap = (1<<blocks) - 1;
 }
 
 
 /* Free absolute blocknr */
 void pram_free_block(struct super_block *sb, int blocknr)
 {
-       struct pram_super_block *ps;
-       off_t bitmap_block;
-       int bitmap_bnr;
-       void *bitmap;
-       void *bp;
-       unsigned long flags;
+	struct pram_super_block *ps;
+	u64 bitmap_block;
+	int bitmap_bnr;
+	void *bitmap;
+	void *bp;
 
-       flags = 0;
+	lock_super(sb);
 
-       lock_super(sb);
+	bitmap = pram_get_bitmap(sb);
+	/*
+	 * find the block within the bitmap that contains the inuse bit
+	 * for the block we need to free. We need to unlock this bitmap
+	 * block to clear the inuse bit.
+	 */
+	bitmap_bnr = blocknr >> (3 + be32_to_cpu(sb->s_blocksize_bits));
+	bitmap_block = pram_get_block_off(sb, bitmap_bnr);
+	bp = pram_get_block(sb, bitmap_block);
 
-       bitmap = pram_get_bitmap(sb);
-       /*
-        * find the block within the bitmap that contains the inuse bit
-        * for the block we need to free. We need to unlock this bitmap
-        * block to clear the inuse bit.
-        */
-       bitmap_bnr = blocknr >> (3 + sb->s_blocksize_bits);
-       bitmap_block = pram_get_block_off(sb, bitmap_bnr);
-       bp = pram_get_block(sb, bitmap_block);
+	pram_lock_block(sb, bp);
+	clear_bit(blocknr, bitmap); /* mark the block free */
+	pram_unlock_block(sb, bp);
 
-       pram_lock_block(sb, bp, flags);
-       clear_bit(blocknr, bitmap); /* mark the block free */
-       pram_unlock_block(sb, bp, flags);
+	ps = pram_get_super(sb);
+	pram_lock_super(ps);
+	if (blocknr < be32_to_cpu(ps->s_free_blocknr_hint))
+		ps->s_free_blocknr_hint = cpu_to_be32(blocknr);
+	be32_add_cpu(&ps->s_free_blocks_count, 1);
+	pram_unlock_super(ps);
 
-       ps = pram_get_super(sb);
-       pram_lock_super(ps, flags);
-       if (blocknr < ps->s_free_blocknr_hint)
-               ps->s_free_blocknr_hint = blocknr;
-       ps->s_free_blocks_count++;
-       pram_unlock_super(ps, flags);
-
-       unlock_super(sb);
+	unlock_super(sb);
 }
 
 
@@ -86,72 +83,72 @@ void pram_free_block(struct super_block *sb, int blocknr)
  */
 int pram_new_block(struct super_block *sb, int *blocknr, int zero)
 {
-       struct pram_super_block *ps;
-       off_t bitmap_block;
-       int bnr, bitmap_bnr, errval;
-       void *bitmap;
-       void *bp;
-       unsigned long flags;
+	struct pram_super_block *ps;
+	off_t bitmap_block;
+	int bnr, bitmap_bnr, errval;
+	void *bitmap;
+	void *bp;
 
-       flags = 0;
+	lock_super(sb);
+	ps = pram_get_super(sb);
+	bitmap = pram_get_bitmap(sb);
 
-       lock_super(sb);
-       ps = pram_get_super(sb);
-       bitmap = pram_get_bitmap(sb);
+	if (be32_to_cpu(ps->s_free_blocks_count)) {
+		/* find the oldest unused block */
+		bnr = find_next_zero_bit(bitmap,
+					 be32_to_cpu(ps->s_blocks_count),
+					 be32_to_cpu(ps->s_free_blocknr_hint));
 
-       if (ps->s_free_blocks_count) {
-               /* find the oldest unused block */
-               bnr = find_next_zero_bit(bitmap,
-                                        ps->s_blocks_count,
-                                        ps->s_free_blocknr_hint);
+		if (bnr < be32_to_cpu(ps->s_bitmap_blocks) ||
+				bnr >= be32_to_cpu(ps->s_blocks_count)) {
+			pram_err("no free blocks found!\n");
+			errval = -ENOSPC;
+			goto fail;
+		}
 
-               if (bnr < ps->s_bitmap_blocks || bnr >= ps->s_blocks_count) {
-                       pram_err("no free blocks found!\n");
-                       errval = -ENOSPC;
-                       goto fail;
-               }
+		pram_dbg("allocating blocknr %d\n", bnr);
+		pram_lock_super(ps);
+		be32_add_cpu(&ps->s_free_blocks_count, -1);
+		if (bnr < (be32_to_cpu(ps->s_blocks_count)-1))
+			ps->s_free_blocknr_hint = cpu_to_be32(bnr+1);
+		else
+			ps->s_free_blocknr_hint = 0;
+		pram_unlock_super(ps);
+	} else {
+		pram_err("all blocks allocated\n");
+		errval = -ENOSPC;
+		goto fail;
+	}
 
-               pram_dbg("allocating blocknr %d\n", bnr);
-               pram_lock_super(ps, flags);
-               ps->s_free_blocks_count--;
-               ps->s_free_blocknr_hint =
-                       (bnr < ps->s_blocks_count-1) ? bnr+1 : 0;
-               pram_unlock_super(ps, flags);
-       } else {
-               pram_err("all blocks allocated\n");
-               errval = -ENOSPC;
-               goto fail;
-       }
+	/*
+	 * find the block within the bitmap that contains the inuse bit
+	 * for the unused block we just found. We need to unlock it to
+	 * set the inuse bit.
+	 */
+	bitmap_bnr = bnr >> (3 + sb->s_blocksize_bits);
+	bitmap_block = pram_get_block_off(sb, bitmap_bnr);
+	bp = pram_get_block(sb, bitmap_block);
 
-       /*
-        * find the block within the bitmap that contains the inuse bit
-        * for the unused block we just found. We need to unlock it to
-        * set the inuse bit.
-        */
-       bitmap_bnr = bnr >> (3 + sb->s_blocksize_bits);
-       bitmap_block = pram_get_block_off(sb, bitmap_bnr);
-       bp = pram_get_block(sb, bitmap_block);
+	pram_lock_block(sb, bp);
+	set_bit(bnr, bitmap); /* mark the new block in use */
+	pram_unlock_block(sb, bp);
 
-       pram_lock_block(sb, bp, flags);
-       set_bit(bnr, bitmap); /* mark the new block in use */
-       pram_unlock_block(sb, bp, flags);
+	if (zero) {
+		bp = pram_get_block(sb, pram_get_block_off(sb, bnr));
+		pram_lock_block(sb, bp);
+		memset(bp, 0, sb->s_blocksize);
+		pram_unlock_block(sb, bp);
+	}
 
-       if (zero) {
-               bp = pram_get_block(sb, pram_get_block_off(sb, bnr));
-               pram_lock_block(sb, bp, flags);
-               memset(bp, 0, sb->s_blocksize);
-               pram_unlock_block(sb, bp, flags);
-       }
-
-       *blocknr = bnr;
-       errval = 0;
+	*blocknr = bnr;
+	errval = 0;
  fail:
-       unlock_super(sb);
-       return errval;
+	unlock_super(sb);
+	return errval;
 }
 
 unsigned long pram_count_free_blocks(struct super_block *sb)
 {
-       struct pram_super_block *ps = pram_get_super(sb);
-       return ps->s_free_blocks_count;
+	struct pram_super_block *ps = pram_get_super(sb);
+	return be32_to_cpu(ps->s_free_blocks_count);
 }

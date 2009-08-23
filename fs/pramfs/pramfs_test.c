@@ -17,29 +17,28 @@
 #include <linux/version.h>
 #include <linux/init.h>
 #include <linux/fs.h>
-#include "pram_fs.h"
+#include "pram.h"
 
 int __init test_pramfs_write(void)
 {
-       struct pram_super_block *psb;
-       char *ptr;
+	struct pram_super_block *psb;
 
-       psb = get_pram_super();
-       if (!psb) {
-               printk(KERN_ERR
-               "%s: PRAMFS super block not found (not mounted?)\n",
-               __func__);
-               return 1;
-       }
+	psb = get_pram_super();
+	if (!psb) {
+		printk(KERN_ERR
+		"%s: PRAMFS super block not found (not mounted?)\n",
+		__func__);
+		return 1;
+	}
 
-       /*
-        * Attempt an unprotected clear of all information in the superblock,
-        * this should cause a kernel page protection fault.
-        */
-       printk("%s: writing to kernel VA %p\n", __func__, psb);
-       memset(psb, 0 , PRAM_SB_SIZE);
+	/*
+	 * Attempt an unprotected clear of checksum information in the
+	 * superblock, this should cause a kernel page protection fault.
+	 */
+	printk("%s: writing to kernel VA %p\n", __func__, psb);
+	psb->s_sum = 0;
 
-       return 0;
+	return 0;
 }
 
 void test_pramfs_write_cleanup(void) {}

@@ -20,65 +20,20 @@
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
 #include <asm/tlbflush.h>
-#include "pram_fs.h"
+#include "pram.h"
 
-/* init_mm.page_table_lock must be held before calling! */
-static void pram_page_writeable(unsigned long addr, int rw)
-{
-       pgd_t *pgdp;
-       pud_t *pudp;
-       pmd_t *pmdp;
-       pte_t *ptep;
-
-       pgdp = pgd_offset_k(addr);
-       if (!pgd_none(*pgdp)) {
-               pudp = pud_offset(pgdp, addr);
-               if (!pud_none(*pudp)) {
-                       pmdp = pmd_offset(pudp, addr);
-                       if (!pmd_none(*pmdp)) {
-                               pte_t pte;
-                               ptep = pte_offset_kernel(pmdp, addr);
-                               pte = *ptep;
-                               if (pte_present(pte)) {
-                                       pte = rw ? pte_mkwrite(pte) :
-                                               pte_wrprotect(pte);
-                                       set_pte(ptep, pte);
-                               }
-                       }
-               }
-       }
-}
-
-/* init_mm.page_table_lock must be held before calling! */
 void pram_writeable(void *vaddr, unsigned long size, int rw)
 {
-       unsigned long addr = (unsigned long)vaddr & PAGE_MASK;
-       unsigned long end = (unsigned long)vaddr + size;
-       unsigned long start = addr;
+	unsigned long addr = (unsigned long)vaddr & PAGE_MASK;
+	unsigned long end = (unsigned long)vaddr + size;
+	unsigned long start = addr;
+	int ret = 0;
 
-       do {
-               pram_page_writeable(addr, rw);
-               addr += PAGE_SIZE;
-       } while (addr && (addr < end));
+	do {
+		ret = follow_pte(addr, rw);
+		BUG_ON(ret);
+		addr += PAGE_SIZE;
+	} while (addr && (addr < end));
 
-
-       /*
-        * NOTE: we will always flush just one page (one TLB
-        * entry) except possibly in one case: when a new
-        * filesystem is initialized at mount time, when pram_read_super
-        * calls pram_lock_range to make the super block, inode
-        * table, and bitmap writeable.
-        */
-#if defined(CONFIG_ARM) || defined(CONFIG_M68K) || defined(CONFIG_H8300) || \
-       defined(CONFIG_BLACKFIN)
-       /*
-        * FIXME: so far only these archs have flush_tlb_kernel_page(),
-        * for the rest just use flush_tlb_kernel_range(). Not ideal
-        * to use _range() because many archs just flush the whole TLB.
-        */
-       if (end <= start + PAGE_SIZE)
-               flush_tlb_kernel_page(start);
-       else
-#endif
-               flush_tlb_kernel_range(start, end);
+	 flush_tlb_kernel_range(start, end);
 }

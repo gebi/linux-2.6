@@ -1255,6 +1255,8 @@ struct page *follow_page(struct vm_area_struct *, unsigned long address,
 #define FOLL_DUMP	0x08	/* give error on hole if it would be zero */
 #define FOLL_FORCE	0x10	/* get_user_pages read/write w/o permission */
 
+int follow_pte(unsigned long addr, int rw);
+
 typedef int (*pte_fn_t)(pte_t *pte, pgtable_t token, unsigned long addr,
 			void *data);
 extern int apply_to_page_range(struct mm_struct *mm, unsigned long address,

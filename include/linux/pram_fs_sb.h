@@ -19,22 +19,22 @@
  * PRAM filesystem super-block data in memory
  */
 struct pram_sb_info {
-       /*
-        * base physical and virtual address of PRAMFS (which is also
-        * the pointer to the super block)
-        */
-       phys_addr_t phys_addr;
-       void *virt_addr;
+	/*
+	 * base physical and virtual address of PRAMFS (which is also
+	 * the pointer to the super block)
+	 */
+	phys_addr_t phys_addr;
+	void *virt_addr;
 
-       /* Mount options */
-       unsigned long bpi;
-       unsigned long num_inodes;
-       unsigned long blocksize;
-       unsigned long initsize;
-       uid_t uid;                  /* Mount uid for root directory */
-       gid_t gid;                  /* Mount gid for root directory */
-       mode_t mode;                /* Mount mode for root directory */
+	/* Mount options */
+	unsigned long bpi;
+	unsigned long num_inodes;
+	unsigned long blocksize;
+	unsigned long initsize;
+	uid_t uid;		    /* Mount uid for root directory */
+	gid_t gid;		    /* Mount gid for root directory */
+	mode_t mode;		    /* Mount mode for root directory */
 };
 
-#endif /* _LINUX_PRAM_FS_SB */
+#endif	/* _LINUX_PRAM_FS_SB */
 
