@@ -3156,7 +3156,7 @@ int in_gate_area_no_task(unsigned long addr)
 
 #endif	/* __HAVE_ARCH_GATE_AREA */
 
-static int follow_pte(struct mm_struct *mm, unsigned long address,
+int follow_pte(struct mm_struct *mm, unsigned long address,
 		pte_t **ptepp, spinlock_t **ptlp)
 {
 	pgd_t *pgd;
@@ -3192,6 +3192,7 @@ unlock:
 out:
 	return -EINVAL;
 }
+EXPORT_SYMBOL(follow_pte);
 
 /**
  * follow_pfn - look up PFN at a user virtual address
@@ -3402,44 +3403,3 @@ void might_fault(void)
 }
 EXPORT_SYMBOL(might_fault);
 #endif
-
-int follow_pte(unsigned long addr, int rw)
-{
-	pgd_t *pgdp;
-	pud_t *pudp;
-	pmd_t *pmdp;
-	pte_t *ptep, pte;
-	unsigned long flags;
-	int ret = -EINVAL;
-
-	/* Align to page boundary */
-	addr &= PAGE_MASK;
-
-	spin_lock_irqsave(init_mm.page_table_lock, flags);
-
-	pgdp = pgd_offset_k(addr);
-	if (pgd_none(*pgdp) || unlikely(pgd_bad(*pgdp)))
-		goto out;
-
-	pudp = pud_offset(pgdp, addr);
-	if (pud_none(*pudp) || unlikely(pud_bad(*pudp)))
-		goto out;
-
-	pmdp = pmd_offset(pudp, addr);
-	if (pmd_none(*pmdp) || unlikely(pmd_bad(*pmdp)))
-		goto out;
-
-	ptep = pte_offset_kernel(pmdp, addr);
-	pte = *ptep;
-	if (pte_present(pte)) {
-		pte = rw ? pte_mkwrite(pte) : pte_wrprotect(pte);
-		set_pte(ptep, pte);
-		ret = 0;
-	}
-
-out:
-	spin_unlock_irqrestore(init_mm.page_table_lock, flags);
-	return ret;
-
-}
-EXPORT_SYMBOL(follow_pte);

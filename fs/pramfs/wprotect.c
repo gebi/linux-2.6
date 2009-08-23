@@ -30,9 +30,14 @@ void pram_writeable(void *vaddr, unsigned long size, int rw)
 	int ret = 0;
 
 	do {
-		ret = follow_pte(addr, rw);
+		spinlock_t *ptl;
+                pte_t *ptep;
+
+		ret = follow_pte(&init_mm, addr, &ptep, &ptl);
 		BUG_ON(ret);
+
 		addr += PAGE_SIZE;
+		pte_unmap_unlock(ptep, ptl);
 	} while (addr && (addr < end));
 
 	 flush_tlb_kernel_range(start, end);
