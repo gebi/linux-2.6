@@ -79,7 +79,7 @@ static carry_node *find_left_neighbor(carry_op * op	/* node to find left
 	left->free = 1;
 
 	flags = GN_TRY_LOCK;
-	if (!op->u.insert.flags & COPI_LOAD_LEFT)
+	if (!(op->u.insert.flags & COPI_LOAD_LEFT))
 		flags |= GN_NO_ALLOC;
 
 	/* then, feeling lucky, peek left neighbor in the cache. */
@@ -203,7 +203,7 @@ static carry_node *find_right_neighbor(carry_op * op	/* node to find right
 	read_unlock_tree(tree);
 
 	flags = GN_CAN_USE_UPPER_LEVELS;
-	if (!op->u.insert.flags & COPI_LOAD_RIGHT)
+	if (!(op->u.insert.flags & COPI_LOAD_RIGHT))
 		flags = GN_NO_ALLOC;
 
 	/* then, try to lock right neighbor */
