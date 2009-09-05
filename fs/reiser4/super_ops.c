@@ -412,7 +412,7 @@ static void reiser4_sync_inodes(struct super_block *super,
 	 * call reiser4_writepages for each of dirty inodes to turn dirty pages
 	 * into transactions if they were not yet.
 	 */
-	generic_sync_sb_inodes(super, wbc);
+	generic_sync_sb_inodes(wbc);
 
 	/* flush goes here */
 	wbc->nr_to_write = to_write;
