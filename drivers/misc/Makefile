@@ -28,3 +28,5 @@ obj-$(CONFIG_C2PORT)		+= c2port/
 obj-$(CONFIG_IWMC3200TOP)      += iwmc3200top/
 obj-y				+= eeprom/
 obj-y				+= cb710/
+obj-$(CONFIG_THINKPAD_EC)       += thinkpad_ec.o
+obj-$(CONFIG_TP_SMAPI)          += tp_smapi.o
