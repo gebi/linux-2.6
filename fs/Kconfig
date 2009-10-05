@@ -43,7 +43,6 @@ source "fs/xfs/Kconfig"
 source "fs/gfs2/Kconfig"
 source "fs/ocfs2/Kconfig"
 source "fs/btrfs/Kconfig"
-source "fs/nilfs2/Kconfig"
 
 endif # BLOCK
 
