@@ -233,8 +233,8 @@ struct dir_entry_iops {
 
 /* operations specific to items regular (unix) file metadata are built of */
 struct file_iops{
-	int (*write) (struct file *, struct inode *,
-		      const char __user *, size_t, loff_t *pos);
+	ssize_t (*write) (struct file *, struct inode *,
+			  const char __user *, size_t, loff_t *pos);
 	int (*read) (struct file *, flow_t *, hint_t *);
 	int (*readpage) (void *, struct page *);
 	int (*get_block) (const coord_t *, sector_t, sector_t *);

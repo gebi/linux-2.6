@@ -122,8 +122,8 @@ static int gzip1_min_size_deflate(void)
 }
 
 static void
-gzip1_compress(coa_t coa, __u8 * src_first, unsigned src_len,
-	       __u8 * dst_first, unsigned *dst_len)
+gzip1_compress(coa_t coa, __u8 * src_first, size_t src_len,
+	       __u8 * dst_first, size_t *dst_len)
 {
 #if REISER4_ZLIB
 	int ret = 0;
@@ -166,8 +166,8 @@ gzip1_compress(coa_t coa, __u8 * src_first, unsigned src_len,
 }
 
 static void
-gzip1_decompress(coa_t coa, __u8 * src_first, unsigned src_len,
-		 __u8 * dst_first, unsigned *dst_len)
+gzip1_decompress(coa_t coa, __u8 * src_first, size_t src_len,
+		 __u8 * dst_first, size_t *dst_len)
 {
 #if REISER4_ZLIB
 	int ret = 0;
@@ -278,8 +278,8 @@ static int lzo1_min_size_deflate(void)
 }
 
 static void
-lzo1_compress(coa_t coa, __u8 * src_first, unsigned src_len,
-	      __u8 * dst_first, unsigned *dst_len)
+lzo1_compress(coa_t coa, __u8 * src_first, size_t src_len,
+	      __u8 * dst_first, size_t *dst_len)
 {
 	int result;
 
@@ -302,8 +302,8 @@ lzo1_compress(coa_t coa, __u8 * src_first, unsigned src_len,
 }
 
 static void
-lzo1_decompress(coa_t coa, __u8 * src_first, unsigned src_len,
-		__u8 * dst_first, unsigned *dst_len)
+lzo1_decompress(coa_t coa, __u8 * src_first, size_t src_len,
+		__u8 * dst_first, size_t *dst_len)
 {
 	int result;
 

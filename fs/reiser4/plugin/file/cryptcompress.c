@@ -1014,7 +1014,7 @@ int reiser4_deflate_cluster(struct cluster_handle * clust, struct inode * inode)
 	coplug = inode_compression_plugin(inode);
 	if (should_compress(tc, clust->index, inode)) {
 		/* try to compress, discard bad results */
-		__u32 dst_len;
+		size_t dst_len;
 		compression_mode_plugin * mplug =
 			inode_compression_mode_plugin(inode);
 		assert("edward-602", coplug != NULL);
@@ -1164,7 +1164,7 @@ int reiser4_inflate_cluster(struct cluster_handle * clust, struct inode * inode)
 		transformed = 1;
 	}
 	if (need_inflate(clust, inode, 0)) {
-		unsigned dst_len = inode_cluster_size(inode);
+		size_t dst_len = inode_cluster_size(inode);
 		if(transformed)
 			alternate_streams(tc);
 

@@ -273,7 +273,7 @@ static int read_check_compressibility(struct inode * inode,
 {
 	int i;
 	int result;
-	__u32 dst_len;
+	size_t dst_len;
 	hint_t tmp_hint;
 	hint_t * cur_hint = clust->hint;
 	assert("edward-1541", cont->state == DISPATCH_POINT);

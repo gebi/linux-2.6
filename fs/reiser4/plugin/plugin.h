@@ -560,10 +560,10 @@ typedef struct compression_plugin {
 	int (*min_size_deflate) (void);
 	 __u32(*checksum) (char *data, __u32 length);
 	/* main transform procedures */
-	void (*compress) (coa_t coa, __u8 *src_first, unsigned src_len,
-			  __u8 *dst_first, unsigned *dst_len);
-	void (*decompress) (coa_t coa, __u8 *src_first, unsigned src_len,
-			    __u8 *dst_first, unsigned *dst_len);
+	void (*compress) (coa_t coa, __u8 *src_first, size_t src_len,
+			  __u8 *dst_first, size_t *dst_len);
+	void (*decompress) (coa_t coa, __u8 *src_first, size_t src_len,
+			    __u8 *dst_first, size_t *dst_len);
 } compression_plugin;
 
 typedef struct compression_mode_plugin {
