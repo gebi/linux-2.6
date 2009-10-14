@@ -8,18 +8,18 @@
 #if !defined( __REISER4_FILE_H__ )
 #define __REISER4_FILE_H__
 
-/* possible states when scheduling a new file plugin */
+/* possible states in dispatching process */
 typedef enum {
-	PSCHED_INVAL_STATE,    /* invalid state */
-	PSCHED_SCHED_POINT,    /* scheduling point has been achieved */
-	PSCHED_REMAINS_OLD,    /* made a decision to be managed by old plugin */
-	PSCHED_ASSIGNED_NEW    /* new plugin has been scheduled */
-} psched_state;
+	DISPATCH_INVAL_STATE,  /* invalid state */
+	DISPATCH_POINT,        /* dispatching point has been achieved */
+	DISPATCH_REMAINS_OLD,  /* made a decision to manage by old plugin */
+	DISPATCH_ASSIGNED_NEW  /* a new plugin has been assigned */
+} dispatch_state;
 
-struct psched_context {
+struct dispatch_context {
 	int nr_pages;
 	struct page **pages;
-	psched_state state;
+	dispatch_state state;
 };
 
 /**
@@ -82,7 +82,7 @@ int setattr_unix_file(struct dentry *, struct iattr *);
 ssize_t read_unix_file(struct file *, char __user *buf, size_t read_amount,
 		       loff_t *off);
 ssize_t write_unix_file(struct file *, const char __user *buf, size_t write_amount,
-			loff_t * off, struct psched_context * cont);
+			loff_t * off, struct dispatch_context * cont);
 int ioctl_unix_file(struct inode *, struct file *, unsigned int cmd,
 		    unsigned long arg);
 int mmap_unix_file(struct file *, struct vm_area_struct *);
@@ -121,7 +121,7 @@ ssize_t read_cryptcompress(struct file *, char __user *buf,
 			   size_t count, loff_t *off);
 ssize_t write_cryptcompress(struct file *, const char __user *buf,
 			    size_t count, loff_t * off,
-			    struct psched_context *cont);
+			    struct dispatch_context *cont);
 int ioctl_cryptcompress(struct inode *, struct file *, unsigned int cmd,
 			unsigned long arg);
 int mmap_cryptcompress(struct file *, struct vm_area_struct *);

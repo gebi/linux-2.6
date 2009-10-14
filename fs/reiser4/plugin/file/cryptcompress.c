@@ -2642,7 +2642,7 @@ void reset_cluster_params(struct cluster_handle * clust)
 /* the heart of write_cryptcompress */
 static loff_t do_write_cryptcompress(struct file *file, struct inode *inode,
 				     const char __user *buf, size_t to_write,
-				     loff_t pos, struct psched_context *cont)
+				     loff_t pos, struct dispatch_context *cont)
 {
 	int i;
 	hint_t *hint;
@@ -2683,10 +2683,8 @@ static loff_t do_write_cryptcompress(struct file *file, struct inode *inode,
 	if (next_window_stat(&win) == HOLE_WINDOW) {
 		/* write hole in this iteration
 		   separated from the loop below */
-		result = write_pschedule_hook(file, inode,
-					      pos,
-					      &clust,
-					      cont);
+		result = write_dispatch_hook(file, inode,
+					     pos, &clust, cont);
 		if (result)
 			goto out;
 		result = prepare_logical_cluster(inode, pos, count, &clust,
@@ -2700,14 +2698,13 @@ static loff_t do_write_cryptcompress(struct file *file, struct inode *inode,
 
 		assert("edward-750", reiser4_schedulable());
 
-		result = write_pschedule_hook(file, inode,
-					      pos + to_write - count,
-					      &clust,
-					      cont);
+		result = write_dispatch_hook(file, inode,
+					     pos + to_write - count,
+					     &clust, cont);
 		if (result)
 			goto out;
-		if (cont->state == PSCHED_ASSIGNED_NEW)
-			/* done_lh was called in write_pschedule_hook */
+		if (cont->state == DISPATCH_ASSIGNED_NEW)
+			/* done_lh was called in write_dispatch_hook */
 			goto out_no_longterm_lock;
 
 		result = prepare_logical_cluster(inode, pos, count, &clust,
@@ -2787,7 +2784,7 @@ static loff_t do_write_cryptcompress(struct file *file, struct inode *inode,
 	put_cluster_handle(&clust);
 	assert("edward-195",
 	       ergo((to_write == count),
-		    (result < 0 || cont->state == PSCHED_ASSIGNED_NEW)));
+		    (result < 0 || cont->state == DISPATCH_ASSIGNED_NEW)));
 	return (to_write - count) ? (to_write - count) : result;
 }
 
@@ -2800,7 +2797,7 @@ static loff_t do_write_cryptcompress(struct file *file, struct inode *inode,
  */
 ssize_t write_cryptcompress(struct file *file, const char __user *buf,
 			    size_t count, loff_t *off,
-			    struct psched_context *cont)
+			    struct dispatch_context *cont)
 {
 	ssize_t result;
 	struct inode *inode;
@@ -2808,7 +2805,7 @@ ssize_t write_cryptcompress(struct file *file, const char __user *buf,
 	loff_t pos = *off;
 	struct cryptcompress_info *info;
 
-	assert("edward-1449", cont->state == PSCHED_INVAL_STATE);
+	assert("edward-1449", cont->state == DISPATCH_INVAL_STATE);
 
 	inode = file->f_dentry->d_inode;
 	assert("edward-196", cryptcompress_inode_ok(inode));
@@ -3701,7 +3698,7 @@ int setattr_cryptcompress(struct dentry *dentry, struct iattr *attr)
 			ctx = reiser4_init_context(dentry->d_inode->i_sb);
 			if (IS_ERR(ctx))
 				return PTR_ERR(ctx);
-			result = setattr_pschedule_hook(inode);
+			result = setattr_dispatch_hook(inode);
 			if (result) {
 				context_set_commit_async(ctx);
 				reiser4_exit_context(ctx);

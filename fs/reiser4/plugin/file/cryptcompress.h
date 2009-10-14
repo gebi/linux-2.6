@@ -562,10 +562,10 @@ int bind_cryptcompress(struct inode *child, struct inode *parent);
 void destroy_inode_cryptcompress(struct inode * inode);
 int grab_page_cluster(struct inode *inode, struct cluster_handle * clust,
 		      rw_op rw);
-int write_pschedule_hook(struct file *file, struct inode * inode,
-			 loff_t pos, struct cluster_handle * clust,
-			 struct psched_context * cont);
-int setattr_pschedule_hook(struct inode * inode);
+int write_dispatch_hook(struct file *file, struct inode * inode,
+			loff_t pos, struct cluster_handle * clust,
+			struct dispatch_context * cont);
+int setattr_dispatch_hook(struct inode * inode);
 struct reiser4_crypto_info * inode_crypto_info(struct inode * inode);
 void inherit_crypto_info_common(struct inode * parent, struct inode * object,
 				int (*can_inherit)(struct inode * child,

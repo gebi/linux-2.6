@@ -235,7 +235,7 @@ typedef struct file_plugin {
 	 * in @cont */
 	ssize_t (*write) (struct file *, const char __user *buf,
 			  size_t write_amount, loff_t * off,
-			  struct psched_context * cont);
+			  struct dispatch_context * cont);
 	int (*ioctl) (struct inode *inode, struct file *filp,
 		      unsigned int cmd, unsigned long arg);
 	int (*mmap) (struct file *, struct vm_area_struct *);

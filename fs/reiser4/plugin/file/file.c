@@ -2059,8 +2059,10 @@ static void drop_access(struct unix_file_info *uf_info)
  * @cont: unused argument, as we don't perform plugin conversion when being
  * managed by unix_file plugin.
  */
-ssize_t write_unix_file(struct file *file, const char __user *buf,
-			size_t count, loff_t *pos, struct psched_context *cont)
+ssize_t write_unix_file(struct file *file,
+			const char __user *buf,
+			size_t count, loff_t *pos,
+			struct dispatch_context *cont)
 {
 	int result;
 	reiser4_context *ctx;
