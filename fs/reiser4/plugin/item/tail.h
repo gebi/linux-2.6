@@ -40,8 +40,6 @@ int readpage_tail(void *vp, struct page *page);
 reiser4_key *append_key_tail(const coord_t *, reiser4_key *);
 void init_coord_extension_tail(uf_coord_t *, loff_t offset);
 int get_block_address_tail(const coord_t *, sector_t, sector_t *);
-int item_balance_dirty_pages(struct address_space *, const flow_t *,
-			     hint_t *, int back_to_dirty, int set_hint);
 
 /* __REISER4_TAIL_H__ */
 #endif

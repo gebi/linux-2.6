@@ -201,10 +201,16 @@ void reiser4_writeout(struct super_block *sb, struct writeback_control *wbc)
 	} while (wbc->nr_to_write > 0);
 }
 
-void reiser4_throttle_write(struct inode *inode)
+/* tell VM how many pages were dirtied */
+void reiser4_throttle_write(struct inode *inode, int nrpages)
 {
-	reiser4_txn_restart_current();
-	balance_dirty_pages_ratelimited(inode->i_mapping);
+	reiser4_context *ctx;
+
+	ctx = get_current_context();
+	reiser4_txn_restart(ctx);
+	current->journal_info = NULL;
+	balance_dirty_pages_ratelimited_nr(inode->i_mapping, nrpages);
+	current->journal_info = ctx;
 }
 
 const char *REISER4_SUPER_MAGIC_STRING = "ReIsEr4";

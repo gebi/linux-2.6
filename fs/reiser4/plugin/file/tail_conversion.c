@@ -486,8 +486,10 @@ int tail2extent(struct unix_file_info *uf_info)
 			 * on partially converted files.
 			 */
 			drop_exclusive_access(uf_info);
-			/* throttle the conversion */
-			reiser4_throttle_write(inode);
+			/* throttle the conversion
+			   FIXME-EDWARD: Pass the precise number of pages
+			   that was dirtied */
+			reiser4_throttle_write(inode, 1);
 			get_exclusive_access(uf_info);
 
 			/*
@@ -685,8 +687,12 @@ int extent2tail(struct file * file, struct unix_file_info *uf_info)
 		page_cache_release(page);
 
 		drop_exclusive_access(uf_info);
-		/* throttle the conversion */
-		reiser4_throttle_write(inode);
+		/*
+		 * throttle the conversion.
+		 * FIXME-EDWARD: Calculate and pass the precise number
+		 * of pages that was dirtied
+		 */
+		reiser4_throttle_write(inode, 1);
 		get_exclusive_access(uf_info);
 		/*
 		 * nobody is allowed to complete conversion but a process which

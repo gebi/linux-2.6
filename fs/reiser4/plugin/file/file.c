@@ -2227,16 +2227,13 @@ ssize_t write_unix_file(struct file *file,
 		}
 		drop_access(uf_info);
 		ea = NEITHER_OBTAINED;
-		reiser4_txn_restart(ctx);
-		current->journal_info = NULL;
+
 		/*
 		 * tell VM how many pages were dirtied. Maybe number of pages
 		 * which were dirty already should not be counted
 		 */
-		balance_dirty_pages_ratelimited_nr(inode->i_mapping,
-						   (written + PAGE_CACHE_SIZE - 1) / PAGE_CACHE_SIZE);
-		current->journal_info = ctx;
-
+		reiser4_throttle_write(inode,
+			     (written + PAGE_CACHE_SIZE - 1) / PAGE_CACHE_SIZE);
 		left -= written;
 		buf += written;
 		*pos += written;

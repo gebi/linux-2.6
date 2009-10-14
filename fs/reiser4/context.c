@@ -37,8 +37,8 @@
 #include "debug.h"
 #include "super.h"
 #include "context.h"
+#include "vfs_ops.h"	/* for reiser4_throttle_write() */
 
-#include <linux/writeback.h>	/* balance_dirty_pages() */
 #include <linux/hardirq.h>
 
 static void _reiser4_init_context(reiser4_context * context,
@@ -139,7 +139,7 @@ int is_in_reiser4_context(void)
  * because some important lock (like ->i_mutex on the parent directory) is
  * held. To achieve this, ->nobalance flag can be set in the current context.
  */
-static void balance_dirty_pages_at(reiser4_context *context)
+static void reiser4_throttle_write_at(reiser4_context *context)
 {
 	reiser4_super_info_data *sbinfo = get_super_private(context->super);
 
@@ -152,7 +152,8 @@ static void balance_dirty_pages_at(reiser4_context *context)
 	if (sbinfo != NULL && sbinfo->fake != NULL &&
 	    context->nr_marked_dirty != 0 &&
 	    !(current->flags & PF_MEMALLOC))
-		balance_dirty_pages_ratelimited(sbinfo->fake->i_mapping);
+		/* FIXME-EDWARD: throttle with nr_marked_dirty? */
+		reiser4_throttle_write(sbinfo->fake, 1);
 }
 
 /* release resources associated with context.
@@ -225,10 +226,8 @@ void reiser4_exit_context(reiser4_context * context)
 	assert("nikita-3021", reiser4_schedulable());
 
 	if (context->nr_children == 0) {
-		if (!context->nobalance) {
-			reiser4_txn_restart(context);
-			balance_dirty_pages_at(context);
-		}
+		if (!context->nobalance)
+			reiser4_throttle_write_at(context);
 
 		/* if filesystem is mounted with -o sync or -o dirsync - commit
 		   transaction.  FIXME: TXNH_DONT_COMMIT is used to avoid

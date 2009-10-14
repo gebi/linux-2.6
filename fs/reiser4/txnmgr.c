@@ -2328,7 +2328,8 @@ static void do_jnode_make_dirty(jnode * node, txn_atom * atom)
 
 	JF_SET(node, JNODE_DIRTY);
 
-	get_current_context()->nr_marked_dirty++;
+	if (!JF_ISSET(node, JNODE_CLUSTER_PAGE))
+		get_current_context()->nr_marked_dirty++;
 
 	/* We grab2flush_reserve one additional block only if node was
 	   not CREATED and jnode_flush did not sort it into neither

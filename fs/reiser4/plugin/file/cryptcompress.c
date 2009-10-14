@@ -1973,8 +1973,7 @@ static int balance_dirty_page_cluster(struct cluster_handle * clust,
 	info = cryptcompress_inode_data(inode);
 
 	mutex_unlock(&info->checkin_mutex);
-	reiser4_txn_restart_current();
-	balance_dirty_pages_ratelimited_nr(inode->i_mapping, nr_dirtied);
+	reiser4_throttle_write(inode, nr_dirtied);
 	mutex_lock(&info->checkin_mutex);
 	return 0;
 }

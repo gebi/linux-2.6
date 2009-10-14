@@ -10,32 +10,24 @@
 #include "../debug.h"
 #include "../dformat.h"
 
-/* Every plugin type can be considered as a class of virtual objects
-   {(type, i) | i = 0, 1, ...}, which has one the following categories
-   of virtualization:
-   A - no virtualization;
-   F - per-file virtualization;
-   S - per-superblock virtualization;
-   FIXME-EDWARD: Define every such category */
-
-/* Supported plugin types: (id, (virtualization category), short description) */
+/* The list of Reiser4 interfaces */
 typedef enum {
-	REISER4_FILE_PLUGIN_TYPE,             /* (F) service VFS enry-points */
-	REISER4_DIR_PLUGIN_TYPE,              /* (F) service VFS enry-points */
-	REISER4_ITEM_PLUGIN_TYPE,             /* (F) manage items */
-	REISER4_NODE_PLUGIN_TYPE,             /* (S) manage formatted nodes */
-	REISER4_HASH_PLUGIN_TYPE,             /* (F) compute hash */
-	REISER4_FIBRATION_PLUGIN_TYPE,        /* (F) directory fibrations */
-	REISER4_FORMATTING_PLUGIN_TYPE,       /* (F) tail-packing policy */
-	REISER4_PERM_PLUGIN_TYPE,             /*       stub (vacancy)     */
-	REISER4_SD_EXT_PLUGIN_TYPE,           /* (A) stat-data extensions */
-	REISER4_FORMAT_PLUGIN_TYPE,           /* (S) specify disk format */
-	REISER4_JNODE_PLUGIN_TYPE,            /* (A) in-memory node headers */
-	REISER4_CIPHER_PLUGIN_TYPE,           /* (F) cipher transform algs */
-	REISER4_DIGEST_PLUGIN_TYPE,           /* (F) digest transform algs */
-	REISER4_COMPRESSION_PLUGIN_TYPE,      /* (F) compression tfm algs */
-	REISER4_COMPRESSION_MODE_PLUGIN_TYPE, /* (F) compression heuristic */
-	REISER4_CLUSTER_PLUGIN_TYPE,          /* (F) size of logical cluster */
+	REISER4_FILE_PLUGIN_TYPE,             /* manage VFS objects */
+	REISER4_DIR_PLUGIN_TYPE,              /* manage directories */
+	REISER4_ITEM_PLUGIN_TYPE,             /* manage items */
+	REISER4_NODE_PLUGIN_TYPE,             /* manage formatted nodes */
+	REISER4_HASH_PLUGIN_TYPE,             /* hash methods */
+	REISER4_FIBRATION_PLUGIN_TYPE,        /* directory fibrations */
+	REISER4_FORMATTING_PLUGIN_TYPE,       /* dispatching policy */
+	REISER4_PERM_PLUGIN_TYPE,             /* stub (vacancy) */
+	REISER4_SD_EXT_PLUGIN_TYPE,           /* manage stat-data extensions */
+	REISER4_FORMAT_PLUGIN_TYPE,           /* disk format specifications */
+	REISER4_JNODE_PLUGIN_TYPE,            /* manage in-memory headers */
+	REISER4_CIPHER_PLUGIN_TYPE,           /* cipher transform methods */
+	REISER4_DIGEST_PLUGIN_TYPE,           /* digest transform methods */
+	REISER4_COMPRESSION_PLUGIN_TYPE,      /* compression methods */
+	REISER4_COMPRESSION_MODE_PLUGIN_TYPE, /* dispatching policies */
+	REISER4_CLUSTER_PLUGIN_TYPE,          /* manage logical clusters */
 	REISER4_PLUGIN_TYPES
 } reiser4_plugin_type;
 
