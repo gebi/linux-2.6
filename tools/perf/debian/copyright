@@ -1,0 +1,19 @@
+This package was debianized by Michael Gebetsroither <gebi@grml.org> on
+Fri, 23 Oct 2009 03:03:06 +0200.
+
+It was downloaded from git://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux-2.6.git
+
+Upstream Author(s):
+
+    many
+
+Copyright:
+
+    many
+
+License:
+
+    GPLv2
+
+The Debian packaging is (C) 2009, Michael Gebetsroither <gebi@grml.org> and
+is licensed under the GPL, see `/usr/share/common-licenses/GPL'.
