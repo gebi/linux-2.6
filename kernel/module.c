@@ -1930,13 +1930,69 @@ static inline void kmemleak_load_module(struct module *mod, Elf_Ehdr *hdr,
 }
 #endif
 
+/*
+ * See if we're a valid FatELF binary, find the right record, and
+ *  return the offset of that record within the binary. Returns NULL if there's
+ *  a problem, or a pointer to the real ELF header if we're okay.
+ *  If we don't see the FatELF magic number, we assume this is a regular ELF
+ *  binary and let the regular ELF checks handle it.
+ *
+ * This is a simplified version of examine_fatelf in fs/binfmt_elf.c
+ */
+static Elf_Ehdr *examine_fatelf_module(const unsigned char *hdr,
+				       const unsigned long len)
+{
+	Elf_Ehdr elf;
+	int records, i;
+	const fatelf_hdr *fatelf = (const fatelf_hdr *) hdr;
+
+	if (likely(le32_to_cpu(fatelf->magic) != FATELF_MAGIC)) {
+		return (Elf_Ehdr *) hdr;  /* not FatELF; not an error. */
+	} else if (unlikely(le16_to_cpu(fatelf->version) != 1)) {
+		return NULL; /* Unrecognized format version. */
+	}
+
+	memset(&elf, 0, sizeof (elf));
+
+	records = (int) fatelf->num_records;  /* uint8, no byteswap needed */
+	for (i = 0; i < records; i++) {
+		const fatelf_record *record = &fatelf->records[i];
+
+		/* Fill in the data elf_check_arch() might care about. */
+		elf.e_ident[EI_OSABI] = record->osabi;
+		elf.e_ident[EI_CLASS] = record->word_size;
+		elf.e_ident[EI_DATA] = record->byte_order;
+		elf.e_machine = le16_to_cpu(record->machine);
+
+		if (likely(!elf_check_arch(&elf))) {
+			continue;  /* Unsupported CPU architecture. */
+		} else {
+			const __u64 rec_offset = le64_to_cpu(record->offset);
+			const __u64 rec_size = le64_to_cpu(record->size);
+			const __u64 end_offset = rec_offset + rec_size;
+			const unsigned long uloff = (unsigned long) rec_offset;
+
+			if (unlikely(end_offset < rec_offset)) {
+				continue;  /* overflow (corrupt file?)... */
+			} else if (unlikely(end_offset > len)) {
+				continue;  /* past EOF. */
+			}
+
+			return (Elf_Ehdr *) (hdr + uloff);
+		}
+	}
+
+	return NULL;  /* no binaries we could use. */
+}
+
 /* Allocate and load the module: note that size of section 0 is always
    zero, and we rely on this for optional sections. */
 static noinline struct module *load_module(void __user *umod,
 				  unsigned long len,
 				  const char __user *uargs)
 {
-	Elf_Ehdr *hdr;
+	Elf_Ehdr *hdr_alloc;  /* returned from vmalloc */
+	Elf_Ehdr *hdr;  /* adjusted hdr_alloc for FatELF */
 	Elf_Shdr *sechdrs;
 	char *secstrings, *args, *modmagic, *strtab = NULL;
 	char *staging;
@@ -1958,11 +2014,17 @@ static noinline struct module *load_module(void __user *umod,
 
 	/* Suck in entire file: we'll want most of it. */
 	/* vmalloc barfs on "unusual" numbers.  Check here */
-	if (len > 64 * 1024 * 1024 || (hdr = vmalloc(len)) == NULL)
+	if (len > 64 * 1024 * 1024 || (hdr_alloc = vmalloc(len)) == NULL)
 		return ERR_PTR(-ENOMEM);
 
-	if (copy_from_user(hdr, umod, len) != 0) {
+	if (copy_from_user(hdr_alloc, umod, len) != 0) {
 		err = -EFAULT;
+		goto free_hdr;
+	}
+
+	hdr = examine_fatelf_module((unsigned char *) hdr_alloc, len);
+	if (hdr == NULL) {
+		err = -ENOEXEC;
 		goto free_hdr;
 	}
 
@@ -2375,7 +2437,7 @@ static noinline struct module *load_module(void __user *umod,
 	add_notes_attrs(mod, hdr->e_shnum, secstrings, sechdrs);
 
 	/* Get rid of temporary copy */
-	vfree(hdr);
+	vfree(hdr_alloc);
 
 	trace_module_load(mod);
 
@@ -2408,7 +2470,7 @@ static noinline struct module *load_module(void __user *umod,
 	kfree(args);
 	kfree(strmap);
  free_hdr:
-	vfree(hdr);
+	vfree(hdr_alloc);
 	return ERR_PTR(err);
 
  truncated:
