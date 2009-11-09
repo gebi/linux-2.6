@@ -1195,7 +1195,10 @@ EXPORT_SYMBOL(writeback_inodes_sb);
  */
 void sync_inodes_sb(struct super_block *sb)
 {
-	bdi_sync_writeback(sb->s_bdi, sb);
+	if (sb->s_op->sync_inodes)
+		sb->s_op->sync_inodes(sb, NULL);
+	else
+		bdi_sync_writeback(sb->s_bdi, sb);
 	wait_sb_inodes(sb);
 }
 EXPORT_SYMBOL(sync_inodes_sb);
