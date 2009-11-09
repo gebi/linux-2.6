@@ -779,7 +779,6 @@ repeat:
 	rcu_read_unlock();
 	return ret;
 }
-EXPORT_SYMBOL(add_to_page_cache_lru);
 
 /**
  * find_get_pages_contig - gang contiguous pagecache lookup
