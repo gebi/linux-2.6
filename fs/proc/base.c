@@ -366,7 +366,11 @@ static int proc_pid_stack(struct seq_file *m, struct pid_namespace *ns,
 static int proc_pid_schedstat(struct task_struct *task, char *buffer)
 {
 	return sprintf(buffer, "%llu %llu %lu\n",
+#ifdef CONFIG_CPU_BFS
+			(unsigned long long)task->sched_time,
+#else
 			(unsigned long long)task->se.sum_exec_runtime,
+#endif
 			(unsigned long long)task->sched_info.run_delay,
 			task->sched_info.pcount);
 }
