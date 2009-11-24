@@ -36,8 +36,16 @@
 #define SCHED_FIFO		1
 #define SCHED_RR		2
 #define SCHED_BATCH		3
-/* SCHED_ISO: reserved but not implemented yet */
+
+#ifdef CONFIG_CPU_BFS
+#define SCHED_ISO		4
+#define SCHED_IDLEPRIO		5
+#define SCHED_MAX		(SCHED_IDLEPRIO)
+#define SCHED_RANGE(policy)	((policy) <= SCHED_MAX)
+#else
 #define SCHED_IDLE		5
+#endif
+
 /* Can be ORed in to make sure the process is reverted back to SCHED_NORMAL on fork */
 #define SCHED_RESET_ON_FORK     0x40000000
 
@@ -149,13 +157,17 @@ extern void calc_global_load(void);
 extern unsigned long get_parent_ip(unsigned long addr);
 
 struct seq_file;
+#ifndef CONFIG_CPU_BFS
 struct cfs_rq;
+#endif
 struct task_group;
 #ifdef CONFIG_SCHED_DEBUG
 extern void proc_sched_show_task(struct task_struct *p, struct seq_file *m);
 extern void proc_sched_set_task(struct task_struct *p);
+#ifndef CONFIG_CPU_BFS
 extern void
 print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq);
+#endif
 #else
 static inline void
 proc_sched_show_task(struct task_struct *p, struct seq_file *m)
@@ -164,10 +176,12 @@ proc_sched_show_task(struct task_struct *p, struct seq_file *m)
 static inline void proc_sched_set_task(struct task_struct *p)
 {
 }
+#ifndef CONFIG_CPU_BFS
 static inline void
 print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq)
 {
 }
+#endif
 #endif
 
 /*
@@ -258,8 +272,13 @@ extern asmlinkage void schedule_tail(struct task_struct *prev);
 extern void init_idle(struct task_struct *idle, int cpu);
 extern void init_idle_bootup_task(struct task_struct *idle);
 
+#ifdef CONFIG_CPU_BFS
+extern int grunqueue_is_locked(void);
+extern void grq_unlock_wait(void);
+#else
 extern int runqueue_is_locked(int cpu);
 extern void task_rq_unlock_wait(struct task_struct *p);
+#endif
 
 extern cpumask_var_t nohz_cpu_mask;
 #if defined(CONFIG_SMP) && defined(CONFIG_NO_HZ)
@@ -465,9 +484,9 @@ extern int get_dumpable(struct mm_struct *mm);
 	 (1 << MMF_DUMP_HUGETLB_PRIVATE) | MMF_DUMP_MASK_DEFAULT_ELF)
 
 #ifdef CONFIG_CORE_DUMP_DEFAULT_ELF_HEADERS
-# define MMF_DUMP_MASK_DEFAULT_ELF	(1 << MMF_DUMP_ELF_HEADERS)
+#define MMF_DUMP_MASK_DEFAULT_ELF	(1 << MMF_DUMP_ELF_HEADERS)
 #else
-# define MMF_DUMP_MASK_DEFAULT_ELF	0
+#define MMF_DUMP_MASK_DEFAULT_ELF	0
 #endif
 					/* leave room for more dump flags */
 #define MMF_VM_MERGEABLE	16	/* KSM may merge identical pages */
@@ -668,7 +687,7 @@ struct signal_struct {
 
 /* Context switch must be unlocked if interrupts are to be enabled */
 #ifdef __ARCH_WANT_INTERRUPTS_ON_CTXSW
-# define __ARCH_WANT_UNLOCKED_CTXSW
+#define __ARCH_WANT_UNLOCKED_CTXSW
 #endif
 
 /*
@@ -1222,17 +1241,27 @@ struct task_struct {
 
 	int lock_depth;		/* BKL lock depth */
 
-#ifdef CONFIG_SMP
-#ifdef __ARCH_WANT_UNLOCKED_CTXSW
+#if defined(CONFIG_SMP) && defined(__ARCH_WANT_UNLOCKED_CTXSW) && !defined(CONFIG_CPU_BFS)
 	int oncpu;
-#endif
 #endif
 
 	int prio, static_prio, normal_prio;
+#ifdef CONFIG_CPU_BFS
+	int oncpu
+	int time_slice, first_time_slice;
+	unsigned long deadline;
+	struct list_head run_list;
+	u64 last_ran;
+	u64 sched_time; /* sched_clock time spent running */
+
+	unsigned long rt_timeout;
+#endif
 	unsigned int rt_priority;
+#ifndef CONFIG_CPU_BFS
 	const struct sched_class *sched_class;
 	struct sched_entity se;
 	struct sched_rt_entity rt;
+#endif
 
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	/* list of struct preempt_notifier: */
@@ -1254,6 +1283,9 @@ struct task_struct {
 
 	unsigned int policy;
 	cpumask_t cpus_allowed;
+#ifdef CONFIG_HOTPLUG_CPU
+	cpumask_t unplugged_mask;
+#endif
 
 #ifdef CONFIG_TREE_PREEMPT_RCU
 	int rcu_read_lock_nesting;
@@ -1331,6 +1363,9 @@ struct task_struct {
 	int __user *clear_child_tid;		/* CLONE_CHILD_CLEARTID */
 
 	cputime_t utime, stime, utimescaled, stimescaled;
+#ifdef CONFIG_CPU_BFS
+	unsigned long utime_pc, stime_pc;
+#endif
 	cputime_t gtime;
 #ifndef CONFIG_VIRT_CPU_ACCOUNTING
 	cputime_t prev_utime, prev_stime;
@@ -1438,7 +1473,7 @@ struct task_struct {
 	int softirq_context;
 #endif
 #ifdef CONFIG_LOCKDEP
-# define MAX_LOCK_DEPTH 48UL
+#define MAX_LOCK_DEPTH 48UL
 	u64 curr_chain_key;
 	int lockdep_depth;
 	unsigned int lockdep_recursion;
@@ -1571,7 +1606,17 @@ struct task_struct {
 #define MAX_USER_RT_PRIO	100
 #define MAX_RT_PRIO		MAX_USER_RT_PRIO
 
+#ifdef CONFIG_CPU_BFS
+#define PRIO_RANGE		(40)
+#define MAX_PRIO		(MAX_RT_PRIO + PRIO_RANGE)
+#define ISO_PRIO		(MAX_RT_PRIO)
+#define NORMAL_PRIO		(MAX_RT_PRIO + 1)
+#define IDLE_PRIO		(MAX_RT_PRIO + 2)
+#define PRIO_LIMIT		((IDLE_PRIO) + 1)
+#else
 #define MAX_PRIO		(MAX_RT_PRIO + 40)
+#endif
+
 #define DEFAULT_PRIO		(MAX_RT_PRIO + 20)
 
 static inline int rt_prio(int prio)
@@ -1881,7 +1926,7 @@ task_sched_runtime(struct task_struct *task);
 extern unsigned long long thread_group_sched_runtime(struct task_struct *task);
 
 /* sched_exec is called by processes performing an exec */
-#ifdef CONFIG_SMP
+#if defined(CONFIG_SMP) && !defined(CONFIG_CPU_BFS)
 extern void sched_exec(void);
 #else
 #define sched_exec()   {}
@@ -1958,7 +2003,7 @@ static inline int rt_mutex_getprio(struct task_struct *p)
 {
 	return p->normal_prio;
 }
-# define rt_mutex_adjust_pi(p)		do { } while (0)
+#define rt_mutex_adjust_pi(p)		do { } while (0)
 #endif
 
 extern void set_user_nice(struct task_struct *p, long nice);
@@ -2044,6 +2089,9 @@ extern void wake_up_new_task(struct task_struct *tsk,
  static inline void kick_process(struct task_struct *tsk) { }
 #endif
 extern void sched_fork(struct task_struct *p, int clone_flags);
+#ifdef CONFIG_CPU_BFS
+extern void sched_exit(struct task_struct *p);
+#endif
 extern void sched_dead(struct task_struct *p);
 
 extern void proc_caches_init(void);
