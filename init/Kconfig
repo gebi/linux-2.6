@@ -106,6 +106,8 @@ config LOCALVERSION_AUTO
 
 	  which is done within the script "scripts/setlocalversion".)
 
+source "init/Kconfig.cpu"
+
 config HAVE_KERNEL_GZIP
 	bool
 

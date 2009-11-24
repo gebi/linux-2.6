@@ -1,0 +1,24 @@
+choice
+	prompt "ZenSched CPU Scheduler Choice"
+	default CPU_BFS
+	help
+	  Here you can choose the CPU scheduler to be compiled with the kernel.
+
+	  If unsure, say CPU_BFS
+
+config CPU_CFS
+	bool "Completely Fair Scheduler (CFS)"
+	help
+	  The "Completely Fair Scheduler" (CFS), developed by Ingo Molnar,
+	  is the CPU scheduler used in the default vanilla kernel.
+
+config CPU_BFS
+	bool "Brainfuck Scheduler (BFS)"
+	help
+	  The "Brainfuck Scheduler" (BFS) is a CPU scheduler developed
+	  by Con Kolivas. It is designed for ultra low latency and excellent
+	  desktop performance.
+
+	  Not recommended for 4096 CPUs
+
+endchoice
