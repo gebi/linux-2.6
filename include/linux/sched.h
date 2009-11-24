@@ -1,6 +1,11 @@
 #ifndef _LINUX_SCHED_H
 #define _LINUX_SCHED_H
 
+#ifdef CONFIG_CPU_BFS
+/* define the version of BFS here, will show as a kernel message if using BFS from init/main.c */
+#define BFS_VERSION "v311"
+#endif
+
 /*
  * cloning flags:
  */
