@@ -410,8 +410,11 @@ static void __oom_kill_task(struct task_struct *p, int verbose)
 	 * all the memory it needs. That way it should be able to
 	 * exit() and clear out its resources quickly...
 	 */
-#ifdef CONFIG_CPU_BFS
+#if defined(CONFIG_CPU_BFS)
 	p->time_slice = HZ;
+#elif defined(CONFIG_CFS_BOOST)
+	if (p->policy == SCHED_NORMAL || p->policy == SCHED_BATCH)
+		sched_privileged_task(p);
 #else
 	p->rt.time_slice = HZ;
 #endif

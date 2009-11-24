@@ -593,7 +593,14 @@ static int loop_thread(void *data)
 	struct loop_device *lo = data;
 	struct bio *bio;
 
+#if defined(CONFIG_CFS_BOOST)
+	/*
+	 * The loop thread is important enough to be given a boost:
+	 */
+	sched_privileged_task(current);
+#else
 	set_user_nice(current, -20);
+#endif
 
 	while (!kthread_should_stop() || !bio_list_empty(&lo->lo_bio_list)) {
 

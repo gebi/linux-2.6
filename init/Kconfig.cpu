@@ -22,3 +22,38 @@ config CPU_BFS
 	  Not recommended for 4096 CPUs
 
 endchoice
+
+config CPU_BFS_AUTOISO
+        bool "Auto SCHED_ISO for X"
+        depends on CPU_BFS
+        help
+	  Tasks (including X) can be run as SCHED_ISO manually with schedtool -I
+	  Enable this to automatically run SCHED_ISO for X, this is not default
+	  because there is a slim possibility that other tasks (such as multimedia)
+	  may stutter if they aren't also ran as SCHED_ISO.
+
+	  If unsure, say N here
+
+config CFS_BOOST
+	bool "Boost X Privilege"
+	default y
+	depends on CPU_CFS
+	help
+	  This option instructs the kernel to guarantee more CPU time to
+	  X than to other tasks, which is sueful if you want to have a
+	  faster desktop even under high system load.
+
+	  This option works by automatically boosting X's priority via
+	  renicing it to -10. NOTE: CFS does not suffer from
+	  "overscheduling" problems when X is reniced to -10, so if this
+	  is a predominantly desktop box it makes sense to select this option
+
+	  Say Y here if you are building a kernel for a desktop system.
+	  Say N here if you want X to be treated as a normal task.
+
+config CFS_BOOST_NICE
+	int "Nice value for privileged tasks"
+	depends on CFS_BOOST
+	range -20 19
+	default -10
+
