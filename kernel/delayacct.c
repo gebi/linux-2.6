@@ -128,7 +128,11 @@ int __delayacct_add_tsk(struct taskstats *d, struct task_struct *tsk)
 	 */
 	t1 = tsk->sched_info.pcount;
 	t2 = tsk->sched_info.run_delay;
+#ifdef CONFIG_CPU_BFS
+	t3 = tsk->sched_time;
+#else
 	t3 = tsk->se.sum_exec_runtime;
+#endif
 
 	d->cpu_count += t1;
 

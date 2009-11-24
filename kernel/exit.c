@@ -121,7 +121,11 @@ static void __exit_signal(struct task_struct *tsk)
 		sig->inblock += task_io_get_inblock(tsk);
 		sig->oublock += task_io_get_oublock(tsk);
 		task_io_accounting_add(&sig->ioac, &tsk->ioac);
+#ifdef CONFIG_CPU_BFS
+		sig->sum_sched_runtime += tsk->sched_time;
+#else
 		sig->sum_sched_runtime += tsk->se.sum_exec_runtime;
+#endif
 		sig = NULL; /* Marker for below. */
 	}
 
@@ -143,10 +147,14 @@ static void __exit_signal(struct task_struct *tsk)
 		flush_sigqueue(&sig->shared_pending);
 		taskstats_tgid_free(sig);
 		/*
-		 * Make sure ->signal can't go away under rq->lock,
+		 * Make sure ->signal can't go away under (g)rq->lock,
 		 * see account_group_exec_runtime().
 		 */
+#ifdef CONFIG_CPU_BFS
+		grq_unlock_wait();
+#else
 		task_rq_unlock_wait(tsk);
+#endif
 		__cleanup_signal(sig);
 	}
 }
@@ -207,6 +215,9 @@ repeat:
 			leader->exit_state = EXIT_DEAD;
 	}
 
+#ifdef CONFIG_CPU_BFS
+	sched_exit(p);
+#endif
 	write_unlock_irq(&tasklist_lock);
 	release_thread(p);
 	call_rcu(&p->rcu, delayed_put_task_struct);
