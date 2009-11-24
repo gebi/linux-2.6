@@ -109,7 +109,11 @@ ifneq ($(CONFIG_SCHED_OMIT_FRAME_POINTER),y)
 # me.  I suspect most platforms don't need this, but until we know that for sure
 # I turn this off for IA-64 only.  Andreas Schwab says it's also needed on m68k
 # to get a correct value for the wait-channel (WCHAN in ps). --davidm
+ifneq ($(CONFIG_CPU_BFS),y)
 CFLAGS_sched.o := $(PROFILING) -fno-omit-frame-pointer
+else
+CFLAGS_sched_bfs.o := $(PROFILING) -fno-omit-frame-pointer
+endif
 endif
 
 $(obj)/configs.o: $(obj)/config_data.h

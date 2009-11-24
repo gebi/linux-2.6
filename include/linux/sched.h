@@ -1252,7 +1252,7 @@ struct task_struct {
 
 	int prio, static_prio, normal_prio;
 #ifdef CONFIG_CPU_BFS
-	int oncpu
+	int oncpu;
 	int time_slice, first_time_slice;
 	unsigned long deadline;
 	struct list_head run_list;
