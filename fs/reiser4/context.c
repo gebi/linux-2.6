@@ -147,7 +147,7 @@ static void reiser4_throttle_write_at(reiser4_context *context)
 	 * call balance_dirty_pages_ratelimited() to process formatted nodes
 	 * dirtied during this system call. Do that only if we are not in mount
 	 * and there were nodes dirtied in this context and we are not in
-	 * writepage (to avoid deadlock) and not in pdflush
+	 * writepage (to avoid deadlock)
 	 */
 	if (sbinfo != NULL && sbinfo->fake != NULL &&
 	    context->nr_marked_dirty != 0 &&

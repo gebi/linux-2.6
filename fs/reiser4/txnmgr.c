@@ -1360,7 +1360,7 @@ static int txn_try_to_fuse_small_atom(txn_mgr * tmgr, txn_atom * atom)
    code tries to flush current atom.
 
    flush_some_atom() is called as part of memory clearing process. It is
-   invoked from balance_dirty_pages(), pdflushd, and entd.
+   invoked from balance_dirty_pages() and entd.
 
    If we can flush no nodes, atom is committed, because this frees memory.
 
@@ -1469,7 +1469,7 @@ flush_some_atom(jnode * start, long *nr_submitted, const struct writeback_contro
 			 * or atom is too old/large,
 			 * we force current atom to commit */
 			/* wait for commit completion but only if this
-			 * wouldn't stall pdflushd and ent thread. */
+			 * wouldn't stall ent thread. */
 			if (!wbc->nonblocking && !ctx->entd)
 				txnh->flags |= TXNH_WAIT_COMMIT;
 			atom->flags |= ATOM_FORCE_COMMIT;
