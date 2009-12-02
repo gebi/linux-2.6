@@ -395,7 +395,7 @@ static void reiser4_sync_inodes(struct super_block *super,
 	reiser4_context *ctx;
 	long to_write;
 
-	if (wbc->for_kupdate)
+	if (wbc == NULL || wbc->for_kupdate)
 		/* reiser4 has its own means of periodical write-out */
 		return;
 
