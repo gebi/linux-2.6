@@ -206,6 +206,27 @@ of cache local CPUs, and once the workload is beyond that amount, it is likely
 that none of the tasks are cache warm anywhere anyway. The quadrupling for NUMA
 is a value I pulled out of my arse.
 
+When choosing an idle CPU for a waking task, the cache locality is determined
+according to where the task last ran and then idle CPUs are ranked from best
+to worst to choose the most suitable idle CPU based on cache locality, NUMA
+node locality and hyperthread sibling business. They are chosen in the
+following preference (if idle):
+
+* Same core, idle or busy cache, idle threads
+* Other core, same cache, idle or busy cache, idle threads.
+* Same node, other CPU, idle cache, idle threads.
+* Same node, other CPU, busy cache, idle threads.
+* Same core, busy threads.
+* Other core, same cache, busy threads.
+* Same node, other CPU, busy threads.
+* Other node, other CPU, idle cache, idle threads.
+* Other node, other CPU, busy cache, idle threads.
+* Other node, other CPU, busy threads.
+
+This shows the SMT or "hyperthread" awareness in the design as well which will
+choose a real idle core first before a logical SMT sibling which already has
+tasks on the physical CPU.
+
 Early benchmarking of BFS suggested scalability dropped off at the 16 CPU mark.
 However this benchmarking was performed on an earlier design that was far less
 scalable than the current one so it's hard to know how scalable it is in terms
@@ -332,4 +353,4 @@ of total wall clock time taken and total work done, rather than the reported
 "cpu usage".
 
 
-Con Kolivas <kernel@kolivas.org> 14th October 2009.
+Con Kolivas <kernel@kolivas.org> Thu Dec 3 2009
