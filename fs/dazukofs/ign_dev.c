@@ -49,7 +49,6 @@ int dazukofs_check_ignore_process(void)
 		proc = list_entry(pos, struct dazukofs_proc, list);
 		if (proc->proc_id == cur_proc_id) {
 			found = 1;
-			put_pid(proc->proc_id);
 			break;
 		}
 	}

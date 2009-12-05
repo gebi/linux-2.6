@@ -24,7 +24,7 @@
 #ifndef __DAZUKOFS_FS_H
 #define __DAZUKOFS_FS_H
 
-#define DAZUKOFS_VERSION "3.1.1"
+#define DAZUKOFS_VERSION "3.1.2"
 
 #include <linux/slab.h>
 #include <linux/fs.h>
