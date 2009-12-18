@@ -2155,6 +2155,91 @@ void account_idle_ticks(unsigned long ticks)
 #endif
 
 /*
+ * Use precise platform statistics if available:
+ */
+#ifdef CONFIG_VIRT_CPU_ACCOUNTING
+void task_times(struct task_struct *p, cputime_t *ut, cputime_t *st)
+{
+	*ut = p->utime;
+	*st = p->stime;
+}
+
+void thread_group_times(struct task_struct *p, cputime_t *ut, cputime_t *st)
+{
+	struct task_cputime cputime;
+
+	thread_group_cputime(p, &cputime);
+
+	*ut = cputime.utime;
+	*st = cputime.stime;
+}
+#else
+
+#ifndef nsecs_to_cputime
+# define nsecs_to_cputime(__nsecs)	nsecs_to_jiffies(__nsecs)
+#endif
+
+void task_times(struct task_struct *p, cputime_t *ut, cputime_t *st)
+{
+	cputime_t rtime, utime = p->utime, total = cputime_add(utime, p->stime);
+
+	/*
+	 * Use CFS's precise accounting:
+	 */
+	rtime = nsecs_to_cputime(p->sched_time);
+
+	if (total) {
+		u64 temp;
+
+		temp = (u64)(rtime * utime);
+		do_div(temp, total);
+		utime = (cputime_t)temp;
+	} else
+		utime = rtime;
+
+	/*
+	 * Compare with previous values, to keep monotonicity:
+	 */
+	p->prev_utime = max(p->prev_utime, utime);
+	p->prev_stime = max(p->prev_stime, cputime_sub(rtime, p->prev_utime));
+
+	*ut = p->prev_utime;
+	*st = p->prev_stime;
+}
+
+/*
+ * Must be called with siglock held.
+ */
+void thread_group_times(struct task_struct *p, cputime_t *ut, cputime_t *st)
+{
+	struct signal_struct *sig = p->signal;
+	struct task_cputime cputime;
+	cputime_t rtime, utime, total;
+
+	thread_group_cputime(p, &cputime);
+
+	total = cputime_add(cputime.utime, cputime.stime);
+	rtime = nsecs_to_cputime(cputime.sum_exec_runtime);
+
+	if (total) {
+		u64 temp;
+
+		temp = (u64)(rtime * cputime.utime);
+		do_div(temp, total);
+		utime = (cputime_t)temp;
+	} else
+		utime = rtime;
+
+	sig->prev_utime = max(sig->prev_utime, utime);
+	sig->prev_stime = max(sig->prev_stime,
+			      cputime_sub(rtime, sig->prev_utime));
+
+	*ut = sig->prev_utime;
+	*st = sig->prev_stime;
+}
+#endif
+
+/*
  * Functions to test for when SCHED_ISO tasks have used their allocated
  * quota as real time scheduling and convert them back to SCHED_NORMAL.
  * Where possible, the data is tested lockless, to avoid grabbing grq_lock
@@ -3485,7 +3570,7 @@ recheck:
 	 * make sure no PI-waiters arrive (or leave) while we are
 	 * changing the priority of the task:
 	 */
-	spin_lock_irqsave(&p->pi_lock, flags);
+	raw_spin_lock_irqsave(&p->pi_lock, flags);
 	/*
 	 * To be able to change p->policy safely, the apropriate
 	 * runqueue lock must be held.
@@ -3494,7 +3579,7 @@ recheck:
 	/* recheck policy now with rq lock held */
 	if (unlikely(oldpolicy != -1 && oldpolicy != p->policy)) {
 		__task_grq_unlock();
-		spin_unlock_irqrestore(&p->pi_lock, flags);
+		raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 		policy = oldpolicy = -1;
 		goto recheck;
 	}
@@ -3510,7 +3595,7 @@ recheck:
 		try_preempt(p, rq);
 	}
 	__task_grq_unlock();
-	spin_unlock_irqrestore(&p->pi_lock, flags);
+	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 
 	rt_mutex_adjust_pi(p);
 out:
@@ -3847,7 +3932,7 @@ SYSCALL_DEFINE0(sched_yield)
 	 */
 	__release(grq.lock);
 	spin_release(&grq.lock.dep_map, 1, _THIS_IP_);
-	_raw_spin_unlock(&grq.lock);
+	spin_unlock(&grq.lock);
 	preempt_enable_no_resched();
 
 	schedule();
@@ -5910,7 +5995,7 @@ static int build_sched_domains(const struct cpumask *cpu_map)
 	return __build_sched_domains(cpu_map, NULL);
 }
 
-static struct cpumask *doms_cur;	/* current sched domains */
+static cpumask_var_t *doms_cur;	/* current sched domains */
 static int ndoms_cur;		/* number of sched domains in 'doms_cur' */
 static struct sched_domain_attr *dattr_cur;
 				/* attribues of custom domains in 'doms_cur' */
@@ -5932,6 +6017,31 @@ int __attribute__((weak)) arch_update_cpu_topology(void)
 	return 0;
 }
 
+cpumask_var_t *alloc_sched_domains(unsigned int ndoms)
+{
+	int i;
+	cpumask_var_t *doms;
+
+	doms = kmalloc(sizeof(*doms) * ndoms, GFP_KERNEL);
+	if (!doms)
+		return NULL;
+	for (i = 0; i < ndoms; i++) {
+		if (!alloc_cpumask_var(&doms[i], GFP_KERNEL)) {
+			free_sched_domains(doms, i);
+			return NULL;
+		}
+	}
+	return doms;
+}
+
+void free_sched_domains(cpumask_var_t doms[], unsigned int ndoms)
+{
+	unsigned int i;
+	for (i = 0; i < ndoms; i++)
+		free_cpumask_var(doms[i]);
+	kfree(doms);
+}
+
 /*
  * Set up scheduler domains and groups. Callers must hold the hotplug lock.
  * For now this just excludes isolated cpus, but could be used to
@@ -5943,12 +6053,12 @@ static int arch_init_sched_domains(const struct cpumask *cpu_map)
 
 	arch_update_cpu_topology();
 	ndoms_cur = 1;
-	doms_cur = kmalloc(cpumask_size(), GFP_KERNEL);
+	doms_cur = alloc_sched_domains(ndoms_cur);
 	if (!doms_cur)
-		doms_cur = fallback_doms;
-	cpumask_andnot(doms_cur, cpu_map, cpu_isolated_map);
+		doms_cur = &fallback_doms;
+	cpumask_andnot(doms_cur[0], cpu_map, cpu_isolated_map);
 	dattr_cur = NULL;
-	err = build_sched_domains(doms_cur);
+	err = build_sched_domains(doms_cur[0]);
 	register_sched_domain_sysctl();
 
 	return err;
@@ -6019,7 +6129,7 @@ static int dattrs_equal(struct sched_domain_attr *cur, int idx_cur,
  * Call with hotplug lock held
  */
 /* FIXME: Change to struct cpumask *doms_new[] */
-void partition_sched_domains(int ndoms_new, struct cpumask *doms_new,
+void partition_sched_domains(int ndoms_new, cpumask_var_t *doms_new,
 			     struct sched_domain_attr *dattr_new)
 {
 	int i, j, n;
@@ -6038,40 +6148,40 @@ void partition_sched_domains(int ndoms_new, struct cpumask *doms_new,
 	/* Destroy deleted domains */
 	for (i = 0; i < ndoms_cur; i++) {
 		for (j = 0; j < n && !new_topology; j++) {
-			if (cpumask_equal(&doms_cur[i], &doms_new[j])
+			if (cpumask_equal(doms_cur[i], doms_new[j])
 			    && dattrs_equal(dattr_cur, i, dattr_new, j))
 				goto match1;
 		}
 		/* no match - a current sched domain not in new doms_new[] */
-		detach_destroy_domains(doms_cur + i);
+		detach_destroy_domains(doms_cur[i]);
 match1:
 		;
 	}
 
 	if (doms_new == NULL) {
 		ndoms_cur = 0;
-		doms_new = fallback_doms;
-		cpumask_andnot(&doms_new[0], cpu_online_mask, cpu_isolated_map);
+		doms_new = &fallback_doms;
+		cpumask_andnot(doms_new[0], cpu_online_mask, cpu_isolated_map);
 		WARN_ON_ONCE(dattr_new);
 	}
 
 	/* Build new domains */
 	for (i = 0; i < ndoms_new; i++) {
 		for (j = 0; j < ndoms_cur && !new_topology; j++) {
-			if (cpumask_equal(&doms_new[i], &doms_cur[j])
+			if (cpumask_equal(doms_new[i], doms_cur[j])
 			    && dattrs_equal(dattr_new, i, dattr_cur, j))
 				goto match2;
 		}
 		/* no match - add a new doms_new */
-		__build_sched_domains(doms_new + i,
+		__build_sched_domains(doms_new[i],
 					dattr_new ? dattr_new + i : NULL);
 match2:
 		;
 	}
 
 	/* Remember the new sched domains */
-	if (doms_cur != fallback_doms)
-		kfree(doms_cur);
+	if (doms_cur != &fallback_doms)
+		free_sched_domains(doms_cur, ndoms_cur);
 	kfree(dattr_cur);	/* kfree(NULL) is safe */
 	doms_cur = doms_new;
 	dattr_cur = dattr_new;
@@ -6426,7 +6536,7 @@ void __init sched_init(void)
 #endif
 
 #ifdef CONFIG_RT_MUTEXES
-	plist_head_init(&init_task.pi_waiters, &init_task.pi_lock);
+	plist_head_init_raw(&init_task.pi_waiters, &init_task.pi_lock);
 #endif
 
 	/*
@@ -6500,7 +6610,7 @@ void normalize_rt_tasks(void)
 		if (!rt_task(p) && !iso_task(p))
 			continue;
 
-		spin_lock_irqsave(&p->pi_lock, flags);
+		raw_spin_lock_irqsave(&p->pi_lock, flags);
 		rq = __task_grq_lock(p);
 		update_rq_clock(rq);
 
@@ -6514,7 +6624,7 @@ void normalize_rt_tasks(void)
 		}
 
 		__task_grq_unlock();
-		spin_unlock_irqrestore(&p->pi_lock, flags);
+		raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 	} while_each_thread(g, p);
 
 	read_unlock_irq(&tasklist_lock);

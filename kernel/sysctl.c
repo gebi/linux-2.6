@@ -774,24 +774,20 @@ static struct ctl_table kern_table[] = {
 #endif
 #ifdef CONFIG_CPU_BFS
 	{
-		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "rr_interval",
 		.data		= &rr_interval,
 		.maxlen		= sizeof (int),
 		.mode		= 0644,
-		.proc_handler	= &proc_dointvec_minmax,
-		.strategy	= &sysctl_intvec,
+		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= &one,
 		.extra2		= &five_thousand,
 	},
 	{
-		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "iso_cpu",
 		.data		= &sched_iso_cpu,
 		.maxlen		= sizeof (int),
 		.mode		= 0644,
-		.proc_handler	= &proc_dointvec_minmax,
-		.strategy	= &sysctl_intvec,
+		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= &zero,
 		.extra2		= &one_hundred,
 	},
