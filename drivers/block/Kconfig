@@ -383,6 +383,28 @@ config BLK_DEV_XIP
 	  will prevent RAM block device backing store memory from being
 	  allocated from highmem (only a problem for highmem systems).
 
+config BLK_DEV_RAMZSWAP
+	tristate "Compressed in-memory swap device"
+	depends on SWAP
+	select LZO_COMPRESS
+	select LZO_DECOMPRESS
+	default m
+	help
+	  Creates virtual block devices which can be used (only) as swap
+	  disks. Pages swapped to these disks are compressed and stored in
+	  memory itself.
+
+	  See Documentation/blockdev/ramzswap.txt for more information.
+	  Project home: http://compcache.googlecode.com/
+
+config BLK_DEV_RAMZSWAP_STATS
+	bool "Enable ramzswap stats"
+	depends on BLK_DEV_RAMZSWAP
+	default y
+	help
+	  Enable statistics collection for ramzswap. This adds only a minimal
+	  overhead. In unsure, say Y.
+
 config CDROM_PKTCDVD
 	tristate "Packet writing on CD/DVD media"
 	depends on !UML
