@@ -129,7 +129,7 @@ int dazukofs_interpose(struct dentry *lower_dentry, struct dentry *dentry,
 	else
 		d_instantiate(dentry, inode);
 
-	fsstack_copy_attr_all(inode, lower_inode, NULL);
+	fsstack_copy_attr_all(inode, lower_inode);
 	fsstack_copy_inode_size(inode, lower_inode);
 	return 0;
 }
@@ -487,7 +487,7 @@ static int dazukofs_setattr(struct dentry *dentry, struct iattr *ia)
 	err = notify_change(lower_dentry, ia);
 	mutex_unlock(&lower_inode->i_mutex);
 
-	fsstack_copy_attr_all(inode, lower_inode, NULL);
+	fsstack_copy_attr_all(inode, lower_inode);
 	fsstack_copy_inode_size(inode, lower_inode);
 	return err;
 }
@@ -520,7 +520,7 @@ static int dazukofs_setxattr(struct dentry *dentry, const char *name,
 						 size, flags);
 	mutex_unlock(&lower_dentry_inode->i_mutex);
 
-	fsstack_copy_attr_all(dentry->d_inode, lower_dentry_inode, NULL);
+	fsstack_copy_attr_all(dentry->d_inode, lower_dentry_inode);
 	fsstack_copy_inode_size(dentry->d_inode, lower_dentry_inode);
 out:
 	return err;
@@ -737,10 +737,9 @@ static int dazukofs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	if (err)
 		goto out;
 
-	fsstack_copy_attr_all(new_dir, lower_new_dentry_parent_inode, NULL);
+	fsstack_copy_attr_all(new_dir, lower_new_dentry_parent_inode);
 	if (new_dir != old_dir)
-		fsstack_copy_attr_all(old_dir, lower_old_dentry_parent_inode,
-				      NULL);
+		fsstack_copy_attr_all(old_dir, lower_old_dentry_parent_inode);
 out:
 	dput(lower_old_dentry_parent);
 	dput(lower_new_dentry_parent);
