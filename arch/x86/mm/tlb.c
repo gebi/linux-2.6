@@ -289,3 +289,5 @@ void flush_tlb_all(void)
 {
 	on_each_cpu(do_flush_tlb_all, NULL, 1);
 }
+EXPORT_SYMBOL(flush_tlb_all);
+
