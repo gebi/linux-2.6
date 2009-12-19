@@ -148,7 +148,7 @@ static inline unsigned long timeslice(void)
  * by grq.lock.
  */
 struct global_rq {
-	spinlock_t lock;
+	raw_spinlock_t lock;
 	unsigned long nr_running;
 	unsigned long nr_uninterruptible;
 	unsigned long long nr_switches;
@@ -337,19 +337,19 @@ static inline int task_running(struct task_struct *p)
 static inline void grq_lock(void)
 	__acquires(grq.lock)
 {
-	spin_lock(&grq.lock);
+	raw_spin_lock(&grq.lock);
 }
 
 static inline void grq_unlock(void)
 	__releases(grq.lock)
 {
-	spin_unlock(&grq.lock);
+	raw_spin_unlock(&grq.lock);
 }
 
 static inline void grq_lock_irq(void)
 	__acquires(grq.lock)
 {
-	spin_lock_irq(&grq.lock);
+	raw_spin_lock_irq(&grq.lock);
 }
 
 static inline void time_lock_grq(struct rq *rq)
@@ -362,19 +362,19 @@ static inline void time_lock_grq(struct rq *rq)
 static inline void grq_unlock_irq(void)
 	__releases(grq.lock)
 {
-	spin_unlock_irq(&grq.lock);
+	raw_spin_unlock_irq(&grq.lock);
 }
 
 static inline void grq_lock_irqsave(unsigned long *flags)
 	__acquires(grq.lock)
 {
-	spin_lock_irqsave(&grq.lock, *flags);
+	raw_spin_lock_irqsave(&grq.lock, *flags);
 }
 
 static inline void grq_unlock_irqrestore(unsigned long *flags)
 	__releases(grq.lock)
 {
-	spin_unlock_irqrestore(&grq.lock, *flags);
+	raw_spin_unlock_irqrestore(&grq.lock, *flags);
 }
 
 static inline struct rq
@@ -429,14 +429,14 @@ static inline void task_grq_unlock(unsigned long *flags)
  */
 inline int grunqueue_is_locked(void)
 {
-	return spin_is_locked(&grq.lock);
+	return raw_spin_is_locked(&grq.lock);
 }
 
 inline void grq_unlock_wait(void)
 	__releases(grq.lock)
 {
 	smp_mb(); /* spin-unlock-wait is not a full memory barrier */
-	spin_unlock_wait(&grq.lock);
+	raw_spin_unlock_wait(&grq.lock);
 }
 
 static inline void time_grq_lock(struct rq *rq, unsigned long *flags)
@@ -922,7 +922,7 @@ static void resched_task(struct task_struct *p)
 {
 	int cpu;
 
-	assert_spin_locked(&grq.lock);
+	assert_raw_spin_locked(&grq.lock);
 
 	if (unlikely(test_tsk_thread_flag(p, TIF_NEED_RESCHED)))
 		return;
@@ -3932,7 +3932,7 @@ SYSCALL_DEFINE0(sched_yield)
 	 */
 	__release(grq.lock);
 	spin_release(&grq.lock.dep_map, 1, _THIS_IP_);
-	spin_unlock(&grq.lock);
+	raw_spin_unlock(&grq.lock);
 	preempt_enable_no_resched();
 
 	schedule();
@@ -4502,7 +4502,6 @@ static struct ctl_table sd_ctl_dir[] = {
 
 static struct ctl_table sd_ctl_root[] = {
 	{
-		.ctl_name	= CTL_KERN,
 		.procname	= "kernel",
 		.mode		= 0555,
 		.child		= sd_ctl_dir,
@@ -6473,7 +6472,7 @@ void __init sched_init(void)
 	for (i = 1 ; i < PRIO_RANGE ; i++)
 		prio_ratios[i] = prio_ratios[i - 1] * 11 / 10;
 
-	spin_lock_init(&grq.lock);
+	raw_spin_lock_init(&grq.lock);
 #ifdef CONFIG_SMP
 	init_defrootdomain();
 #else
