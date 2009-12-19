@@ -94,7 +94,7 @@ static int dazukofs_d_revalidate(struct dentry *dentry, struct nameidata *nd)
 	/* update the inode, even if d_revalidate() != 1 */
 	if (dentry->d_inode) {
 		struct inode *lower_inode = get_lower_inode(dentry->d_inode);
-		fsstack_copy_attr_all(dentry->d_inode, lower_inode, NULL);
+		fsstack_copy_attr_all(dentry->d_inode, lower_inode);
 	}
 	return valid;
 }
