@@ -39,6 +39,17 @@ config SCHED_BFS
           Say Y here.
 	default y
 
+config SCHED_BFS_AUTOISO
+	bool "Auto SCHED_ISO for X"
+	depends on SCHED_BFS
+	help
+	  Tasks (including X) can be run as SCHED_ISO manually with schedtool -I
+	  Enable this to automatically run SCHED_ISO for X, this is not default
+	  because there is a slim possibility that other tasks (such as multimedia)
+	  may stutter if they aren't also ran as SCHED_ISO.
+
+	  If unsure, say N here.
+
 config EXPERIMENTAL
 	bool "Prompt for development and/or incomplete code/drivers"
 	---help---
