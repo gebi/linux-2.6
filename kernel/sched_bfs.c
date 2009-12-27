@@ -3922,7 +3922,7 @@ SYSCALL_DEFINE0(sched_yield)
 	 */
 	__release(grq.lock);
 	spin_release(&grq.lock.dep_map, 1, _THIS_IP_);
-	raw_spin_unlock(&grq.lock);
+	do_raw_spin_unlock(&grq.lock);
 	preempt_enable_no_resched();
 
 	schedule();
