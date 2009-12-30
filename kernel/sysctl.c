@@ -237,13 +237,11 @@ static struct ctl_table root_table[] = {
 	},
 #ifdef CONFIG_FB_CON_DECOR
 	{
-		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "fbcondecor",
 		.data		= &fbcon_decor_path,
 		.maxlen		= KMOD_PATH_LEN,
 		.mode		= 0644,
 		.proc_handler	= &proc_dostring,
-		.strategy	= &sysctl_string,
 	},
 #endif
 
