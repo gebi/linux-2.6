@@ -152,8 +152,8 @@ static void set_zen_theme(void)
 	DLG_COLOR(button_inactive,       COLOR_CYAN, COLOR_BLACK, false);
 	DLG_COLOR(button_key_active,     COLOR_CYAN, COLOR_BLUE,   true);
 	DLG_COLOR(button_key_inactive,   COLOR_CYAN,    COLOR_BLACK, false);
-	DLG_COLOR(button_label_active,   COLOR_WHITE,  COLOR_BLUE,   false);
-	DLG_COLOR(button_label_inactive, COLOR_BLACK,  COLOR_BLACK, true);
+	DLG_COLOR(button_label_active,   COLOR_WHITE,  COLOR_BLUE,   true);
+	DLG_COLOR(button_label_inactive, COLOR_WHITE,  COLOR_BLACK, true);
 
 	DLG_COLOR(inputbox,         COLOR_CYAN, COLOR_BLACK, false);
 	DLG_COLOR(inputbox_border,  COLOR_CYAN, COLOR_BLACK, false);
@@ -168,7 +168,7 @@ static void set_zen_theme(void)
 	DLG_COLOR(menubox_border,   COLOR_BLACK,  COLOR_BLACK, true);
 
 	DLG_COLOR(item,             COLOR_WHITE, COLOR_BLACK, false);
-	DLG_COLOR(item_selected,    COLOR_WHITE, COLOR_BLUE,   false);
+	DLG_COLOR(item_selected,    COLOR_WHITE, COLOR_BLUE,   true);
 
 	DLG_COLOR(tag,              COLOR_CYAN,    COLOR_BLACK, false);
 	DLG_COLOR(tag_selected,     COLOR_CYAN, COLOR_BLUE,   true);
