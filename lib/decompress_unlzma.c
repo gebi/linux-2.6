@@ -36,6 +36,7 @@
 #include <linux/slab.h>
 #endif /* STATIC */
 
+#include <linux/decompress/unlzma_mm.h>
 #include <linux/decompress/mm.h>
 
 #define	MIN(a, b) (((a) < (b)) ? (a) : (b))
@@ -531,7 +532,7 @@ static inline void INIT process_bit1(struct writer *wr, struct rc *rc,
 
 
 
-STATIC inline int INIT unlzma(unsigned char *buf, int in_len,
+STATIC int INIT unlzma(unsigned char *buf, int in_len,
 			      int(*fill)(void*, unsigned int),
 			      int(*flush)(void*, unsigned int),
 			      unsigned char *output,
@@ -652,6 +653,9 @@ exit_1:
 exit_0:
 	return ret;
 }
+#if defined(CONFIG_DECOMPRESS_LZMA_NEEDED) && !defined(PREBOOT)
+EXPORT_SYMBOL(unlzma);
+#endif
 
 #ifdef PREBOOT
 STATIC int INIT decompress(unsigned char *buf, int in_len,
