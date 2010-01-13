@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -83,8 +83,6 @@ extern const struct file_operations aufs_file_fop;
 int aufs_flush(struct file *file, fl_owner_t id);
 int au_do_open_nondir(struct file *file, int flags);
 int aufs_release_nondir(struct inode *inode __maybe_unused, struct file *file);
-ssize_t au_do_aio(struct file *h_file, int rw, struct kiocb *kio,
-		  const struct iovec *iov, unsigned long nv, loff_t pos);
 
 #ifdef CONFIG_AUFS_SP_IATTR
 /* f_op_sp.c */
@@ -186,7 +184,7 @@ static inline unsigned int au_figen(struct file *f)
 
 static inline int au_test_mmapped(struct file *f)
 {
-	/* FiMustAnyLock(f); */
+	FiMustAnyLock(f);
 	return !!(au_fi(f)->fi_h_vm_ops);
 }
 

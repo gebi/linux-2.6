@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,7 +20,6 @@
  * sub-routines for VFS
  */
 
-#include <linux/ima.h>
 #include <linux/namei.h>
 #include <linux/security.h>
 #include <linux/splice.h>
@@ -48,19 +47,6 @@ int vfsub_update_h_iattr(struct path *h_path, int *did)
 }
 
 /* ---------------------------------------------------------------------- */
-
-struct file *vfsub_dentry_open(struct path *path, int flags,
-			       const struct cred *cred)
-{
-	struct file *file;
-
-	file = dentry_open(path->dentry, path->mnt, flags, cred);
-	if (IS_ERR(file))
-		return file;
-	/* as NFSD does, just call ima_..._get() simply after dentry_open */
-	ima_counts_get(file);
-	return file;
-}
 
 struct file *vfsub_filp_open(const char *path, int oflags, int mode)
 {

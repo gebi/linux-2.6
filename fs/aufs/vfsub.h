@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -57,10 +57,14 @@ static inline void vfsub_copy_inode_size(struct inode *inode,
 	spin_unlock(&inode->i_lock);
 }
 
+static inline struct file *vfsub_dentry_open(struct path *path, int flags)
+{
+	path_get(path);
+	return dentry_open(path->dentry, path->mnt, flags, current_cred());
+}
+
 int vfsub_update_h_iattr(struct path *h_path, int *did);
 struct file *vfsub_filp_open(const char *path, int oflags, int mode);
-struct file *vfsub_dentry_open(struct path *path, int flags,
-			       const struct cred *cred);
 int vfsub_kern_path(const char *name, unsigned int flags, struct path *path);
 struct dentry *vfsub_lookup_one_len(const char *name, struct dentry *parent,
 				    int len);
