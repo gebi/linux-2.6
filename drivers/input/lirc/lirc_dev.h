@@ -47,8 +47,7 @@ static inline int lirc_buffer_init(struct lirc_buffer *buf,
 	spin_lock_init(&buf->lock);
 	buf->chunk_size = chunk_size;
 	buf->size = size;
-	buf->fifo = kfifo_alloc(size*chunk_size, GFP_KERNEL, &buf->lock);
-	if (!buf->fifo)
+	if (kfifo_alloc(buf->fifo, size*chunk_size, GFP_KERNEL))
 		return -ENOMEM;
 	return 0;
 }
@@ -81,13 +80,13 @@ static inline void lirc_buffer_read(struct lirc_buffer *buf,
 			       unsigned char *dest)
 {
 	if (kfifo_len(buf->fifo) >= buf->chunk_size)
-		kfifo_get(buf->fifo, dest, buf->chunk_size);
+		kfifo_out_locked(buf->fifo, dest, buf->chunk_size, &buf->lock);
 }
 
 static inline void lirc_buffer_write(struct lirc_buffer *buf,
 				unsigned char *orig)
 {
-	kfifo_put(buf->fifo, orig, buf->chunk_size);
+	kfifo_in_locked(buf->fifo, orig, buf->chunk_size, &buf->lock);
 }
 
 struct lirc_driver {
