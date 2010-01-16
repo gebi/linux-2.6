@@ -831,7 +831,7 @@ static ssize_t show_freq_attr_vids(struct cpufreq_policy *policy, char *buf)
   *
   */
 {
-	struct acpi_cpufreq_data *data = per_cpu(drv_data, policy->cpu);
+	struct acpi_cpufreq_data *data = per_cpu(acfreq_data, policy->cpu);
 	struct acpi_processor_performance *acpi_data;
 	struct cpufreq_frequency_table *freq_table;
 	unsigned int i;
@@ -857,7 +857,7 @@ static ssize_t show_freq_attr_default_vids(struct cpufreq_policy *policy, char *
   *
   */
 {
-	struct acpi_cpufreq_data *data = per_cpu(drv_data, policy->cpu);
+	struct acpi_cpufreq_data *data = per_cpu(acfreq_data, policy->cpu);
 	struct cpufreq_frequency_table *freq_table;
 	unsigned int i;
 	unsigned int vid;
@@ -886,7 +886,7 @@ static ssize_t show_freq_attr_fids(struct cpufreq_policy *policy, char *buf)
   *
   */
 {
-	struct acpi_cpufreq_data *data = per_cpu(drv_data, policy->cpu);
+	struct acpi_cpufreq_data *data = per_cpu(acfreq_data, policy->cpu);
 	struct acpi_processor_performance *acpi_data;
 	struct cpufreq_frequency_table *freq_table;
 	unsigned int i;
@@ -912,7 +912,7 @@ static ssize_t show_freq_attr_controls(struct cpufreq_policy *policy, char *buf)
   *
   */
 {
-	struct acpi_cpufreq_data *data = per_cpu(drv_data, policy->cpu);
+	struct acpi_cpufreq_data *data = per_cpu(acfreq_data, policy->cpu);
 	struct acpi_processor_performance *acpi_data;
 	struct cpufreq_frequency_table *freq_table;
 	unsigned int i;
@@ -940,7 +940,7 @@ static ssize_t show_freq_attr_default_controls(struct cpufreq_policy *policy, ch
   *
   */
 {
-	struct acpi_cpufreq_data *data = per_cpu(drv_data, policy->cpu);
+	struct acpi_cpufreq_data *data = per_cpu(acfreq_data, policy->cpu);
 	struct cpufreq_frequency_table *freq_table;
 	unsigned int i;
 	unsigned int fid;
@@ -973,7 +973,7 @@ static ssize_t store_freq_attr_vids(struct cpufreq_policy *policy, const char *b
   * from setting higher voltages than the default one.
   */
 {
-	struct acpi_cpufreq_data *data = per_cpu(drv_data, policy->cpu);
+	struct acpi_cpufreq_data *data = per_cpu(acfreq_data, policy->cpu);
 	struct acpi_processor_performance *acpi_data;
 	struct cpufreq_frequency_table *freq_table;
 	unsigned int freq_index;
@@ -1049,7 +1049,7 @@ static ssize_t store_freq_attr_controls(struct cpufreq_policy *policy, const cha
   * from setting higher voltages than the default one.
   */
 {
-	struct acpi_cpufreq_data *data = per_cpu(drv_data, policy->cpu);
+	struct acpi_cpufreq_data *data = per_cpu(acfreq_data, policy->cpu);
 	struct acpi_processor_performance *acpi_data;
 	struct cpufreq_frequency_table *freq_table;
 	const char   *curr_buf;
