@@ -273,15 +273,11 @@ void trace_wake_up(void)
 	if (trace_flags & TRACE_ITER_BLOCK)
 		return;
 	/*
-	 * The (g)runqueue_is_locked() can fail, but this is the best we
+	 * The runqueue_is_locked() can fail, but this is the best we
 	 * have for now:
 	 */
 	cpu = get_cpu();
-#ifdef CONFIG_CPU_BFS
-	if (!grunqueue_is_locked())
-#else
 	if (!runqueue_is_locked(cpu))
-#endif
 		wake_up(&trace_wait);
 	put_cpu();
 }

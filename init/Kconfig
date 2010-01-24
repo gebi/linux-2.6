@@ -106,8 +106,6 @@ config LOCALVERSION_AUTO
 
 	  which is done within the script "scripts/setlocalversion".)
 
-source "init/Kconfig.cpu"
-
 config HAVE_KERNEL_GZIP
 	bool
 
@@ -477,7 +475,7 @@ config HAVE_UNSTABLE_SCHED_CLOCK
 
 config GROUP_SCHED
 	bool "Group CPU scheduler"
-	depends on EXPERIMENTAL && !CPU_BFS
+	depends on EXPERIMENTAL
 	default n
 	help
 	  This feature lets CPU scheduler recognize task groups and control CPU
@@ -510,14 +508,13 @@ choice
 
 config USER_SCHED
 	bool "user id"
-	depends on !CPU_BFS
 	help
 	  This option will choose userid as the basis for grouping
 	  tasks, thus providing equal CPU bandwidth to each user.
 
 config CGROUP_SCHED
 	bool "Control groups"
-	depends on CGROUPS && !CPU_BFS
+ 	depends on CGROUPS
  	help
 	  This option allows you to create arbitrary task groups
 	  using the "cgroup" pseudo filesystem and control
@@ -594,7 +591,7 @@ config PROC_PID_CPUSET
 
 config CGROUP_CPUACCT
 	bool "Simple CPU accounting cgroup subsystem"
-	depends on CGROUPS && !CPU_BFS
+	depends on CGROUPS
 	help
 	  Provides a simple Resource Controller for monitoring the
 	  total CPU consumed by the tasks in a cgroup.
