@@ -21,9 +21,3 @@ http://downloads.zen-kernel.org/firmwares/
 * bfs 312
 * much more
 
-WHAT DOES NOT WORK / NOT MERGED IN:
-* kms with bfs seems to fail for some people
-with radeon cards
-* linux-phc is not merged in yet
-
-
