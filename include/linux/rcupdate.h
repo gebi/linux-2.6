@@ -58,14 +58,10 @@ extern int rcu_needs_cpu(int cpu);
 /* Internal to kernel, but needed by rcupreempt.h. */
 extern int rcu_scheduler_active;
 
-#if defined(CONFIG_CLASSIC_RCU)
-#include <linux/rcuclassic.h>
-#elif defined(CONFIG_TREE_RCU) || defined(CONFIG_TREE_PREEMPT_RCU)
+#if defined(CONFIG_TREE_RCU) || defined(CONFIG_TREE_PREEMPT_RCU)
 #include <linux/rcutree.h>
 #elif defined(CONFIG_TINY_RCU)
 #include <linux/rcutiny.h>
-#elif defined(CONFIG_PREEMPT_RCU)
-#include <linux/rcupreempt.h>
 #else
 #error "Unknown RCU implementation specified to kernel configuration"
 #endif
