@@ -3,6 +3,15 @@ You need additional firmware for kms to work on
 radeon cards. You can find them here:
 http://downloads.zen-kernel.org/firmwares/
 
+2.6.33-rc5-zen1
+* updated compcache to 0.6.1 (in staging now)
+* aufs updated
+* got rid of alsa from -next as it was causing problems
+* got rid of bfq as it's unmaintained and broken now,
+	cfq should work just as well now
+* tuxonice updated
+* latest drm
+
 2.6.33-rc4-zen1
 * latest linus tree
 * bfs fixes
