@@ -30,7 +30,6 @@
 #include <linux/vmalloc.h>
 #include <linux/version.h>
 
-#include "compat.h"
 #include "ramzswap_drv.h"
 
 /* Module params (documentation at end) */

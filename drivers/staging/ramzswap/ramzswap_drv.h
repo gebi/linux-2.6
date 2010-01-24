@@ -15,11 +15,14 @@
 #ifndef _RAMZSWAP_DRV_H_
 #define _RAMZSWAP_DRV_H_
 
+/* Enable swap free notify */
+#define CONFIG_SWAP_FREE_NOTIFY
+
 #include <linux/spinlock.h>
 #include <linux/mutex.h>
 
 #include "ramzswap_ioctl.h"
-#include "sub-projects/allocators/xvmalloc-kmod/xvmalloc.h"
+#include "xvmalloc.h"
 
 /*
  * Some arbitrary value. This is just to catch
