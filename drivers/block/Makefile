@@ -1,6 +1,11 @@
 #
 # Makefile for the kernel block device drivers.
 #
+
+CFLAGS_loop.o := $(shell if test -r $(srctree)/include/linux/sched.h; then if sed -e '1,/^struct task_struct {$$/ d' $(srctree)/include/linux/sched.h | sed -e '/^};$$/,$$ d' | grep -q -s 'struct rlimit rlim.RLIM_NLIMITS.;'; then echo "-DOLD_PER_THREAD_RLIMITS"; fi; fi)
+CFLAGS_loop.o += $(shell if test -r $(srctree)/include/linux/timer.h; then if ! sed -e '1,/^struct timer_list {$$/ d' $(srctree)/include/linux/timer.h | sed -e '/^};$$/,$$ d' | grep -q -s 'unsigned long data;'; then echo "-DNEW_TIMER_VOID_PTR_PARAM"; fi; fi)
+CFLAGS_loop.o += $(shell if test -r $(srctree)/include/linux/buffer_head.h; then if grep -q -s '^void invalidate_bdev.*struct block_device.*int' $(srctree)/include/linux/buffer_head.h; then echo "-DOLD_INVALIDATE_BDEV_INTERFACE"; fi; fi)
+
 # 12 June 2000, Christoph Hellwig <hch@infradead.org>
 # Rewritten to use lists instead of if-statements.
 # 
