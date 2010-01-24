@@ -124,12 +124,9 @@ void acpi_disable_wakeup_device(u8 sleep_state)
 	}
 }
 
-static int __init acpi_wakeup_device_init(void)
+int __init acpi_wakeup_device_init(void)
 {
 	struct list_head *node, *next;
-
-	if (acpi_disabled)
-		return 0;
 
 	mutex_lock(&acpi_device_lock);
 	list_for_each_safe(node, next, &acpi_wakeup_device_list) {
@@ -149,5 +146,3 @@ static int __init acpi_wakeup_device_init(void)
 	mutex_unlock(&acpi_device_lock);
 	return 0;
 }
-
-late_initcall(acpi_wakeup_device_init);
