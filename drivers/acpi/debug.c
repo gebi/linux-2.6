@@ -363,10 +363,13 @@ static const struct file_operations acpi_system_debug_proc_fops = {
 
 int __init acpi_procfs_init(void)
 {
-#ifdef CONFIG_ACPI_PROCFS
 	struct proc_dir_entry *entry;
 	int error = 0;
 	char *name;
+
+
+	if (acpi_disabled)
+		return 0;
 
 	/* 'debug_layer' [R/W] */
 	name = ACPI_SYSTEM_FILE_DEBUG_LAYER;
@@ -392,9 +395,6 @@ int __init acpi_procfs_init(void)
 	remove_proc_entry(ACPI_SYSTEM_FILE_DEBUG_LAYER, acpi_root_dir);
 	error = -ENODEV;
 	goto Done;
-#else
-	return 0;
-#endif
 }
 
 int __init acpi_debug_init(void)
@@ -403,3 +403,6 @@ int __init acpi_debug_init(void)
 	acpi_procfs_init();
 	return 0;
 }
+
+subsys_initcall(acpi_debug_init);
+

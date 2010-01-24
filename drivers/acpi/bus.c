@@ -966,7 +966,6 @@ static int __init acpi_init(void)
 		acpi_kobj = NULL;
 	}
 
-	init_acpi_device_notify();
 	result = acpi_bus_init();
 
 	if (!result) {
@@ -990,14 +989,6 @@ static int __init acpi_init(void)
 	 * will be disabled in the course of device power transistion.
 	 */
 	dmi_check_system(power_nocheck_dmi_table);
-
-	acpi_scan_init();
-	acpi_ec_init();
-	acpi_power_init();
-	acpi_system_init();
-	acpi_debug_init();
-	acpi_sleep_proc_init();
-	acpi_wakeup_device_init();
 	return result;
 }
 

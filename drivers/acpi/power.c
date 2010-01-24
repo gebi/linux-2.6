@@ -758,9 +758,13 @@ static int acpi_power_resume(struct acpi_device *device)
 	return 0;
 }
 
-int __init acpi_power_init(void)
+static int __init acpi_power_init(void)
 {
 	int result = 0;
+
+
+	if (acpi_disabled)
+		return 0;
 
 	INIT_LIST_HEAD(&acpi_power_resource_list);
 
@@ -776,3 +780,5 @@ int __init acpi_power_init(void)
 
 	return 0;
 }
+
+subsys_initcall(acpi_power_init);

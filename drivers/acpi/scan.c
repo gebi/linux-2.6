@@ -1450,10 +1450,15 @@ static int acpi_bus_scan_fixed(void)
 	return result;
 }
 
-int __init acpi_scan_init(void)
+
+static int __init acpi_scan_init(void)
 {
 	int result;
 	struct acpi_bus_ops ops;
+
+
+	if (acpi_disabled)
+		return 0;
 
 	memset(&ops, 0, sizeof(ops));
 	ops.acpi_op_add = 1;
@@ -1478,3 +1483,5 @@ int __init acpi_scan_init(void)
 
 	return result;
 }
+
+subsys_initcall(acpi_scan_init);
