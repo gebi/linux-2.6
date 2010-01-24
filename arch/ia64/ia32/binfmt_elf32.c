@@ -223,12 +223,12 @@ elf32_set_personality (void)
 
 static unsigned long
 elf32_map(struct file *filep, unsigned long addr, struct elf_phdr *eppnt,
-		int prot, int type, unsigned long unused)
+		int prot, int type, unsigned long unused, unsigned long base)
 {
 	unsigned long pgoff = (eppnt->p_vaddr) & ~IA32_PAGE_MASK;
 
 	return ia32_do_mmap(filep, (addr & IA32_PAGE_MASK), eppnt->p_filesz + pgoff, prot, type,
-			    eppnt->p_offset - pgoff);
+			    (eppnt->p_offset + base) - pgoff);
 }
 
 #define cpu_uses_ia32el()	(local_cpu_data->family > 0x1f)

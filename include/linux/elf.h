@@ -188,6 +188,30 @@ typedef struct elf64_sym {
 } Elf64_Sym;
 
 
+/* FatELF (multiple ELF binaries in one file) support */
+#define FATELF_MAGIC (0x1F0E70FA)
+
+typedef struct fatelf_record {
+  __le16 machine;      /* maps to e_machine */
+  __u8 osabi;          /* maps to e_ident[EI_OSABI] */
+  __u8 osabi_version;  /* maps to e_ident[EI_ABIVERSION] */
+  __u8 word_size;      /* maps to e_ident[EI_CLASS] */
+  __u8 byte_order;     /* maps to e_ident[EI_DATA] */
+  __u8 reserved0;
+  __u8 reserved1;
+  __le64 offset;
+  __le64 size;
+} fatelf_record;
+
+typedef struct fatelf_hdr {
+  __le32 magic;
+  __le16 version;
+  __u8 num_records;
+  __u8 reserved0;
+  fatelf_record records[];
+} fatelf_hdr;
+
+
 #define EI_NIDENT	16
 
 typedef struct elf32_hdr{
