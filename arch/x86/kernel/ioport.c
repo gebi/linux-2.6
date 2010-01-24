@@ -44,6 +44,14 @@ asmlinkage long sys_ioperm(unsigned long from, unsigned long num, int turn_on)
 	if (turn_on && !capable(CAP_SYS_RAWIO))
 		return -EPERM;
 
+#if defined(CONFIG_SCHED_BFS_AUTOISO)
+	if (turn_on) {
+                struct sched_param param = { .sched_priority = 0 };
+                /* Start X as SCHED_ISO */
+                sched_setscheduler_nocheck(current, SCHED_ISO, &param);
+	}
+#endif
+
 	/*
 	 * If it's the first ioperm() call in this thread's lifetime, set the
 	 * IO bitmap up. ioperm() is much less timing critical than clone(),
@@ -115,6 +123,15 @@ long sys_iopl(unsigned int level, struct pt_regs *regs)
 		if (!capable(CAP_SYS_RAWIO))
 			return -EPERM;
 	}
+
+#if defined(CONFIG_SCHED_BFS_AUTOISO)
+	if (level > old) {
+		struct sched_param param = { .sched_priority = 0 };
+		/* Start X as SCHED_ISO */
+		sched_setscheduler_nocheck(current, SCHED_ISO, &param);
+	}
+#endif
+
 	regs->flags = (regs->flags & ~X86_EFLAGS_IOPL) | (level << 12);
 	t->iopl = level << 12;
 	set_iopl_mask(t->iopl);

@@ -23,6 +23,62 @@ config CONSTRUCTORS
 
 menu "General setup"
 
+config SCHED_BFS
+	bool "BFS cpu scheduler"
+	---help---
+	  The Brain Fuck CPU Scheduler for excellent interactivity and
+	  responsiveness on the desktop and solid scalability on normal
+          hardware. Not recommended for 4096 CPUs.
+
+	  Currently incompatible with the Group CPU scheduler, RCU TORTURE
+          TEST so these options are disabled. Problems have also been reported
+          with the preemptible tree based hierarchical RCU, so if you run into
+          problems with this, try the non preemptible option or classical
+          option.
+
+          Say Y here.
+	default y
+
+config SCHED_BFS_AUTOISO
+	bool "Auto SCHED_ISO for X"
+	depends on SCHED_BFS
+	help
+	  Tasks (including X) can be run as SCHED_ISO manually with schedtool -I
+	  Enable this to automatically run SCHED_ISO for X, this is not default
+	  because there is a slim possibility that other tasks (such as multimedia)
+	  may stutter if they aren't also ran as SCHED_ISO.
+
+	  If unsure, say N here.
+
+config SCHED_BFS_CUSTOM_RR
+	bool "Custom rr_interval for BFS"
+	depends on SCHED_BFS
+	default n
+	help
+	  Selecting this option will allow you to change the default value
+	  for rr_interval within the bfs scheduler.
+
+	  The default rr_interval is 6ms
+	  If unsure, say N.
+
+config SCHED_BFS_RR_INTERVAL
+	int "rr_interval value in ms"
+	depends on SCHED_BFS_CUSTOM_RR
+	range 1 5000
+	default 6
+	help
+	  This is the smallest duration that any cpu process scheduling unit
+	  will run for. Increasing this value can increase throughput of cpu
+	  bound tasks substantially but at the expense of increased latencies
+	  overall. Conversely decreasing it will decrease average and maximum
+	  latencies but at the expense of throughput. This value is in
+	  milliseconds and the default value chosen depends on the number of
+	  cpus available at scheduler initialisation with a minimum of 6.
+
+	  Valid values are from 1-5000.
+	  Default is 6ms
+	  3ms is recommended for a very interactive, responsive desktop
+
 config EXPERIMENTAL
 	bool "Prompt for development and/or incomplete code/drivers"
 	---help---
@@ -475,7 +531,7 @@ config HAVE_UNSTABLE_SCHED_CLOCK
 
 config GROUP_SCHED
 	bool "Group CPU scheduler"
-	depends on EXPERIMENTAL
+	depends on EXPERIMENTAL && !SCHED_BFS
 	default n
 	help
 	  This feature lets CPU scheduler recognize task groups and control CPU
@@ -591,7 +647,7 @@ config PROC_PID_CPUSET
 
 config CGROUP_CPUACCT
 	bool "Simple CPU accounting cgroup subsystem"
-	depends on CGROUPS
+	depends on CGROUPS && !SCHED_BFS
 	help
 	  Provides a simple Resource Controller for monitoring the
 	  total CPU consumed by the tasks in a cgroup.
