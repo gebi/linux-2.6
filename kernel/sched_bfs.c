@@ -1167,36 +1167,6 @@ void kick_process(struct task_struct *p)
 EXPORT_SYMBOL_GPL(kick_process);
 #endif
 
-/**
- * kthread_bind - bind a just-created kthread to a cpu.
- * @p: thread created by kthread_create().
- * @cpu: cpu (might not be online, must be possible) for @k to run on.
- *
- * Description: This function is equivalent to set_cpus_allowed(),
- * except that @cpu doesn't need to be online, and the thread must be
- * stopped (i.e., just returned from kthread_create()).
- *
- * Function lives here instead of kthread.c because it messes with
- * scheduler internals which require locking.
- */
-void kthread_bind(struct task_struct *p, unsigned int cpu)
- {
-	unsigned long flags;
-
-	/* Must have done schedule() in kthread() before we set_task_cpu */
-	if (!wait_task_inactive(p, TASK_UNINTERRUPTIBLE)) {
-		WARN_ON(1);
-		return;
-	}
-
-	grq_lock_irqsave(&flags);
-	set_task_cpu(p, cpu);
-	p->cpus_allowed = cpumask_of_cpu(cpu);
-	p->flags |= PF_THREAD_BOUND;
-	grq_unlock_irqrestore(&flags);
-}
-EXPORT_SYMBOL(kthread_bind);
-
 #define rq_idle(rq)	((rq)->rq_prio == PRIO_LIMIT)
 #define task_idle(p)	((p)->prio == PRIO_LIMIT)
 
