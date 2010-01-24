@@ -32,6 +32,7 @@
 #include <linux/security.h>
 #include <linux/bootmem.h>
 #include <linux/syscalls.h>
+#include <linux/suspend.h>
 #include <linux/kexec.h>
 #include <linux/ratelimit.h>
 #include <linux/kmsg_dump.h>
@@ -68,6 +69,7 @@ int console_printk[4] = {
 	MINIMUM_CONSOLE_LOGLEVEL,	/* minimum_console_loglevel */
 	DEFAULT_CONSOLE_LOGLEVEL,	/* default_console_loglevel */
 };
+EXPORT_SYMBOL_GPL(console_printk);
 
 static int saved_console_loglevel = -1;
 
@@ -958,6 +960,7 @@ void suspend_console(void)
 	console_suspended = 1;
 	up(&console_sem);
 }
+EXPORT_SYMBOL_GPL(suspend_console);
 
 void resume_console(void)
 {
@@ -967,6 +970,7 @@ void resume_console(void)
 	console_suspended = 0;
 	release_console_sem();
 }
+EXPORT_SYMBOL_GPL(resume_console);
 
 /**
  * acquire_console_sem - lock the console system for exclusive use.
