@@ -1676,6 +1676,8 @@ static int effective_sc_prio(struct task_struct *p)
 	if (likely(p->mm)) {
 		if (rt_task(p))
 			return -20;
+		if (p->policy == SCHED_IDLEPRIO)
+			return 19;
 		return task_nice(p);
 	}
 	return 0;
