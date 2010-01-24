@@ -1,0 +1,29 @@
+IF YOU WANT KMS WITH RADEON READ THIS:
+You need additional firmware for kms to work on
+radeon cards. You can find them here:
+http://downloads.zen-kernel.org/firmwares/
+
+2.6.33-rc4-zen1
+* latest linus tree
+* bfs fixes
+* updated aufs2
+* latest alsa from -next
+* fixed LIRC
+* linux-phc added
+
+2.6.33-rc2-zen1
+* latest linus tree
+* updated drm
+* latest alsa
+* latest aufs
+* updated compcache
+* updated tuxonice
+* bfs 312
+* much more
+
+WHAT DOES NOT WORK / NOT MERGED IN:
+* kms with bfs seems to fail for some people
+with radeon cards
+* linux-phc is not merged in yet
+
+
