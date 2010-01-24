@@ -81,7 +81,7 @@ DEFINE_PER_CPU(struct rcu_data, rcu_sched_data);
 struct rcu_state rcu_bh_state = RCU_STATE_INITIALIZER(rcu_bh_state);
 DEFINE_PER_CPU(struct rcu_data, rcu_bh_data);
 
-static int rcu_scheduler_active __read_mostly;
+int rcu_scheduler_active __read_mostly;
 
 
 /*
