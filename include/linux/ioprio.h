@@ -73,7 +73,11 @@ static inline int task_nice_ioprio(struct task_struct *task)
  */
 static inline int task_nice_ioclass(struct task_struct *task)
 {
+#ifdef CONFIG_CPU_BFS
+	if (task->policy == SCHED_IDLEPRIO)
+#else
 	if (task->policy == SCHED_IDLE)
+#endif
 		return IOPRIO_CLASS_IDLE;
 	else if (task->policy == SCHED_FIFO || task->policy == SCHED_RR)
 		return IOPRIO_CLASS_RT;
