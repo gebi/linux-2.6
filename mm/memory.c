@@ -3156,7 +3156,7 @@ int in_gate_area_no_task(unsigned long addr)
 
 #endif	/* __HAVE_ARCH_GATE_AREA */
 
-static int follow_pte(struct mm_struct *mm, unsigned long address,
+int follow_pte(struct mm_struct *mm, unsigned long address,
 		pte_t **ptepp, spinlock_t **ptlp)
 {
 	pgd_t *pgd;
@@ -3192,6 +3192,7 @@ unlock:
 out:
 	return -EINVAL;
 }
+EXPORT_SYMBOL(follow_pte);
 
 /**
  * follow_pfn - look up PFN at a user virtual address
