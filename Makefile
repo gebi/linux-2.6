@@ -1,8 +1,8 @@
 VERSION = 2
 PATCHLEVEL = 6
 SUBLEVEL = 33
-EXTRAVERSION = -rc5-zen1
-NAME = jizzed in my pants
+EXTRAVERSION = -rc6-zen1
+NAME = noname
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
