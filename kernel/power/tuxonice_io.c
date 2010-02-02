@@ -38,6 +38,18 @@
 #include "tuxonice_alloc.h"
 char alt_resume_param[256];
 
+/* Version read from image header at resume */
+static int toi_image_header_version;
+
+#define read_if_version(VERS, VAR, DESC) do {					\
+	if (likely(toi_image_header_version >= VERS))				\
+		if (toiActiveAllocator->rw_header_chunk(READ, NULL,		\
+					(char *) &VAR, sizeof(VAR))) {		\
+			abort_hibernate(TOI_FAILED_IO, "Failed to read DESC.");	\
+			goto out_remove_image;					\
+		}								\
+} while(0)									\
+
 /* Variables shared between threads and updated under the mutex */
 static int io_write, io_finish_at, io_base, io_barmax, io_pageset, io_result;
 static int io_index, io_nextupdate, io_pc, io_pc_step;
@@ -58,6 +70,8 @@ EXPORT_SYMBOL_GPL(toi_bio_queue_flusher_should_finish);
 
 /* Indicates that this thread should be used for checking throughput */
 #define MONITOR ((void *) 1)
+
+int toi_max_workers;
 
 /**
  * toi_attempt_to_parse_resume_device - determine if we can hibernate
@@ -479,7 +493,7 @@ static void use_read_page(unsigned long write_pfn, struct page *buffer)
 		    *copy_page = final_page;
 	char *virt, *buffer_virt;
 
-	if (io_pageset == 1 && !load_direct(final_page)) {
+	if (io_pageset == 1 && !PagePageset1Copy(final_page)) {
 		copy_page = copy_page_from_orig_page(final_page);
 		BUG_ON(!copy_page);
 	}
@@ -647,6 +661,9 @@ static int start_other_threads(void)
 	struct task_struct *p;
 
 	for_each_online_cpu(cpu) {
+		if (toi_max_workers && (num_started + 1) == toi_max_workers)
+			break;
+
 		if (cpu == smp_processor_id())
 			continue;
 
@@ -1290,10 +1307,20 @@ int write_image_header(void)
 			"Failure to fill header information!");
 		goto write_image_header_abort;
 	}
-	toiActiveAllocator->rw_header_chunk(WRITE, NULL,
-			header_buffer, sizeof(struct toi_header));
 
-	toi_free_page(24, (unsigned long) header_buffer);
+	if (toiActiveAllocator->rw_header_chunk(WRITE, NULL,
+			header_buffer, sizeof(struct toi_header))) {
+		abort_hibernate(TOI_OUT_OF_MEMORY,
+			"Failure to write header info.");
+		goto write_image_header_abort;
+	}
+
+	if (toiActiveAllocator->rw_header_chunk(WRITE, NULL,
+			(char *) &toi_max_workers, sizeof(toi_max_workers))) {
+		abort_hibernate(TOI_OUT_OF_MEMORY,
+			"Failure to number of workers to use.");
+		goto write_image_header_abort;
+	}
 
 	/* Write filesystem info */
 	if (fs_info_save())
@@ -1307,7 +1334,12 @@ int write_image_header(void)
 		goto write_image_header_abort;
 	}
 
-	memory_bm_write(pageset1_map, toiActiveAllocator->rw_header_chunk);
+	if (memory_bm_write(pageset1_map,
+				toiActiveAllocator->rw_header_chunk)) {
+		abort_hibernate(TOI_FAILED_IO,
+				"Failed to write bitmaps.");
+		goto write_image_header_abort;
+	}
 
 	/* Flush data and let allocator cleanup */
 	if (toiActiveAllocator->write_header_cleanup()) {
@@ -1321,12 +1353,16 @@ int write_image_header(void)
 
 	toi_update_status(total, total, NULL);
 
-	return 0;
+out:
+	if (header_buffer)
+		toi_free_page(24, (unsigned long) header_buffer);
+	return ret;
 
 write_image_header_abort:
 	toiActiveAllocator->write_header_cleanup();
 write_image_header_abort_no_cleanup:
-	return -1;
+	ret = -1;
+	goto out;
 }
 
 /**
@@ -1396,6 +1432,13 @@ static int __read_pageset1(void)
 
 	/* Check for an image */
 	result = toiActiveAllocator->image_exists(1);
+	if (result == 3) {
+		result = -ENODATA;
+		toi_early_boot_message(1, 0, "The signature from an older "
+				"version of TuxOnIce has been detected.");
+		goto out_remove_image;
+	}
+
 	if (result != 1) {
 		result = -ENODATA;
 		noresume_reset_modules();
@@ -1439,6 +1482,8 @@ static int __read_pageset1(void)
 	}
 
 	clear_toi_state(TOI_CONTINUE_REQ);
+
+	toi_image_header_version = toiActiveAllocator->get_header_version();
 
 	/* Read hibernate header */
 	result = toiActiveAllocator->rw_header_chunk(READ, NULL,
@@ -1488,6 +1533,8 @@ static int __read_pageset1(void)
 
 	set_toi_state(TOI_BOOT_KERNEL);
 	boot_kernel_data_buffer = toi_header->bkd;
+
+	read_if_version(1, toi_max_workers, "TuxOnIce max workers");
 
 	/* Read filesystem info */
 	if (fs_info_load_and_check()) {

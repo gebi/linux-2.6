@@ -254,8 +254,8 @@ static int throttle_if_needed(int flags)
  * update_throughput_throttle - update the raw throughput throttle
  * @jif_index: The number of times this function has been called.
  *
- * This function is called twice per second by the core, and used to limit the
- * amount of I/O we submit at once, spreading out our waiting through the
+ * This function is called four times per second by the core, and used to limit
+ * the amount of I/O we submit at once, spreading out our waiting through the
  * whole job and letting userui get an opportunity to do its work.
  *
  * We don't start limiting I/O until 1/4s has gone so that we get a
@@ -267,7 +267,7 @@ static int throttle_if_needed(int flags)
 static void update_throughput_throttle(int jif_index)
 {
 	int done = atomic_read(&toi_io_done);
-	throughput_throttle = done * jif_index * 2 / 5;
+	throughput_throttle = done * 2 / 5 / jif_index;
 }
 
 /**
@@ -1771,6 +1771,7 @@ struct toi_module_ops toi_blockwriter_ops = {
 	.write_header_cleanup		= toi_bio_write_header_cleanup,
 	.read_header_init		= toi_bio_read_header_init,
 	.read_header_cleanup		= toi_bio_read_header_cleanup,
+	.get_header_version		= toi_bio_get_header_version,
 	.remove_image			= toi_bio_remove_image,
 	.parse_sig_location		= toi_bio_parse_sig_location,
 
