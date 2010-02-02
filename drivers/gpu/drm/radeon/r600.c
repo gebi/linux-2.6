@@ -2045,6 +2045,12 @@ int r600_init(struct radeon_device *rdev)
 	r = r600_pcie_gart_init(rdev);
 	if (r)
 		return r;
+	r = r600_blit_init(rdev);
+	if (r) {
+		r600_blit_fini(rdev);
+		rdev->asic->copy = NULL;
+		dev_warn(rdev->dev, "failed blitter (%d) falling back to memcpy\n", r);
+	}
 
 	rdev->accel_working = true;
 	r = r600_startup(rdev);
