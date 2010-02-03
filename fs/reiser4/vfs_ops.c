@@ -184,7 +184,7 @@ void reiser4_writeout(struct super_block *sb, struct writeback_control *wbc)
 				 * requested page itself - start flush from
 				 * that page
 				 */
-				node = jref(ent->cur_request->node);
+				node = ent->cur_request->node;
 		}
 
 		result = flush_some_atom(node, &nr_submitted, wbc,
@@ -192,6 +192,8 @@ void reiser4_writeout(struct super_block *sb, struct writeback_control *wbc)
 		if (result != 0)
 			warning("nikita-31001", "Flush failed: %i", result);
 		if (node)
+			/* drop the reference aquired
+			   in find_or_create_extent() */
 			jput(node);
 		if (!nr_submitted)
 			break;
