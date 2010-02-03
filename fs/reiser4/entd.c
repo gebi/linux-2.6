@@ -236,18 +236,19 @@ static void entd_flush(struct super_block *super, struct wbq *rq)
 	rq->wbc->range_end = rq->wbc->range_start +
 		(ENTD_CAPTURE_APAGE_BURST << PAGE_CACHE_SHIFT);
 	tmp = rq->wbc->nr_to_write;
+
+	assert("edward-1561", super == rq->wbc->sb);
+
 	rq->mapping->a_ops->writepages(rq->mapping, rq->wbc);
 
 	if (rq->wbc->nr_to_write > 0) {
 		rq->wbc->range_start = 0;
 		rq->wbc->range_end = LLONG_MAX;
-		writeback_inodes_sb(super);
-		if (rq->wbc->sync_mode == WB_SYNC_ALL)
-			sync_inodes_sb(super);
+		writeback_inodes_wbc(rq->wbc);
 	}
 	rq->wbc->nr_to_write = ENTD_CAPTURE_APAGE_BURST;
-	reiser4_writeout(super, rq->wbc);
 
+	reiser4_writeout(super, rq->wbc);
 	context_set_commit_async(&ctx);
 	reiser4_exit_context(&ctx);
 }

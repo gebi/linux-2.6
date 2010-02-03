@@ -824,14 +824,16 @@ int find_or_create_extent(struct page *page)
 
 	BUG_ON(node->atom == NULL);
 	JF_CLR(node, JNODE_WRITE_PREPARED);
-	jput(node);
 
 	if (get_current_context()->entd) {
 		entd_context *ent = get_entd_context(node->tree->super);
 
 		if (ent->cur_request->page == page)
-			ent->cur_request->node = node;
+			/* the following reference will be
+			   dropped in reiser4_writeout */
+			ent->cur_request->node = jref(node);
 	}
+	jput(node);
 	return 0;
 }
 

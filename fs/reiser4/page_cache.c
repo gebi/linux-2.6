@@ -486,15 +486,15 @@ static int can_hit_entd(reiser4_context *ctx, struct super_block *s)
 int reiser4_writepage(struct page *page,
 		      struct writeback_control *wbc)
 {
-	struct super_block *s;
-	reiser4_context *ctx;
-
+	/*
+	 * assert("edward-1562",
+	 * can_hit_entd(get_current_context_check(), sb));
+	 */
 	assert("vs-828", PageLocked(page));
 
-	s = page->mapping->host->i_sb;
-	ctx = get_current_context_check();
+	wbc->sb = page->mapping->host->i_sb;
+	wbc->bdi = page->mapping->backing_dev_info;
 
-	/* assert("", can_hit_entd(ctx, s)); */
 	return write_page_by_ent(page, wbc);
 }
 
