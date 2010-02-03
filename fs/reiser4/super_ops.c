@@ -379,48 +379,59 @@ static void reiser4_clear_inode(struct inode *inode)
 }
 
 /**
- * reiser4_sync_inodes - sync_inodes of super operations
+ * reiser4_writeback_inodes - writeback_inodes of super operations
  * @super:
+ * @wb:
  * @wbc:
  *
  * This method is called by background and non-backgound writeback. Reiser4's
- * implementation uses generic_sync_sb_inodes to call reiser4_writepages for
- * each of dirty inodes. Reiser4_writepages handles pages dirtied via shared
- * mapping - dirty pages get into atoms. Writeout is called to flush some
- * atoms.
+ * implementation uses generic_writeback_sb_inodes to call reiser4_writepages
+ * for each of dirty inodes. reiser4_writepages handles pages dirtied via shared
+ * mapping - dirty pages get into atoms. Writeout is called to flush some atoms.
  */
-static void reiser4_sync_inodes(struct super_block *super,
-			       struct writeback_control *wbc)
+static int reiser4_writeback_inodes(struct super_block *super,
+				    struct bdi_writeback *wb,
+				    struct writeback_control *wbc)
 {
-	reiser4_context *ctx;
+	int ret;
 	long to_write;
+	reiser4_context *ctx;
 
 	if (wbc->for_kupdate)
 		/* reiser4 has its own means of periodical write-out */
-		return;
-
-	to_write = wbc->nr_to_write;
+		goto skip;
 	assert("vs-49", wbc->older_than_this == NULL);
 
+	spin_unlock(&inode_lock);
 	ctx = reiser4_init_context(super);
 	if (IS_ERR(ctx)) {
 		warning("vs-13", "failed to init context");
-		return;
+		spin_lock(&inode_lock);
+		goto skip;
 	}
-
+	to_write = wbc->nr_to_write;
 	/*
-	 * call reiser4_writepages for each of dirty inodes to turn dirty pages
-	 * into transactions if they were not yet.
+	 * call reiser4_writepages for each of dirty inodes to turn
+	 * dirty pages into transactions if they were not yet.
 	 */
-	generic_sync_sb_inodes(wbc);
+	spin_lock(&inode_lock);
+	ret = generic_writeback_sb_inodes(super, wb, wbc);
+	spin_unlock(&inode_lock);
+
+	wbc->nr_to_write = to_write;
 
 	/* flush goes here */
-	wbc->nr_to_write = to_write;
 	reiser4_writeout(super, wbc);
 
-	/* avoid recursive calls to ->sync_inodes */
+	/* avoid recursive calls to ->writeback_inodes */
 	context_set_commit_async(ctx);
 	reiser4_exit_context(ctx);
+	spin_lock(&inode_lock);
+
+	return wbc->nr_to_write <= 0 ? 1 : ret;
+ skip:
+	writeback_skip_sb_inodes(super, wb);
+	return 0;
 }
 
 /**
@@ -458,7 +469,7 @@ struct super_operations reiser4_super_operations = {
 	.write_super = reiser4_write_super,
 	.statfs = reiser4_statfs,
 	.clear_inode = reiser4_clear_inode,
-	.sync_inodes = reiser4_sync_inodes,
+	.writeback_inodes = reiser4_writeback_inodes,
 	.show_options = reiser4_show_options
 };
 
