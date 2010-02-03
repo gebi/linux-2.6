@@ -600,9 +600,9 @@ static enum sb_pin_state pin_sb_for_writeback(struct writeback_control *wbc,
  * Return 1, if the caller writeback routine should be
  * interrupted. Otherwise return 0.
  */
-static int writeback_sb_inodes(struct super_block *sb,
-			       struct bdi_writeback *wb,
-			       struct writeback_control *wbc)
+int generic_writeback_sb_inodes(struct super_block *sb,
+				struct bdi_writeback *wb,
+				struct writeback_control *wbc)
 {
 	while (!list_empty(&wb->b_io)) {
 		long pages_skipped;
@@ -653,6 +653,32 @@ static int writeback_sb_inodes(struct super_block *sb,
 	/* b_io is empty */
 	return 1;
 }
+EXPORT_SYMBOL(generic_writeback_sb_inodes);
+
+/*
+ * This function is for file systems which have their
+ * own means of periodical write-out of old data.
+ * NOTE: inode_lock should be hold.
+ *
+ * Skip a portion of b_io inodes which belong to @sb
+ * and go sequentially in reverse order.
+ */
+void writeback_skip_sb_inodes(struct super_block *sb,
+			      struct bdi_writeback *wb)
+{
+	while (1) {
+		struct inode *inode;
+
+		if (list_empty(&wb->b_io))
+			break;
+		inode = list_entry(wb->b_io.prev, struct inode, i_list);
+		if (sb != inode->i_sb)
+			break;
+		redirty_tail(inode);
+	}
+}
+EXPORT_SYMBOL(writeback_skip_sb_inodes);
+
 
 static void writeback_inodes_wb(struct bdi_writeback *wb,
 				struct writeback_control *wbc)
@@ -682,7 +708,10 @@ static void writeback_inodes_wb(struct bdi_writeback *wb,
 			requeue_io(inode);
 			continue;
 		}
-		ret = writeback_sb_inodes(sb, wb, wbc);
+		if (sb->s_op->writeback_inodes)
+			ret = sb->s_op->writeback_inodes(sb, wb, wbc);
+		else
+			ret = generic_writeback_sb_inodes(sb, wb, wbc);
 
 		if (state == SB_PINNED)
 			unpin_sb_for_writeback(sb);
@@ -699,6 +728,7 @@ void writeback_inodes_wbc(struct writeback_control *wbc)
 
 	writeback_inodes_wb(&bdi->wb, wbc);
 }
+EXPORT_SYMBOL(writeback_inodes_wbc);
 
 /*
  * The maximum number of pages to writeout in a single bdi flush/kupdate
@@ -1267,3 +1297,12 @@ int sync_inode(struct inode *inode, struct writeback_control *wbc)
 	return ret;
 }
 EXPORT_SYMBOL(sync_inode);
+/*
+ * Local variables:
+ * c-indentation-style: "K&R"
+ * mode-name: "LC"
+ * c-basic-offset: 8
+ * tab-width: 8
+ * fill-column: 79
+ * End:
+ */
