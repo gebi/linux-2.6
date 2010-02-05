@@ -7,6 +7,7 @@ http://downloads.zen-kernel.org/firmwares/
 * latest linus tree
 * updated tuxonice
 * updated aufs
+* reiser4 should work now (yay!)
 
 2.6.33-rc5-zen1
 * updated compcache to 0.6.1 (in staging now)
