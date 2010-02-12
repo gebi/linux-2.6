@@ -73,6 +73,9 @@ EXPORT_SYMBOL_GPL(toi_bio_queue_flusher_should_finish);
 
 int toi_max_workers;
 
+static char *image_version_error = "The image header version is newer than " \
+	"this kernel supports.";
+
 /**
  * toi_attempt_to_parse_resume_device - determine if we can hibernate
  *
@@ -413,6 +416,7 @@ static int write_next_page(unsigned long *data_pfn, int *my_io_index,
 					"still %d.\n", atomic_read(&io_count));
 			BUG();
 		}
+		mutex_unlock(&io_mutex);
 		return -ENODATA;
 	}
 
@@ -450,15 +454,23 @@ static int write_next_page(unsigned long *data_pfn, int *my_io_index,
  * @my_io_index: The index of the page in the pageset.
  * @write_pfn: The pfn in which the data belongs.
  *
- * Read a page of the image into our buffer.
+ * Read a page of the image into our buffer. It can happen (here and in the
+ * write routine) that threads don't get run until after other CPUs have done
+ * all the work. This was the cause of the long standing issue with
+ * occasionally getting -ENODATA errors at the end of reading the image. We
+ * therefore need to check there's actually a page to read before trying to
+ * retrieve one.
  **/
 
 static int read_next_page(int *my_io_index, unsigned long *write_pfn,
 		struct page *buffer, struct toi_module_ops *first_filter)
 {
 	unsigned int buf_size = PAGE_SIZE;
+	unsigned long left = atomic_read(&io_count);
 
-	*my_io_index = io_finish_at - atomic_sub_return(1, &io_count);
+	if (left)
+		*my_io_index = io_finish_at - atomic_sub_return(1, &io_count);
+
 	mutex_unlock(&io_mutex);
 
 	/*
@@ -479,6 +491,9 @@ static int read_next_page(int *my_io_index, unsigned long *write_pfn,
 		while (1)
 			schedule();
 	}
+
+	if (!left)
+		return -ENODATA;
 
 	/*
 	 * See toi_bio_read_page in tuxonice_bio.c:
@@ -560,7 +575,6 @@ static int worker_rw_loop(void *data)
 
 	current->flags |= PF_NOFREEZE;
 
-	atomic_inc(&toi_io_workers);
 	mutex_lock(&io_mutex);
 
 	do {
@@ -586,8 +600,12 @@ static int worker_rw_loop(void *data)
 					buffer, first_filter);
 
 		if (result) {
-			io_result = result;
 			mutex_lock(&io_mutex);
+			/* Nothing to do? */
+			if (result == -ENODATA)
+				break;
+
+			io_result = result;
 
 			if (io_write) {
 				printk(KERN_INFO "Write chunk returned %d.\n",
@@ -659,9 +677,12 @@ static int start_other_threads(void)
 {
 	int cpu, num_started = 0;
 	struct task_struct *p;
+	int to_start = (toi_max_workers ? toi_max_workers : num_online_cpus()) - 1;
+
+	atomic_set(&toi_io_workers, to_start);
 
 	for_each_online_cpu(cpu) {
-		if (toi_max_workers && (num_started + 1) == toi_max_workers)
+		if (num_started == to_start)
 			break;
 
 		if (cpu == smp_processor_id())
@@ -671,6 +692,7 @@ static int start_other_threads(void)
 				"ktoi_io/%d", cpu);
 		if (IS_ERR(p)) {
 			printk(KERN_ERR "ktoi_io for %i failed\n", cpu);
+			atomic_dec(&toi_io_workers);
 			continue;
 		}
 		kthread_bind(p, cpu);
@@ -742,9 +764,10 @@ static int do_rw_loop(int write, int finish_at, struct memory_bitmap *pageflags,
 		num_other_threads = start_other_threads();
 
 	if (!num_other_threads || !toiActiveAllocator->io_flusher ||
-		test_action_state(TOI_NO_FLUSHER_THREAD))
+		test_action_state(TOI_NO_FLUSHER_THREAD)) {
+		atomic_inc(&toi_io_workers);
 		worker_rw_loop(num_other_threads ? NULL : MONITOR);
-	else
+	} else
 		result = toiActiveAllocator->io_flusher(write);
 
 	while (atomic_read(&toi_io_workers))
@@ -1484,6 +1507,15 @@ static int __read_pageset1(void)
 	clear_toi_state(TOI_CONTINUE_REQ);
 
 	toi_image_header_version = toiActiveAllocator->get_header_version();
+
+	if (unlikely(toi_image_header_version > TOI_HEADER_VERSION)) {
+		toi_early_boot_message(1, 0, image_version_error);
+		if (!(test_toi_state(TOI_CONTINUE_REQ))) {
+			printk(KERN_INFO "TuxOnIce: Header version too new: "
+					"Invalidated image.\n");
+			goto out_remove_image;
+		}
+	}
 
 	/* Read hibernate header */
 	result = toiActiveAllocator->rw_header_chunk(READ, NULL,

@@ -626,16 +626,15 @@ static void toi_bio_queue_write(char **full_buffer)
  **/
 static int toi_rw_cleanup(int writing)
 {
-	int i, result;
+	int i, result = 0;
 
 	toi_message(TOI_IO, TOI_VERBOSE, 0, "toi_rw_cleanup.");
 	if (writing) {
-		int result;
-
 		if (toi_writer_buffer_posn && !test_result_state(TOI_ABORTED))
 			toi_bio_queue_write(&toi_writer_buffer);
 
-		result = toi_bio_queue_flush_pages(0);
+		while (bio_queue_head && !result)
+			result = toi_bio_queue_flush_pages(0);
 
 		if (result)
 			return result;
@@ -706,11 +705,11 @@ static int toi_start_one_readahead(int dedicated_thread)
 	}
 
 	result = toi_bio_rw_page(READ, virt_to_page(buffer), 1, 0);
-	if (result == -ENODATA)
+	if (result == -ENOSPC)
 		toi__free_page(12, virt_to_page(buffer));
 	mutex_unlock(&toi_bio_readahead_mutex);
 	if (result) {
-		if (result == -ENODATA)
+		if (result == -ENOSPC)
 			toi_message(TOI_IO, TOI_VERBOSE, 0,
 					"Last readahead page submitted.");
 		else
@@ -749,7 +748,7 @@ static int toi_start_new_readahead(int dedicated_thread)
 		last_result = toi_start_one_readahead(dedicated_thread);
 
 		if (last_result) {
-			if (last_result == -ENOMEM || last_result == -ENODATA)
+			if (last_result == -ENOMEM || last_result == -ENOSPC)
 				return 0;
 
 			printk(KERN_DEBUG
@@ -811,7 +810,7 @@ static int toi_bio_get_next_page_read(int no_readahead)
 		 */
 		if (!more_readahead) {
 			printk(KERN_EMERG "No more readahead.\n");
-			return -ENODATA;
+			return -ENOSPC;
 		}
 		if (unlikely(toi_start_one_readahead(0))) {
 			printk(KERN_EMERG "No readahead and "
@@ -871,7 +870,10 @@ top:
 			bio_queue_tail = NULL;
 		atomic_dec(&toi_bio_queue_size);
 		spin_unlock_irqrestore(&bio_queue_lock, flags);
-		result = toi_bio_rw_page(WRITE, page, 0, 11);
+
+		/* Don't generate more error messages if already had one */
+		if (!result)
+			result = toi_bio_rw_page(WRITE, page, 0, 11);
 		/*
 		 * If writing the page failed, don't drop out.
 		 * Flush the rest of the queue too.
