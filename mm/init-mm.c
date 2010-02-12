@@ -1,3 +1,4 @@
+#include <linux/module.h>
 #include <linux/mm_types.h>
 #include <linux/rbtree.h>
 #include <linux/rwsem.h>
