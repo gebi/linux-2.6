@@ -1,3 +1,9 @@
+perf (2.6.33.1-1) unstable; urgency=low
+
+  * apply stable fixes, update to 2.6.33.1
+
+ -- Michael Gebetsroither <michael@mgeb.org>  Thu, 01 Apr 2010 22:54:49 +0200
+
 perf (2.6.33-1) unstable; urgency=low
 
   * It might be interesting to know if perf releases are coupled to kernel
