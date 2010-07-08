@@ -1,0 +1,15 @@
+Source: perf
+Section: utils
+Priority: optional
+Maintainer: Michael Gebetsroither <gebi@grml.org>
+Build-Depends: debhelper (>= 7)
+Standards-Version: 3.7.3
+
+Package: perf
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Performance analysis tools for Linux
+ Performance counters for Linux are are a new kernel-based subsystem
+ that provide a framework for all things performance analysis. It
+ covers hardware level (CPU/PMU, Performance Monitoring Unit) features
+ and software features (software counters, tracepoints) as well.
