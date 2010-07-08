@@ -1,3 +1,9 @@
+perf (2.6.34-1) unstable; urgency=low
+
+  * New upstream release.
+
+ -- Michael Gebetsroither <michael@mgeb.org>  Thu, 08 Jul 2010 13:13:39 +0200
+
 perf (2.6.32-rc5-1) unstable; urgency=low
 
   * Initial release
