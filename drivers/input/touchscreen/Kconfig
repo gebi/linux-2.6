@@ -689,6 +689,7 @@ config TOUCHSCREEN_USB_COMPOSITE
 	  - Zytronic controllers
 	  - Elo TouchSystems 2700 IntelliTouch
 	  - EasyTouch USB Touch Controller from Data Modul
+	  - Fujitsu u810 tablet touch device controller
 	  - e2i (Mimo monitors)
 
 	  Have a look at <http://linux.chapter7.ch/touchkit/> for
@@ -772,6 +773,11 @@ config TOUCHSCREEN_USB_JASTEC
 config TOUCHSCREEN_USB_ELO
 	default y
 	bool "Elo TouchSystems 2700 IntelliTouch controller device support" if EXPERT
+	depends on TOUCHSCREEN_USB_COMPOSITE
+
+config CONFIG_TOUCHSCREEN_USB_FUJITSU_U810
+	default y
+	bool "Fujitsu u810 tablet touch device controller" if EXPERT
 	depends on TOUCHSCREEN_USB_COMPOSITE
 
 config TOUCHSCREEN_USB_E2I

@@ -18,6 +18,7 @@
  *  - NEXIO/iNexio
  *  - Elo TouchSystems 2700 IntelliTouch
  *  - EasyTouch USB Dual/Multi touch controller from Data Modul
+ *  - Fujitsu u810 tablet touch device controller
  *
  * Copyright (C) 2004-2007 by Daniel Ritz <daniel.ritz@gmx.ch>
  * Copyright (C) by Todd E. Johnson (mtouchusb.c)
@@ -142,6 +143,7 @@ enum {
 	DEVTYPE_NEXIO,
 	DEVTYPE_ELO,
 	DEVTYPE_ETOUCH,
+	DEVTYPE_FUJITSU_U810,
 };
 
 #define USB_DEVICE_HID_CLASS(vend, prod) \
@@ -251,6 +253,9 @@ static const struct usb_device_id usbtouch_devices[] = {
 	{USB_DEVICE(0x7374, 0x0001), .driver_info = DEVTYPE_ETOUCH},
 #endif
 
+#ifdef CONFIG_TOUCHSCREEN_USB_FUJITSU_U810
+	{USB_DEVICE(0x0430, 0x0530), .driver_info = DEVTYPE_FUJITSU_U810},
+#endif
 	{}
 };
 
@@ -1026,6 +1031,23 @@ static int elo_read_data(struct usbtouch_usb *dev, unsigned char *pkt)
 
 
 /*****************************************************************************
+ * Fujitsu u810 part
+ */
+
+#ifdef CONFIG_TOUCHSCREEN_USB_FUJITSU_U810
+
+static int fujitsu_u810_read_data(struct usbtouch_usb *dev, unsigned char *pkt)
+{
+	dev->x = (pkt[2] << 8) | pkt[1];
+	dev->y = (pkt[4] << 8) | pkt[3];
+	dev->touch = pkt[0] & 0x01;
+
+	return 1;
+}
+#endif
+
+
+/*****************************************************************************
  * the different device descriptors
  */
 #ifdef MULTI_PACKET
@@ -1043,6 +1065,17 @@ static struct usbtouch_device_info usbtouch_dev_info[] = {
 		.max_press	= 0xff,
 		.rept_size	= 8,
 		.read_data	= elo_read_data,
+	},
+#endif
+
+#ifdef CONFIG_TOUCHSCREEN_USB_FUJITSU_U810
+	[DEVTYPE_FUJITSU_U810] = {
+		.min_xc		= 130,
+		.max_xc		= 3820,
+		.min_yc		= 250,
+		.max_yc		= 3920,
+		.rept_size	= 5,
+		.read_data	= fujitsu_u810_read_data,
 	},
 #endif
 
